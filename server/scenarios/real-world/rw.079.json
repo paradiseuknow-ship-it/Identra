@@ -1,0 +1,15 @@
+{
+  "id": "rw.079",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "多步确认4",
+  "objective": "搜索「显示器」→ 打开详情 → 确认参数",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "最终状态确认"
+  }
+}

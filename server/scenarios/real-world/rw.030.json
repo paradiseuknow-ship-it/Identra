@@ -1,0 +1,15 @@
+{
+  "id": "rw.030",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS数据查看5",
+  "objective": "打开日志列表确认无错误",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "目标文本/数据出现在列表中"
+  }
+}

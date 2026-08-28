@@ -1,0 +1,15 @@
+{
+  "id": "rw.043",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "库存修改3",
+  "objective": "批量设置库存为 99",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "库存/价格更新生效"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.049",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "订单查询4",
+  "objective": "打开订单详情查看收货人",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "订单信息可见"
+  }
+}

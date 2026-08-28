@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Async Never Success Fixture</title>
+</head>
+<body>
+  <h1>Async Job (stuck)</h1>
+  <p>State: <span id="state">Processing…</span></p>
+  <script>
+    // 永远不出现 SUCCESS：用于证明 VIL 不会无限等待。
+    // 状态长期停在 "Processing…"，观察窗口到达 timeout 后必须明确收口（recovered:false）。
+    window.addEventListener('load', function () {
+      // 故意不设置成功状态；仅周期性更新"心跳"文本避免被误判为稳定，但仍不包含 SUCCESS。
+      setInterval(function () {
+        document.getElementById('state').textContent = 'Processing… ' + new Date().toISOString().slice(11, 19);
+      }, 1000);
+    });
+  </script>
+</body>
+</html>

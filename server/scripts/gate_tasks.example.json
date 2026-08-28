@@ -1,0 +1,31 @@
+[
+  {
+    "name": "SaaS Login",
+    "objective": "使用已 reseed 的真实邮箱/密码登录 <真实 SaaS 站点>，确认进入 dashboard。",
+    "targetUrl": "https://app.REPLACE.example.com/login",
+    "profileId": "REPLACE_WITH_GATE_PROFILE_ID",
+    "secretRefs": [],
+    "budget": null
+  },
+  {
+    "name": "Ecommerce",
+    "objective": "在 <真实电商站点> 将一件商品加入购物车并进入 checkout。",
+    "targetUrl": "https://shop.REPLACE.example.com",
+    "profileId": "REPLACE_WITH_GATE_PROFILE_ID",
+    "secretRefs": []
+  },
+  {
+    "name": "Data Entry",
+    "objective": "在 <真实表单站点> 用已 reseed 凭据填写并提交联系表单。",
+    "targetUrl": "https://forms.REPLACE.example.com",
+    "profileId": "REPLACE_WITH_GATE_PROFILE_ID",
+    "secretRefs": []
+  },
+  {
+    "name": "Long Workflow",
+    "objective": "在 <真实站点> 完成多步骤注册 + 资料设置，端到端走完。",
+    "targetUrl": "https://onboard.REPLACE.example.com",
+    "profileId": "REPLACE_WITH_GATE_PROFILE_ID",
+    "secretRefs": []
+  }
+]

@@ -1,0 +1,15 @@
+{
+  "id": "rw.012",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS搜索2",
+  "objective": "搜索「季度营收」文档",
+  "fixture": "saas/login.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "搜索结果区域出现"
+  }
+}

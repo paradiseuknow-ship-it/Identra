@@ -1,0 +1,15 @@
+{
+  "id": "rw.022",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS改设置2",
+  "objective": "在设置中将语言改为中文",
+  "fixture": "saas/login.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "设置保存成功提示"
+  }
+}

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <title>Mock Search</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 40px; }
+    input { padding: 8px 12px; width: 320px; font-size: 16px; }
+    button { padding: 8px 16px; font-size: 16px; cursor: pointer; }
+    #results { margin-top: 24px; min-height: 40px; color: #222; }
+    #results .hit { padding: 6px 0; border-bottom: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <h1>Mock Search Engine</h1>
+  <form id="searchForm" onsubmit="return doSearch(event)">
+    <label for="q">搜索框</label>
+    <input id="q" name="q" type="text" placeholder="输入搜索词…" aria-label="搜索框" />
+    <button id="searchBtn" type="submit" aria-label="搜索表单">搜索</button>
+  </form>
+  <div id="results" aria-live="polite"></div>
+
+  <script>
+    function doSearch(e) {
+      e.preventDefault();
+      var q = document.getElementById('q').value.trim();
+      var box = document.getElementById('results');
+      if (!q) { box.textContent = ''; return false; }
+      box.innerHTML = '';
+      var items = ['Result A for "' + q + '"', 'Result B for "' + q + '"', 'Result C for "' + q + '"'];
+      items.forEach(function (t) {
+        var d = document.createElement('div');
+        d.className = 'hit';
+        d.textContent = t;
+        box.appendChild(d);
+      });
+      return false;
+    }
+  </script>
+</body>
+</html>

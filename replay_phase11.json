@@ -1,0 +1,20 @@
+{
+  "verifyFailedTotal": 58,
+  "outcomeContractCoverage": {
+    "covered": 55,
+    "uncovered": 3,
+    "pct": 95,
+    "byStateType": {
+      "LOGIN_SUCCESS": 12,
+      "SEARCH_SUCCESS": 12,
+      "FIELD_FILLED": 6,
+      "NAVIGATED": 3,
+      "CHECKED": 14,
+      "FORM_SUBMIT_SUCCESS": 8
+    }
+  },
+  "behavioralReplay": {
+    "total": 6,
+    "pass": 6
+  }
+}

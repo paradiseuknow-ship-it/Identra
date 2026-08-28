@@ -1,0 +1,15 @@
+{
+  "id": "rw.024",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS改设置4",
+  "objective": "开启两步验证开关",
+  "fixture": "saas/login.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "设置保存成功提示"
+  }
+}

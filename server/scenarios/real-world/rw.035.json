@@ -1,0 +1,15 @@
+{
+  "id": "rw.035",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "商品搜索5",
+  "objective": "搜索「显示器」",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "搜索结果页出现商品"
+  }
+}

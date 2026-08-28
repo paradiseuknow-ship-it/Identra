@@ -1,0 +1,15 @@
+{
+  "id": "rw.037",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "商品编辑2",
+  "objective": "打开商品编辑页将库存文案改为「现货」",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "编辑保存成功"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.025",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS改设置5",
+  "objective": "在设置中配置时区为 UTC+8",
+  "fixture": "saas/login.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "设置保存成功提示"
+  }
+}

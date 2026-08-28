@@ -1,0 +1,15 @@
+{
+  "id": "rw.023",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS改设置3",
+  "objective": "修改个人资料显示名",
+  "fixture": "saas/login.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "设置保存成功提示"
+  }
+}

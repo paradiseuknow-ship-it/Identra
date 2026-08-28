@@ -1,0 +1,15 @@
+{
+  "id": "rw.019",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS建项目4",
+  "objective": "创建项目「客户成功」并标记颜色",
+  "fixture": "saas/login.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "项目创建成功提示或列表新增"
+  }
+}

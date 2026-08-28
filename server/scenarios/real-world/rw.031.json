@@ -1,0 +1,15 @@
+{
+  "id": "rw.031",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "商品搜索1",
+  "objective": "在搜索框输入「耳机」并点击搜索",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "搜索结果页出现商品"
+  }
+}

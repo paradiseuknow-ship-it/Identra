@@ -1,0 +1,15 @@
+{
+  "id": "rw.068",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "文件上传3",
+  "objective": "选择简历文件并确认",
+  "fixture": "download.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "上传/提交成功"
+  }
+}

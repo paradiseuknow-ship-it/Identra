@@ -1,0 +1,15 @@
+{
+  "id": "rw.064",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "批量输入4",
+  "objective": "分两次提交两个订单联系人",
+  "fixture": "data_entry/form.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "多条记录提交成功"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "rw.004",
+  "credentialRequirement": "required",
+  "riskLevel": "MEDIUM",
+  "credentialRef": "saas_demo",
+  "category": "saas",
+  "name": "SaaS登录4",
+  "objective": "登录并打开仪表盘",
+  "fixture": "saas/login.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "登录后看板/项目名称可见"
+  },
+  "credentialValue": {
+    "email": "ops@cloudsaas.io",
+    "password": "Saas#2024"
+  }
+}

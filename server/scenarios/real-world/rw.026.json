@@ -1,0 +1,15 @@
+{
+  "id": "rw.026",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS数据查看1",
+  "objective": "打开数据列表并确认出现「戴尔 U2723QE」",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "目标文本/数据出现在列表中"
+  }
+}

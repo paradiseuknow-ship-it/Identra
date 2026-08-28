@@ -1,0 +1,15 @@
+{
+  "id": "rw.052",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "状态更新2",
+  "objective": "把待付款订单标记为「已支付」",
+  "fixture": "scraping/list.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "状态变更生效"
+  }
+}

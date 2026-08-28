@@ -1,0 +1,15 @@
+{
+  "id": "rw.086",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "SPA多页1",
+  "objective": "登录 SaaS → 新建项目 → 在项目内创建任务 → 确认任务存在",
+  "fixture": "saas/login.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "跨步骤最终状态成立"
+  }
+}

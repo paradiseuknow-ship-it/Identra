@@ -1,0 +1,15 @@
+{
+  "id": "rw.076",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "多步确认1",
+  "objective": "搜索「耳机」→ 加入购物车 → 确认购物车出现该商品",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "最终状态确认"
+  }
+}

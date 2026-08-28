@@ -1,0 +1,15 @@
+{
+  "id": "rw.074",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "字段校验4",
+  "objective": "填写超长文本触发长度校验",
+  "fixture": "data_entry/form.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "校验提示出现"
+  }
+}

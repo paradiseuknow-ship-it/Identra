@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>操作台</title>
+  <style>body{font-family:system-ui,sans-serif;margin:40px auto;max-width:420px}button{padding:10px 18px;border:none;border-radius:8px;background:#0ea5e9;color:#fff;cursor:pointer}#status{min-height:20px;margin-top:12px;color:#64748b}</style>
+</head>
+<body>
+  <h2>异步操作台</h2>
+  <p>点击按钮会发起请求，但服务端永远不返回成功状态（用于验证「验证失败」恢复路径）。</p>
+  <button id="actBtn" type="button" aria-label="执行操作按钮">执行操作</button>
+  <p id="status" aria-live="polite"></p>
+  <script>
+    // 注意：点击后只更新“处理中”，从不出现“操作成功”文本 → 触发 VERIFY_FAILED
+    document.getElementById('actBtn').addEventListener('click', function () {
+      document.getElementById('status').textContent = '处理中…（模拟无响应服务）';
+    });
+  </script>
+</body>
+</html>

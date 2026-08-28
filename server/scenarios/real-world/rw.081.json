@@ -1,0 +1,15 @@
+{
+  "id": "rw.081",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "动态DOM1",
+  "objective": "等待页面加载完成后在搜索框输入「平板」并搜索",
+  "fixture": "ecommerce/search_lazy.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "动态内容加载并定位成功"
+  }
+}

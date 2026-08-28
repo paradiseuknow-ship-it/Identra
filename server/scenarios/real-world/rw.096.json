@@ -1,0 +1,15 @@
+{
+  "id": "rw.096",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "长流程扩展4",
+  "objective": "打开列表筛选后翻页确认数据",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "跨步骤最终状态成立"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.090",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "SPA多页5",
+  "objective": "搜索 → 对比两商品 → 加入购物车 → 确认",
+  "fixture": "saas/login.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "跨步骤最终状态成立"
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "byFailureType": {
+    "SEMANTIC_RELOCATE": 5,
+    "VERIFY_RETRY": 3
+  },
+  "byActionVerb": {
+    "update": 1,
+    "click": 3,
+    "fill": 3,
+    "submit": 1
+  },
+  "byCategory": {
+    "ecommerce": 3,
+    "data_entry": 2,
+    "longflow": 3
+  },
+  "byTargetHint": {
+    "将库存数量改为 50": 1,
+    "点击显示器商品对应的编辑按钮，进入编辑页面": 1,
+    "在价格输入框中填入199": 1,
+    "提交联系表单": 1,
+    "点击选择简历文件": 1,
+    "输入登录邮箱": 2,
+    "点击注册入口进入注册页面": 1
+  },
+  "samples": [
+    {
+      "rw": "rw.041",
+      "category": "ecommerce",
+      "objective": "搜索「无线鼠标」后将库存数量改为 50",
+      "fixture": "ecommerce/search.html",
+      "failureType": "SEMANTIC_RELOCATE",
+      "targetHint": "将库存数量改为 50",
+      "error": "将库存数量改为 50 需人工处理（重试4次耗尽）: 修复尝试已达上限(SEMANTIC_RELOCATE)，需人工处理"
+    },
+    {
+      "rw": "rw.042",
+      "category": "ecommerce",
+      "objective": "将商品「显示器」库存更新为 12",
+      "fixture": "ecommerce/search.html",
+      "failureType": "VERIFY_RETRY",
+      "targetHint": "点击显示器商品对应的编辑按钮，进入编辑页面",
+      "error": "点击显示器商品对应的编辑按钮，进入编辑页面 需人工处理（重试4次耗尽）: 修复尝试已达上限(VERIFY_RETRY)，需人工处理"
+    },
+    {
+      "rw": "rw.044",
+      "category": "ecommerce",
+      "objective": "修改商品价格字段为 199",
+      "fixture": "ecommerce/search.html",
+      "failureType": "SEMANTIC_RELOCATE",
+      "targetHint": "在价格输入框中填入199",
+      "error": "在价格输入框中填入199 需人工处理（重试4次耗尽）: 修复尝试已达上限(SEMANTIC_RELOCATE)，需人工处理"
+    },
+    {
+      "rw": "rw.058",
+      "category": "data_entry",
+      "objective": "填写联系表单：公司 ACME，联系人王五",
+      "fixture": "data_entry/form.html",
+      "failureType": "VERIFY_RETRY",
+      "targetHint": "提交联系表单",
+      "error": "提交联系表单 需人工处理（重试4次耗尽）: 修复尝试已达上限(VERIFY_RETRY)，需人工处理"
+    },
+    {
+      "rw": "rw.068",
+      "category": "data_entry",
+      "objective": "选择简历文件并确认",
+      "fixture": "download.html",
+      "failureType": "SEMANTIC_RELOCATE",
+      "targetHint": "点击选择简历文件",
+      "error": "点击选择简历文件 需人工处理（重试4次耗尽）: 修复尝试已达上限(SEMANTIC_RELOCATE)，需人工处理"
+    },
+    {
+      "rw": "rw.077",
+      "category": "longflow",
+      "objective": "登录后新建项目 → 返回列表确认存在",
+      "fixture": "ecommerce/search.html",
+      "failureType": "SEMANTIC_RELOCATE",
+      "targetHint": "输入登录邮箱",
+      "error": "输入登录邮箱 需人工处理（重试4次耗尽）: 修复尝试已达上限(SEMANTIC_RELOCATE)，需人工处理"
+    },
+    {
+      "rw": "rw.093",
+      "category": "longflow",
+      "objective": "登录后查看看板再导出报表",
+      "fixture": "ecommerce/search.html",
+      "failureType": "SEMANTIC_RELOCATE",
+      "targetHint": "输入登录邮箱",
+      "error": "输入登录邮箱 需人工处理（重试4次耗尽）: 修复尝试已达上限(SEMANTIC_RELOCATE)，需人工处理"
+    },
+    {
+      "rw": "rw.095",
+      "category": "longflow",
+      "objective": "注册会员并登录再修改头像",
+      "fixture": "ecommerce/search.html",
+      "failureType": "VERIFY_RETRY",
+      "targetHint": "点击注册入口进入注册页面",
+      "error": "点击注册入口进入注册页面 需人工处理（重试4次耗尽）: 修复尝试已达上限(VERIFY_RETRY)，需人工处理"
+    }
+  ]
+}

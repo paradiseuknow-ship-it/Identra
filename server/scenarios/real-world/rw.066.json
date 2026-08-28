@@ -1,0 +1,15 @@
+{
+  "id": "rw.066",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "文件上传1",
+  "objective": "在上传控件选择文件并提交",
+  "fixture": "download.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "上传/提交成功"
+  }
+}

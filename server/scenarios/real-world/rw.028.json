@@ -1,0 +1,15 @@
+{
+  "id": "rw.028",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS数据查看3",
+  "objective": "打开成员列表统计管理员数量",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "目标文本/数据出现在列表中"
+  }
+}

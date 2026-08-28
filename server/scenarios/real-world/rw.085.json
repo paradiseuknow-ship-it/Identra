@@ -1,0 +1,15 @@
+{
+  "id": "rw.085",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "动态DOM5",
+  "objective": "在 SPA 路由切换后搜索「USB 网卡」",
+  "fixture": "ecommerce/search_lazy.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "动态内容加载并定位成功"
+  }
+}

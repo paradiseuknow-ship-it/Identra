@@ -1,0 +1,15 @@
+{
+  "id": "rw.071",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "字段校验1",
+  "objective": "填写表单并触发邮箱格式校验错误",
+  "fixture": "data_entry/form.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "校验提示出现"
+  }
+}

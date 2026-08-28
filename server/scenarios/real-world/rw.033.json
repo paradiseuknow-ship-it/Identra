@@ -1,0 +1,15 @@
+{
+  "id": "rw.033",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "商品搜索3",
+  "objective": "搜索「机械键盘」",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "搜索结果页出现商品"
+  }
+}

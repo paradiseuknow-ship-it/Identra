@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>优选商城 - 动态加载搜索</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #f6f7f9; color: #222; }
+    header { background: #1f2937; color: #fff; padding: 16px 32px; font-size: 18px; }
+    main { max-width: 880px; margin: 24px auto; padding: 0 16px; }
+    input#q { padding: 10px 12px; font-size: 15px; border: 1px solid #ccc; border-radius: 8px; width: 320px; }
+    button#searchBtn { padding: 10px 20px; font-size: 15px; border: none; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; }
+    /* 搜索框初始隐藏，模拟 SPA 异步渲染：首屏 ELEMENT_NOT_FOUND → 恢复(wait)后可见 */
+    #q, #searchBtn { visibility: hidden; }
+    #results { margin-top: 20px; min-height: 30px; }
+  </style>
+</head>
+<body>
+  <header>优选商城 · 动态加载搜索</header>
+  <main>
+    <input id="q" name="q" type="text" placeholder="搜索商品" aria-label="搜索框" />
+    <button id="searchBtn" type="button" aria-label="搜索按钮">搜索</button>
+    <p id="results" aria-live="polite"></p>
+  </main>
+  <script>
+    // 模拟首屏异步渲染：800ms 后搜索框才可见，用于验证“元素未就绪→恢复等待”路径
+    setTimeout(function () {
+      document.getElementById('q').style.visibility = 'visible';
+      document.getElementById('searchBtn').style.visibility = 'visible';
+    }, 800);
+    document.getElementById('searchBtn').addEventListener('click', function () {
+      var q = document.getElementById('q').value.trim();
+      document.getElementById('results').textContent = '搜索结果：' + (q || '(空)');
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "id": "rw.038",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "商品编辑3",
+  "objective": "编辑商品「机械键盘」描述追加规格",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "编辑保存成功"
+  }
+}

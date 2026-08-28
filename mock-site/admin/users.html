@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>AdminOS - 用户管理</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #f1f5f9; color: #1e293b; }
+    header { background: #334155; color: #fff; padding: 14px 28px; }
+    main { max-width: 760px; margin: 24px auto; padding: 0 16px; }
+    .panel { background: #fff; padding: 18px; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.05); }
+    label { display: block; font-size: 13px; color: #475569; margin: 10px 0 4px; }
+    input, select { width: 100%; padding: 9px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 8px; }
+    button#addBtn { margin-top: 14px; padding: 10px 18px; border: none; border-radius: 8px; background: #7c3aed; color: #fff; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; margin-top: 18px; background: #fff; border-radius: 10px; overflow: hidden; }
+    th, th { padding: 10px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+    td { padding: 10px; border-bottom: 1px solid #f1f5f9; }
+    #msg { margin-top: 10px; min-height: 16px; color: #16a34a; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <header>AdminOS · 用户管理</header>
+  <main>
+    <div class="panel">
+      <h3>新增用户</h3>
+      <label for="username">用户名</label>
+      <input id="username" name="username" type="text" aria-label="用户名" />
+      <label for="email">邮箱</label>
+      <input id="email" name="email" type="text" aria-label="邮箱" />
+      <label for="role">角色</label>
+      <select id="role" name="role" aria-label="角色">
+        <option value="viewer">viewer</option>
+        <option value="editor">editor</option>
+        <option value="admin">admin</option>
+      </select>
+      <button id="addBtn" type="button" aria-label="创建用户按钮">创建用户</button>
+      <p id="msg" aria-live="polite"></p>
+    </div>
+    <table>
+      <thead><tr><th>用户名</th><th>邮箱</th><th>角色</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </main>
+  <script>
+    var seq = 0;
+    document.getElementById('addBtn').addEventListener('click', function () {
+      var u = document.getElementById('username').value.trim();
+      var e = document.getElementById('email').value.trim();
+      var r = document.getElementById('role').value;
+      if (!u || !e) { document.getElementById('msg').style.color = '#dc2626'; document.getElementById('msg').textContent = '用户名与邮箱必填'; return; }
+      seq++;
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + u + '</td><td>' + e + '</td><td>' + r + '</td>';
+      document.getElementById('rows').appendChild(tr);
+      document.getElementById('msg').style.color = '#16a34a';
+      document.getElementById('msg').textContent = '用户已创建：' + u + '（共 ' + seq + ' 个）';
+    });
+  </script>
+</body>
+</html>

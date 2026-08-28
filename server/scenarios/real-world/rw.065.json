@@ -1,0 +1,15 @@
+{
+  "id": "rw.065",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "批量输入5",
+  "objective": "录入两条地址记录",
+  "fixture": "data_entry/form.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "多条记录提交成功"
+  }
+}

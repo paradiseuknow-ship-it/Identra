@@ -1,0 +1,15 @@
+{
+  "id": "rw.082",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "动态DOM2",
+  "objective": "在搜索框（id 已改为 query）输入「显示器」并搜索",
+  "fixture": "ecommerce/search_lazy.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "动态内容加载并定位成功"
+  }
+}

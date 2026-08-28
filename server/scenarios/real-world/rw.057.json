@@ -1,0 +1,15 @@
+{
+  "id": "rw.057",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "表格填写2",
+  "objective": "提交注册表单：姓名李四，邮箱 l@x.io，手机号 13700000000",
+  "fixture": "data_entry/form.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "提交成功提示"
+  }
+}

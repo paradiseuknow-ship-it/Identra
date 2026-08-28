@@ -1,0 +1,15 @@
+{
+  "id": "rw.061",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "批量输入1",
+  "objective": "连续录入两条会员：张三/李四",
+  "fixture": "data_entry/form.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "多条记录提交成功"
+  }
+}

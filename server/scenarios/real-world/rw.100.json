@@ -1,0 +1,15 @@
+{
+  "id": "rw.100",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "长流程扩展8",
+  "objective": "搜索「键盘」加购并进入结算确认地址",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "跨步骤最终状态成立"
+  }
+}

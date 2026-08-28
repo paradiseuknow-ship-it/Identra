@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Async Success Fixture</title>
+</head>
+<body>
+  <h1>Async Payment</h1>
+  <p>Status: <span id="status">Pending…</span></p>
+  <button id="trigger" onclick="start()">Pay now</button>
+  <script>
+    // 真实异步一致性场景：动作（点击）后，状态在 ~900ms 后才变为 "SUCCESS"。
+    // 同步立即观察会错过，必须等待 + 重新观察。
+    function start() {
+      document.getElementById('status').textContent = 'Processing…';
+      setTimeout(function () {
+        document.getElementById('status').textContent = 'SUCCESS';
+      }, 900);
+    }
+    // 无点击也算：页面加载后自动进入处理（便于纯导航型集成测试）
+    window.addEventListener('load', function () {
+      document.getElementById('status').textContent = 'Processing…';
+      setTimeout(function () {
+        document.getElementById('status').textContent = 'SUCCESS';
+      }, 900);
+    });
+  </script>
+</body>
+</html>

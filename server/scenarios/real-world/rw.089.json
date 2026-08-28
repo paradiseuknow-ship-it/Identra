@@ -1,0 +1,15 @@
+{
+  "id": "rw.089",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "SPA多页4",
+  "objective": "打开列表 → 筛选 → 导出 → 确认导出触发",
+  "fixture": "saas/login.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "跨步骤最终状态成立"
+  }
+}

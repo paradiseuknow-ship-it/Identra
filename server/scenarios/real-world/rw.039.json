@@ -1,0 +1,15 @@
+{
+  "id": "rw.039",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "商品编辑4",
+  "objective": "在商品编辑页更新价格显示",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "编辑保存成功"
+  }
+}

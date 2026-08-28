@@ -1,0 +1,15 @@
+{
+  "id": "rw.062",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "批量输入2",
+  "objective": "批量填写三个邮箱字段",
+  "fixture": "data_entry/form.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "多条记录提交成功"
+  }
+}

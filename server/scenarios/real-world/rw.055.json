@@ -1,0 +1,15 @@
+{
+  "id": "rw.055",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "状态更新5",
+  "objective": "将订单置为「已签收」",
+  "fixture": "scraping/list.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "状态变更生效"
+  }
+}

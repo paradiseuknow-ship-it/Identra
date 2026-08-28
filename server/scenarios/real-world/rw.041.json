@@ -1,0 +1,15 @@
+{
+  "id": "rw.041",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "库存修改1",
+  "objective": "搜索「无线鼠标」后将库存数量改为 50",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "库存/价格更新生效"
+  }
+}

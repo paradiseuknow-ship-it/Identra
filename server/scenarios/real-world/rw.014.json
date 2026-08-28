@@ -1,0 +1,15 @@
+{
+  "id": "rw.014",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS搜索4",
+  "objective": "搜索「API 密钥」设置项",
+  "fixture": "saas/login.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "搜索结果区域出现"
+  }
+}

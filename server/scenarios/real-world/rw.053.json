@@ -1,0 +1,15 @@
+{
+  "id": "rw.053",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "状态更新3",
+  "objective": "将退款订单状态改为「已完成」",
+  "fixture": "scraping/list.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "状态变更生效"
+  }
+}

@@ -1,0 +1,84 @@
+const BASE = '/api';
+
+async function req(method, url, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(BASE + url, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+export const api = {
+  // profiles
+  listProfiles: () => req('GET', '/profiles'),
+  getProfile: (id) => req('GET', '/profiles/' + id),
+  createProfile: (b) => req('POST', '/profiles', b),
+  updateProfile: (id, b) => req('PUT', '/profiles/' + id, b),
+  regenerateSeed: (id) => req('PUT', '/profiles/' + id, { regenerateSeed: true }),
+  deleteProfile: (id) => req('DELETE', '/profiles/' + id),
+  duplicateProfile: (id) => req('POST', '/profiles/' + id + '/duplicate'),
+  previewFp: (b) => req('POST', '/profiles/preview-fp', b),
+
+  // proxies
+  listProxies: () => req('GET', '/proxies'),
+  createProxy: (b) => req('POST', '/proxies', b),
+  updateProxy: (id, b) => req('PUT', '/proxies/' + id, b),
+  deleteProxy: (id) => req('DELETE', '/proxies/' + id),
+  checkProxy: (id) => req('POST', '/proxies/' + id + '/check'),
+  checkProxyGeo: (id) => req('POST', '/proxies/' + id + '/check-geo'),
+  checkInlineProxy: (b) => req('POST', '/proxies/check-inline', b),
+
+  // browser
+  launch: (id) => req('POST', '/browser/' + id + '/launch'),
+  stop: (id) => req('POST', '/browser/' + id + '/stop'),
+  status: () => req('GET', '/browser/status'),
+
+  // vault
+  getVault: (id) => req('GET', '/vault/' + id),
+  setVault: (id, b) => req('POST', '/vault/' + id, b),
+
+  // tasks
+  listTasks: () => req('GET', '/tasks'),
+  createTask: (b) => req('POST', '/tasks', b),
+  updateTask: (id, b) => req('PUT', '/tasks/' + id, b),
+  deleteTask: (id) => req('DELETE', '/tasks/' + id),
+
+  // automation
+  runAutomation: (b) => req('POST', '/automation/run', b),
+  previewAutomation: (b) => req('POST', '/automation/preview', b),
+
+  // cookies
+  exportCookies: (id) => req('GET', '/cookies/' + id + '/export'),
+  importCookies: (id, cookies) => req('POST', '/cookies/' + id + '/import', { cookies }),
+
+  // AI Browser Operator
+  aiCreateTask: (b) => req('POST', '/ai/tasks', b),
+  aiListTasks: () => req('GET', '/ai/tasks'),
+  aiGetTask: (id) => req('GET', '/ai/tasks/' + id),
+  aiStartTask: (id) => req('POST', '/ai/tasks/' + id + '/start'),
+  aiPauseTask: (id) => req('POST', '/ai/tasks/' + id + '/pause'),
+  aiCancelTask: (id) => req('POST', '/ai/tasks/' + id + '/cancel'),
+  aiResumeTask: (id) => req('POST', '/ai/tasks/' + id + '/resume'),
+  aiRetryTask: (id) => req('POST', '/ai/tasks/' + id + '/retry'),
+  aiTaskEvents: (id) => req('GET', '/ai/tasks/' + id + '/recent-events'),
+  aiHealth: () => req('GET', '/ai/health'),
+  // Phase 1.4：Chat / Session / Stats / Snapshot / Approval
+  aiChat: (b) => req('POST', '/ai/chat', b),
+  aiSessions: () => req('GET', '/ai/sessions'),
+  aiLLMStats: () => req('GET', '/ai/llm/stats'),
+  aiSnapshots: (id) => req('GET', '/ai/tasks/' + id + '/snapshots'),
+  aiApprove: (id) => req('POST', '/ai/tasks/' + id + '/approve'),
+  aiReject: (id) => req('POST', '/ai/tasks/' + id + '/reject'),
+  aiModify: (id, b) => req('POST', '/ai/tasks/' + id + '/modify', b),
+
+  // Phase 4.3 Observability（agent 路由挂载于 /api/ai）
+  aiDashboard: () => req('GET', '/ai/observability/dashboard'),
+  aiTrace: (taskId) => req('GET', '/ai/observability/trace/' + taskId),
+  aiReplay: (taskId) => req('GET', '/ai/tasks/' + taskId + '/replay'),
+};
+
+export default api;

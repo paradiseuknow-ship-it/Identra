@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支上的多次推送只保留最新一次运行，避免旧结果占用队列。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 回归测试 (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 安装 Chromium（部分测试经 Playwright 起真实浏览器）
+        run: npx playwright install --with-deps chromium
+
+      - name: 运行回归套件
+        run: npm test
+        # 说明：回归执行器（server/scripts/runRegression.js）会
+        #   · 取证型断言（依赖历史数据集）标记为 SKIP 而非 FAIL；
+        #   · 已登记的已知能力缺口标记为 KNOWN-GAP，单独归类、不阻塞退出码；
+        #   · 任何未登记的失败 → 退出码 1 → 本步骤变红。
+        # 因此这里变红即代表真实回归，不需要"看习惯"。
+        env:
+          NODE_ENV: test
+          REGRESSION_TIMEOUT_MS: '300000'
+
+      - name: 上传回归日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-log-node${{ matrix.node }}
+          path: .benchmark/regression_*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  build:
+    name: 前端构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: 安装前端依赖
+        run: npm install --no-audit --no-fund
+        working-directory: client
+
+      - name: 构建
+        run: npm run build
+        working-directory: client

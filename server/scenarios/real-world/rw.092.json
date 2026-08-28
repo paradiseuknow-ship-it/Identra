@@ -1,0 +1,22 @@
+{
+  "id": "rw.092",
+  "credentialRequirement": "required",
+  "riskLevel": "CRITICAL",
+  "credentialRef": "pay_demo",
+  "category": "longflow",
+  "name": "含支付流程2",
+  "objective": "加购后结算使用支付凭据完成下单",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "支付/下单结果"
+  },
+  "credentialValue": {
+    "card": {
+      "number": "4242424242424242",
+      "exp": "12/30",
+      "cvc": "123"
+    }
+  }
+}

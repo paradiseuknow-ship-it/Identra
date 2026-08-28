@@ -1,0 +1,15 @@
+{
+  "id": "rw.098",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "长流程扩展6",
+  "objective": "登录 SaaS 创建项目并邀请成员",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "跨步骤最终状态成立"
+  }
+}

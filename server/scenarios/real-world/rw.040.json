@@ -1,0 +1,15 @@
+{
+  "id": "rw.040",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "商品编辑5",
+  "objective": "编辑商品分类标签",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "编辑保存成功"
+  }
+}

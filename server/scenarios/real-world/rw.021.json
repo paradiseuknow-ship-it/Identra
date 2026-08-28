@@ -1,0 +1,15 @@
+{
+  "id": "rw.021",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS改设置1",
+  "objective": "进入设置关闭邮件通知",
+  "fixture": "saas/login.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "设置保存成功提示"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.027",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS数据查看2",
+  "objective": "查看报表并抓取总用户数",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "目标文本/数据出现在列表中"
+  }
+}

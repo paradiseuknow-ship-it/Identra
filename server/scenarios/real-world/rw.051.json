@@ -1,0 +1,15 @@
+{
+  "id": "rw.051",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "状态更新1",
+  "objective": "将订单状态更新为「已发货」",
+  "fixture": "scraping/list.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "状态变更生效"
+  }
+}

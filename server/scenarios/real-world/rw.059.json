@@ -1,0 +1,15 @@
+{
+  "id": "rw.059",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "表格填写4",
+  "objective": "录入客户：姓名赵六，邮箱 z@y.io",
+  "fixture": "data_entry/form.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "提交成功提示"
+  }
+}

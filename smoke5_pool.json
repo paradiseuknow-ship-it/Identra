@@ -1,0 +1,82 @@
+[
+  {
+    "taskId": "rw.001",
+    "category": "saas",
+    "name": "SaaS登录1",
+    "objective": "登录系统并查看看板",
+    "fixture": "saas/login.html",
+    "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+    "expectedVerification": {
+      "type": "element_present",
+      "description": "登录后看板/项目名称可见"
+    },
+    "credentialRequirement": "required",
+    "credentialRef": "saas_demo",
+    "riskLevel": "MEDIUM",
+    "difficulty": "medium"
+  },
+  {
+    "taskId": "rw.002",
+    "category": "saas",
+    "name": "SaaS登录2",
+    "objective": "使用凭据登录 SaaS 控制台",
+    "fixture": "saas/login.html",
+    "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+    "expectedVerification": {
+      "type": "element_present",
+      "description": "登录后看板/项目名称可见"
+    },
+    "credentialRequirement": "required",
+    "credentialRef": "saas_demo",
+    "riskLevel": "MEDIUM",
+    "difficulty": "medium"
+  },
+  {
+    "taskId": "rw.003",
+    "category": "saas",
+    "name": "SaaS登录3",
+    "objective": "登录后进入项目列表",
+    "fixture": "saas/login.html",
+    "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+    "expectedVerification": {
+      "type": "element_present",
+      "description": "登录后看板/项目名称可见"
+    },
+    "credentialRequirement": "required",
+    "credentialRef": "saas_demo",
+    "riskLevel": "MEDIUM",
+    "difficulty": "medium"
+  },
+  {
+    "taskId": "rw.004",
+    "category": "saas",
+    "name": "SaaS登录4",
+    "objective": "登录并打开仪表盘",
+    "fixture": "saas/login.html",
+    "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+    "expectedVerification": {
+      "type": "element_present",
+      "description": "登录后看板/项目名称可见"
+    },
+    "credentialRequirement": "required",
+    "credentialRef": "saas_demo",
+    "riskLevel": "MEDIUM",
+    "difficulty": "medium"
+  },
+  {
+    "taskId": "rw.005",
+    "category": "saas",
+    "name": "SaaS登录5",
+    "objective": "使用邮箱密码登录工作区",
+    "fixture": "saas/login.html",
+    "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+    "expectedVerification": {
+      "type": "element_present",
+      "description": "登录后看板/项目名称可见"
+    },
+    "credentialRequirement": "required",
+    "credentialRef": "saas_demo",
+    "riskLevel": "MEDIUM",
+    "difficulty": "medium"
+  }
+]

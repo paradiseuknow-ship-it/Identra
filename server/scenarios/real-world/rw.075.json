@@ -1,0 +1,15 @@
+{
+  "id": "rw.075",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "字段校验5",
+  "objective": "重复提交验证去重",
+  "fixture": "data_entry/form.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "校验提示出现"
+  }
+}

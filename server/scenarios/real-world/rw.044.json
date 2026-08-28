@@ -1,0 +1,15 @@
+{
+  "id": "rw.044",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "库存修改4",
+  "objective": "修改商品价格字段为 199",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "库存/价格更新生效"
+  }
+}

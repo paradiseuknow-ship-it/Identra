@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Async Loading Fixture</title>
+</head>
+<body>
+  <h1>Async Report</h1>
+  <p>State: <span id="state">Loading…</span></p>
+  <script>
+    // 进入 loading 状态，~1500ms 后才出现最终态 "Loaded"。
+    window.addEventListener('load', function () {
+      setTimeout(function () {
+        document.getElementById('state').textContent = 'Loaded';
+      }, 1500);
+    });
+  </script>
+</body>
+</html>

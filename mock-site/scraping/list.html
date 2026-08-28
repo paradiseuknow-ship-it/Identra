@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>比价网 - 商品列表</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #fff; color: #222; }
+    header { background: #f43f5e; color: #fff; padding: 14px 28px; }
+    main { max-width: 820px; margin: 24px auto; padding: 0 16px; }
+    .item { display: flex; justify-content: space-between; padding: 12px 4px; border-bottom: 1px solid #f1f5f9; }
+    .item .name { font-weight: 600; }
+    .item .shop { color: #64748b; font-size: 13px; }
+    .item .price { color: #e11d48; font-weight: 700; }
+    #footer { margin-top: 18px; color: #64748b; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>比价网 · 显示器榜单</header>
+  <main>
+    <div id="list"></div>
+    <div id="footer">共 <span id="count">0</span> 条商品</div>
+  </main>
+  <script>
+    var DATA = [
+      { name: '戴尔 U2723QE 27寸 4K', shop: '戴尔官方', price: '¥3299' },
+      { name: 'LG 27UP850 27寸 4K', shop: 'LG旗舰店', price: '¥2499' },
+      { name: '飞利浦 279C9 27寸 4K', shop: '飞利浦', price: '¥2199' },
+      { name: '华硕 ProArt PA279CV', shop: '华硕', price: '¥2799' },
+      { name: '明基 PD2705Q 27寸', shop: '明基', price: '¥2599' },
+      { name: '三星 S27A800 27寸', shop: '三星', price: '¥2399' },
+      { name: 'AOC U27U2 27寸 4K', shop: 'AOC', price: '¥1899' },
+      { name: '小米 27寸 4K 显示器', shop: '小米', price: '¥1599' },
+      { name: '优派 VP2785 27寸', shop: '优派', price: '¥2999' },
+      { name: '艺卓 EV2785 27寸', shop: '艺卓', price: '¥6999' }
+    ];
+    var html = '';
+    DATA.forEach(function (d) {
+      html += '<div class="item"><div><span class="name">' + d.name + '</span><div class="shop">' + d.shop + '</div></div><div class="price">' + d.price + '</div></div>';
+    });
+    document.getElementById('list').innerHTML = html;
+    document.getElementById('count').textContent = DATA.length;
+  </script>
+</body>
+</html>

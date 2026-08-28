@@ -1,0 +1,15 @@
+{
+  "id": "rw.088",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "SPA多页3",
+  "objective": "注册 → 登录 → 修改资料 → 确认修改生效",
+  "fixture": "saas/login.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "跨步骤最终状态成立"
+  }
+}

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>登录页</title>
+  <style>body{font-family:sans-serif;max-width:360px;margin:40px auto}input,button{display:block;margin:8px 0;padding:8px;width:100%}#msg{color:#b00;min-height:20px}</style>
+</head>
+<body>
+  <h2>用户登录</h2>
+  <form id="loginForm" onsubmit="return doLogin(event)">
+    <label for="username">用户名</label>
+    <input id="username" name="username" type="text" aria-label="用户名" />
+    <label for="password">密码</label>
+    <input id="password" name="password" type="password" aria-label="密码" />
+    <button id="loginBtn" type="submit" aria-label="登录按钮">登录</button>
+  </form>
+  <div id="msg" aria-live="polite"></div>
+  <script>
+    function doLogin(e){
+      e.preventDefault();
+      var u=document.getElementById('username').value;
+      var p=document.getElementById('password').value;
+      if(u==='admin'&&p==='123456'){ document.getElementById('msg').textContent='登录成功'; return false; }
+      document.getElementById('msg').textContent='用户名或密码错误';
+      return false;
+    }
+  </script>
+</body>
+</html>

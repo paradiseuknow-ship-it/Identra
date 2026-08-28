@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CloudSaaS - 控制台登录</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+    .wrap { max-width: 380px; margin: 80px auto; background: #1e293b; padding: 28px; border-radius: 12px; }
+    h2 { margin-top: 0; }
+    label { display: block; margin: 12px 0 4px; font-size: 13px; color: #94a3b8; }
+    input { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: #e2e8f0; }
+    button { margin-top: 18px; width: 100%; padding: 11px; border: none; border-radius: 8px; background: #6366f1; color: #fff; cursor: pointer; font-size: 15px; }
+    #msg { margin-top: 12px; min-height: 18px; color: #f87171; font-size: 13px; }
+    #dash { display: none; margin-top: 18px; padding: 16px; background: #0f172a; border-radius: 8px; }
+    #dash h3 { margin: 0 0 10px; }
+    #exportBtn { background: #16a34a; width: auto; padding: 8px 16px; margin: 0; }
+    #exportMsg { color: #4ade80; font-size: 13px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h2>CloudSaaS 控制台</h2>
+    <form id="loginForm" onsubmit="return doLogin(event)">
+      <label for="email">企业邮箱</label>
+      <input id="email" name="email" type="text" aria-label="企业邮箱" />
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" aria-label="密码" />
+      <button id="loginBtn" type="submit" aria-label="登录按钮">登录</button>
+    </form>
+    <p id="msg" aria-live="polite"></p>
+    <div id="dash">
+      <h3>数据看板</h3>
+      <div>本月活跃用户：<b id="mau">12,480</b></div>
+      <button id="exportBtn" type="button" aria-label="导出报表按钮">导出 CSV</button>
+      <p id="exportMsg" aria-live="polite"></p>
+    </div>
+  </div>
+  <script>
+    function doLogin(e) {
+      e.preventDefault();
+      var u = document.getElementById('email').value.trim();
+      var p = document.getElementById('password').value;
+      if (u === 'ops@cloudsaas.io' && p === 'Saas#2024') {
+        document.getElementById('msg').textContent = '';
+        document.getElementById('dash').style.display = 'block';
+        return false;
+      }
+      document.getElementById('msg').textContent = '邮箱或密码错误';
+      return false;
+    }
+    document.getElementById('exportBtn').addEventListener('click', function () {
+      document.getElementById('exportMsg').textContent = '报表已导出：report_2024.csv';
+    });
+  </script>
+</body>
+</html>

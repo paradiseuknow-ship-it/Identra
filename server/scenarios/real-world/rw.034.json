@@ -1,0 +1,15 @@
+{
+  "id": "rw.034",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "商品搜索4",
+  "objective": "搜索「USB 网卡」",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "搜索结果页出现商品"
+  }
+}

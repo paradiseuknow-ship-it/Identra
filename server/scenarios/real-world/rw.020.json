@@ -1,0 +1,15 @@
+{
+  "id": "rw.020",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS建项目5",
+  "objective": "新建项目「内部工具」",
+  "fixture": "saas/login.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "项目创建成功提示或列表新增"
+  }
+}

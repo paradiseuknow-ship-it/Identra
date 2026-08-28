@@ -1,0 +1,15 @@
+{
+  "id": "rw.046",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "订单查询1",
+  "objective": "打开订单查询并搜索订单号最近一笔",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "订单信息可见"
+  }
+}

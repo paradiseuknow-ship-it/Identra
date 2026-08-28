@@ -1,0 +1,15 @@
+{
+  "id": "rw.016",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS建项目1",
+  "objective": "点击新建项目并填写名称「Q3 增长」",
+  "fixture": "saas/login.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "项目创建成功提示或列表新增"
+  }
+}

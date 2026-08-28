@@ -1,0 +1,15 @@
+{
+  "id": "rw.015",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS搜索5",
+  "objective": "在站内搜索「账单」",
+  "fixture": "saas/login.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "搜索结果区域出现"
+  }
+}

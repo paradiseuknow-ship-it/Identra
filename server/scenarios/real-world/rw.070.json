@@ -1,0 +1,15 @@
+{
+  "id": "rw.070",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "文件上传5",
+  "objective": "提交带文件的工单",
+  "fixture": "download.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "上传/提交成功"
+  }
+}

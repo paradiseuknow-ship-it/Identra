@@ -1,0 +1,15 @@
+{
+  "id": "rw.036",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "商品编辑1",
+  "objective": "搜索「耳机」后点击第一个商品进入编辑页修改标题",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "编辑保存成功"
+  }
+}

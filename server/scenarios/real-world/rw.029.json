@@ -1,0 +1,15 @@
+{
+  "id": "rw.029",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS数据查看4",
+  "objective": "查看订单数据确认最新一笔",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "目标文本/数据出现在列表中"
+  }
+}
