@@ -1,0 +1,15 @@
+{
+  "id": "rw.092",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "高难加购2",
+  "objective": "搜索「显示器」加购后再搜索「键盘」加购，确认购物车计数为 2 且两件商品均显示已加入购物车",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "购物车计数变为 2"
+  }
+}

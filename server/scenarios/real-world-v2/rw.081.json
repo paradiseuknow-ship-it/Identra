@@ -1,0 +1,15 @@
+{
+  "id": "rw.081",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "动态DOM1",
+  "objective": "等待页面加载完成后在搜索框输入「路由器」并搜索，确认出现搜索结果回显",
+  "fixture": "ecommerce/search_lazy.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "搜索结果：路由器 回显出现"
+  }
+}

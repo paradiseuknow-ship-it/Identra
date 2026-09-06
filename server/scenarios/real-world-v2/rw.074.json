@@ -1,0 +1,15 @@
+{
+  "id": "rw.074",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "字段校验4",
+  "objective": "填写姓名与邮箱后提交，确认提示变为注册成功欢迎语",
+  "fixture": "data_entry/form.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "注册成功欢迎提示出现"
+  }
+}

@@ -1,6 +1,7 @@
 'use strict';
 
 const D = require('./data');
+const FPInput = require('./inputNormalize');
 const { countryToLanguage } = require('../geoip');
 
 // 简单可复现 PRNG（mulberry32），seed 由 profile id 派生，保证同一 profile 指纹稳定。
@@ -82,6 +83,12 @@ function resolveIpBased(override, ipGeo) {
 function generateFingerprint(seedStr, override = {}, ipGeo = null) {
   const rng = mulberry32(hashString(seedStr));
 
+  // Phase 14.1：输入规范化 + fail-fast。大小写/别名归一到 canonical 值域；
+  // 未知 os/browser 或模板池不可用组合 → 确定性报错，绝不静默回退随机环境
+  //（2026-09-04 webflow 侦察实证：小写输入 → 池空 → 全池随机 → iPhone UA × Windows platform 灾难性错配）。
+  // 规范化不触碰 rng，canonical 输入的既有指纹保持逐字节稳定。
+  override = FPInput.canonicalizeFingerprintInput(override);
+
   // 若指定了 os/browser，优先选匹配的 UA；否则随机
   const targetOs = override.os;
   const targetBrowser = override.browser;
@@ -92,7 +99,10 @@ function generateFingerprint(seedStr, override = {}, ipGeo = null) {
       const browserMatch = targetBrowser ? u.browser === targetBrowser : true;
       return osMatch && browserMatch;
     });
-    if (uaPool.length === 0) uaPool = D.USER_AGENTS;
+    if (uaPool.length === 0) {
+      // Phase 14.1：组合不可用 → fail-fast（原为 uaPool = D.USER_AGENTS 全池随机，环境错配根源之一）
+      FPInput.assertCombinationAvailable(targetOs, targetBrowser, D.USER_AGENTS);
+    }
   }
   const uaObj = override.userAgent ? null : pick(rng, uaPool);
   const os = override.os || (uaObj ? uaObj.os : 'Windows');
@@ -140,7 +150,10 @@ function generateFingerprint(seedStr, override = {}, ipGeo = null) {
   const languages = buildLanguages(lang, langBase);
 
   const fonts = override.fonts || D.FONT_SETS[os] || D.FONT_SETS.Windows;
-  const webgl = override.webgl || pick(rng, D.WEBGL);
+  // STEP 19 修复：WEBGL 池按 OS 过滤——Apple GPU 只属于 macOS；Windows/Linux profile 抽到
+  // Apple vendor 会被 CreepJS 的「UA platform × WebGL vendor 交叉验证」直接标记（实证踩中）。
+  const webglPool = D.WEBGL.filter((w) => (os === 'macOS') === /Apple/.test(w.vendor));
+  const webgl = override.webgl || pick(rng, webglPool.length ? webglPool : D.WEBGL);
   const hardwareConcurrency = override.hardwareConcurrency || pickInt(rng, 4, 16);
   const deviceMemory = override.deviceMemory || pick(rng, D.DEVICE_MEMORY);
   const deviceName = override.deviceName || pick(rng, D.DEVICE_NAMES[os] || D.DEVICE_NAMES.Windows);

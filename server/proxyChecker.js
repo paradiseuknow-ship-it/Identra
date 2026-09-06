@@ -144,14 +144,38 @@ async function fetchEgressIpViaProxy(proxy) {
   throw lastErr || new Error('proxy egress failed');
 }
 
-async function fetchEgressIpDirect() {
+// 直连出口 IP 探测：多源回退（STEP 18 实证修复）——原单源 api.ipify.org 在部分网络（如 CN 直连）
+// 被连接重置，导致「基于 IP」指纹模式的直连分支恒失败；按可达性顺序多源回退，单请求 6s 超时防悬挂。
+const EGRESS_IP_SOURCES = [
+  'https://api.ipify.org?format=json',
+  'https://api.ip.sb/jsonip',
+  'https://api.myip.com',
+];
+function fetchJsonUrl(url, timeoutMs = 6000) {
   return new Promise((resolve, reject) => {
-    https.get('https://api.ipify.org?format=json', (r) => {
+    const mod = url.startsWith('https:') ? require('https') : require('http');
+    const req = mod.get(url, (r) => {
+      if (r.statusCode !== 200) { r.resume(); return reject(new Error('HTTP ' + r.statusCode)); }
       let b = '';
       r.on('data', (d) => (b += d));
       r.on('end', () => resolve(b.trim()));
-    }).on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => { req.destroy(new Error('timeout ' + timeoutMs + 'ms')); });
   });
+}
+function parseEgressIp(body) {
+  try { return JSON.parse(body).ip || null; } catch (e) { return null; }
+}
+async function fetchEgressIpDirect() {
+  for (const src of EGRESS_IP_SOURCES) {
+    try {
+      const body = await fetchJsonUrl(src);
+      const ip = parseEgressIp(body);
+      if (ip) return body;
+    } catch (e) { /* 换下一个源 */ }
+  }
+  throw new Error('所有出口 IP 探测源均不可达: ' + EGRESS_IP_SOURCES.join(', '));
 }
 
 // 解析出口公网 IP（带重试）。

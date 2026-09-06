@@ -22,6 +22,7 @@ const planner = require('./planner');
 const flowPlanner = require('./intelligence/flowPlanner');
 const evidence = require('./evidence');
 const store = require('./store');
+const identity = require('../identity'); // STEP 22 (I1)：/secrets 走唯一 RBAC 检查入口
 const { createProvider } = require('./llm/provider');
 
 // 加载 runtime 以注册 executor 钩子（start/resume 后自动触发 Agent 循环）
@@ -36,13 +37,32 @@ setImmediate(() => {
   }
 });
 
+// CAP-M1：定时触发循环（1s tick，unref，惰性启动；只扫描到期的 ACTIVE schedule 并创建任务，
+// 执行链决策与 /execution/submit 一致，绝不改任务业务状态）
+setImmediate(() => {
+  try {
+    require('./scheduleTrigger').startTriggerLoop();
+  } catch (e) {
+    console.warn('[scheduleTrigger] 循环启动异常(已忽略):', String(e.message || e).slice(0, 150));
+  }
+});
+
 const router = express.Router();
 
 // ---------------- Task ----------------
 router.post('/tasks', (req, res) => {
   try {
-    const t = taskManager.createTask(req.body || {});
-    res.json(t);
+    // CAP-K2：创建前咨询 Intelligence Router（fail-open，只建议不执行）。
+    // 此前 POST /tasks 零 Router 咨询：调用方漏传 profileId 时 start() 直接失败，
+    // 且 Router 的失败经验 warnings 在该路径从未进入执行链。
+    const { input, intelligence } = require('./intelligence/router/taskInputEnhancer').enhanceTaskInput(req.body || {});
+    // CAP-O1 §10：Task 归属盖章 —— workspaceId/createdBy 由身份层提供，不接受调用方伪造
+    if (req.identityUser) {
+      input.workspaceId = req.identityUser.currentWorkspaceId || input.workspaceId;
+      input.createdBy = req.identityUser.id;
+    }
+    const t = taskManager.createTask(input);
+    res.json(Object.assign({}, t, intelligence ? { intelligence } : {}));
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
   }
@@ -408,6 +428,9 @@ router.post('/chat', async (req, res) => {
     } catch (e) { /* Router 失败不阻断，沿用既有逻辑 */ }
 
     // 3) 创建 Task（不执行，等待人工确认 Plan）
+    // CAP-K2：Router 决策摘要（含失败经验 warnings）随任务落库，经 contextBuilder 进 Planner 上下文
+    const { toIntelligence } = require('./intelligence/router/taskInputEnhancer');
+    const intelligence = toIntelligence(routerDecision);
     const task = taskManager.createTask({
       name: (parsed.objective || '任务').slice(0, 20),
       objective: parsed.objective || message,
@@ -416,6 +439,7 @@ router.post('/chat', async (req, res) => {
       executionMode: ['SIMULATION', 'ASSIST', 'AUTONOMOUS', 'DEBUG'].includes(executionMode) ? executionMode : 'ASSIST',
       secretRefs: parsed.credentialRefs || [],
       constraints: parsed.constraints || [],
+      routerHints: intelligence || undefined,
     });
 
     // 4) Planner → Plan（先查 Flow Memory，高置信度直接加载历史流程，跳过 LLM；不自动执行）
@@ -424,7 +448,11 @@ router.post('/chat', async (req, res) => {
       try { taskManager.deleteTask(task.id); } catch (e) {}
       return res.status(400).json({ ok: false, error: pr.error || '计划生成失败' });
     }
-    if (pr.fromFlow) pr.plan.fromFlow = true;
+    if (pr.fromFlow) {
+      pr.plan.fromFlow = true;
+      // CAP-K1：/chat 起源的 flow 重放也记录 flowId，失败/升级同样吃置信度反馈
+      try { taskManager.markFlowUsed(task.id, pr.flowId, pr.confidence); } catch (e) {}
+    }
     taskManager.attachPlan(task.id, pr.plan);
     sessionManager.attachTask(session.id, task.id);
     sessionManager.addMessage(session.id, 'ai', pr.fromFlow
@@ -504,11 +532,21 @@ router.get('/llm/stats', (req, res) => {
 
 // ---------------- Snapshot（Phase 1.4）----------------
 router.get('/tasks/:id/snapshots', (req, res) => {
-  res.json(evidence.listForTask(req.params.id));
+  try {
+    res.json(evidence.listForTask(req.params.id));
+  } catch (e) {
+    // 路径校验失败（UNSAFE_PATH_SEGMENT / PATH_ESCAPE）→ 400，不当成 500
+    res.status(e.statusCode || 400).json({ error: 'invalid task id', detail: String(e.message || e).slice(0, 160) });
+  }
 });
 
 router.get('/snapshots/:taskId/:file', (req, res) => {
-  const f = evidence.filePath(req.params.taskId, req.params.file);
+  let f;
+  try {
+    f = evidence.filePath(req.params.taskId, req.params.file);
+  } catch (e) {
+    return res.status(e.statusCode || 400).json({ error: 'invalid path', detail: String(e.message || e).slice(0, 160) });
+  }
   if (fs.existsSync(f)) return res.sendFile(f);
   res.status(404).json({ error: 'snapshot not found' });
 });
@@ -568,25 +606,67 @@ router.post('/policy/decide', (req, res) => {
 });
 
 // ---------------- Secret（引用注册，脱敏视图）----------------
+// STEP 22 (I1)：identity/workspace 安全接线。
+//   - 挂载点（server/index.js /api/ai）已有 identityResolver+requireAuth → 未认证 401；
+//   - 写操作要求 credential:manage（OWNER/ADMIN，复用既有 RBAC，不新增权限体系）；
+//   - 归属盖章在服务端：workspaceId/createdBy 一律取自 req.identityUser，
+//     调用方 body 伪造的 workspaceId 被直接忽略；
+//   - 列表只返回本工作区（+ legacy 对 local 用户）可见的凭据，跨工作区不可见；
+//   - 明文永不经过本路由（明文只进 vault，见 /api/vault/:id）。
 router.post('/secrets', (req, res) => {
   try {
+    const u = req.identityUser;
+    identity.assertCan(u && u.id, u && u.currentWorkspaceId, 'credential:manage');
     const { profileId, type, site, label } = req.body || {};
     if (!profileId) return res.status(400).json({ ok: false, error: 'profileId 必填' });
-    const rec = secretManager.createSecret({ profileId, type, site, label });
+    // 请求体中的 workspaceId/createdBy 即便传入也被忽略（服务端盖章，防伪造）
+    const rec = secretManager.createSecret({
+      profileId, type, site, label,
+      workspaceId: u.currentWorkspaceId, createdBy: u.id,
+    });
+    try {
+      require('../audit').log({ workspaceId: u.currentWorkspaceId, actorId: u.id, actorName: u.username, actorType: 'user', action: 'secret.create', resourceType: 'credential', resourceId: rec.id, detail: { type: rec.type, site: rec.site, profileId: rec.profileId } });
+    } catch (e) { /* 审计失败不影响主流程 */ }
     res.json(secretManager.maskedView(rec));
   } catch (e) {
-    res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
+    res.status(e.status || 400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
   }
 });
 
 router.get('/secrets', (req, res) => {
-  res.json(secretManager.listMasked());
+  try {
+    const u = req.identityUser;
+    if (!u) return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
+    res.json(identity.filterByWorkspace(secretManager.listRecords(), u).map((r) => secretManager.maskedView(r)));
+  } catch (e) {
+    res.status(e.status || 400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
+  }
+});
+
+router.delete('/secrets/:id', (req, res) => {
+  try {
+    const u = req.identityUser;
+    const rec = secretManager.getByRef(req.params.id);
+    if (!rec) return res.status(404).json({ ok: false, error: 'credential not found' });
+    identity.assertCanAccessResource(u, rec, 'credential:manage');
+    secretManager.remove(rec.id);
+    try {
+      require('../audit').log({ workspaceId: rec.workspaceId || (u && u.currentWorkspaceId) || null, actorId: u.id, actorName: u.username, actorType: 'user', action: 'secret.delete', resourceType: 'credential', resourceId: rec.id, detail: {} });
+    } catch (e) { /* 审计失败不影响主流程 */ }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(e.status || 400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
+  }
 });
 
 // ---------------- 队列 / 站点 / 健康 ----------------
 router.get('/queue', (req, res) => res.json(queue.list()));
 
 router.get('/sites', (req, res) => res.json(sites.list()));
+
+// ---------------- CAP-M1：定时触发 / 批量执行 ----------------
+// /api/ai/schedules*（子路由自带身份守卫：task:create / task:read）
+router.use('/schedules', require('./scheduleTrigger').router);
 
 router.get('/health', (req, res) => {
   res.json({

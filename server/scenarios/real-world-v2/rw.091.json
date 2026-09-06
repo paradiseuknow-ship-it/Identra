@@ -1,0 +1,15 @@
+{
+  "id": "rw.091",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "高难加购1",
+  "objective": "依次搜索并加购全部三款商品（机械键盘、无线鼠标、4K显示器），确认购物车数量为 3",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "购物车计数变为 3"
+  }
+}

@@ -75,3 +75,4 @@ desktop.ini
 
 # ---- 10. WorkBuddy 会话数据（工具内部状态，非产品源码）--------------------
 .workbuddy/
+.step22-e2e/

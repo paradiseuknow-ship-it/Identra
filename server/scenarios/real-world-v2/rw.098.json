@@ -1,0 +1,15 @@
+{
+  "id": "rw.098",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "长流程扩展6",
+  "objective": "搜索「扫描仪」确认出现未找到相关商品提示",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "未找到相关商品提示出现"
+  }
+}

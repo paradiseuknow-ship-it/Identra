@@ -1,11 +1,17 @@
 'use strict';
 
 const fs = require('fs');
+const http = require('http');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, spawnSync } = require('child_process');
 const { chromium } = require('playwright');
 const { generateFingerprint, seedFromProfile } = require('./fp/generate');
+const { ensureIdentity } = require('./fp/identityStore');
+const { buildIdentity } = require('./fp/identityFactory');
 const { buildInjectionScript } = require('./fp/inject');
+const nativeOwnership = require('./fp/nativeOwnership');
+const { isPatchActive } = require('./fp/nativePatchManifest');
+const { applyHeadlessBrandContract } = require('./fp/uaBrands');
 const { checkProxyGeo, getProxyEgressGeo, resolveProxyType, getEgressIp } = require('./proxyChecker');
 const { lookupIp } = require('./geoip');
 const { startShim } = require('./socksShim');
@@ -58,8 +64,14 @@ async function checkHopPortAvailable() {
 // 优先使用系统 Google Chrome，其 JA3/TLS 指纹更接近真实用户，能降低被 Google 等站直接拒绝的概率
 const SYSTEM_CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 
+const { assertSafeName, resolveWithin } = require('./security/safePath');
+
+const PROFILES_ROOT = path.join(__dirname, '..', 'data', 'profiles');
+
+// STEP 0.5 §2.2：profileId 参与文件系统路径拼接，必须过段名白名单 + 根内解析。
+// 合法 id 形如 p_lz3k9x（字母数字 + 下划线），白名单不会误伤。
 function profileDataDir(profileId) {
-  return path.join(__dirname, '..', 'data', 'profiles', profileId);
+  return resolveWithin(PROFILES_ROOT, assertSafeName(profileId, 'profileId'));
 }
 
 // 读取本机真实 Chrome 的完整版本号（如 151.0.7922.138），用于把伪造 UA 对齐到引擎实际版本，
@@ -79,11 +91,88 @@ function getChromeVersion() {
   }
 }
 
-// 根据主语言生成带 q-factor 的 Accept-Language 头（如 de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7）
-function buildAcceptLanguage(lang) {
-  if (!lang) return null;
-  const base = lang.split('-')[0];
-  return `${lang},${base};q=0.9,en-US;q=0.8,en;q=0.7`;
+// Phase 16-B C7-CONFIG：Accept-Language 单一事实源 = fp.languages（identity 列表）。
+// 原 buildAcceptLanguage()（手工拼 q-factor 串）已删除：CDP acceptLanguage 期望「原始逗号
+// 分隔列表」，q 因子由 Chromium 原生 net::HttpUtil::GenerateAcceptLanguageHeader 生成；
+// 手工 q 串经 renderer 侧 ParseAndSanitize（不剥 q）会污染 Worker 端 navigator.languages
+//（B 类一致性缺陷：["de-DE","de;q=0.9",...] ≠ window FP.languages）。
+
+// C7-CONFIG：Worker/pref 链 Accept-Language 注入（launch 前 read-modify-write）。
+// WorkerNavigator 的语言链 = renderer_preferences_.accept_languages
+//（dedicated_or_shared_worker_global_scope_context_impl.cc:480-483 ← WebWorkerFetchContext
+// ← profile pref intl.accept_languages）。CDP page-session override 不达 Worker
+//（.benchmark/c7_worker_probe.js V2-V7 实证：Worker 恒显机器 pref 值），pref 注入是
+// Worker 一致性的唯一 CONFIG 通道；同时兜底 C2-active（CDP UA-CH 停发）与无 CDP 形态的
+// HTTP/window-native（c7_worker_probe2 V8 实证：pref 链驱动三端原生同源 + 原生 q 生成）。
+// 解析失败不动原文件（绝不破坏既有 profile 数据）。
+function injectAcceptLanguagesPref(userDataDir, languages) {
+  try {
+    if (!Array.isArray(languages) || !languages.length) return;
+    const defDir = path.join(userDataDir, 'Default');
+    const prefsPath = path.join(defDir, 'Preferences');
+    let prefs;
+    if (fs.existsSync(prefsPath)) {
+      try {
+        prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
+      } catch (e) {
+        return;
+      }
+    } else {
+      fs.mkdirSync(defDir, { recursive: true });
+      prefs = {};
+    }
+    if (!prefs || typeof prefs !== 'object') return;
+    prefs.intl = Object.assign({}, prefs.intl, { accept_languages: languages.join(',') });
+    fs.writeFileSync(prefsPath, JSON.stringify(prefs));
+  } catch (e) {
+    console.warn('[fp16b-c7] accept_languages pref 注入失败(忽略):', e.message);
+  }
+}
+
+// P4.2：native UA-CH brands 捕获 —— 唯一事实源 = 浏览器原生运行时。
+// 实测（.benchmark/p42_capture_probe.json）：about:blank 上 navigator.userAgentData 为 null，
+// 因此用一次性 127.0.0.1 捕获页（真实 http origin）在 addInitScript 之前读取原生
+// brands + fullVersionList（此刻 context 尚未注入任何 init script，读到的就是二进制原生值，
+// 且不受 Playwright userAgent option 污染——实测 UA option 不改变原生 brands）。
+// 结果按「二进制|引擎版本|headless」记忆化：进程内同一浏览器形态只捕获一次。
+const _nativeUaBrandsCache = new Map();
+async function captureNativeUaBrands(context, cacheKey) {
+  if (!context) return null;
+  if (cacheKey && _nativeUaBrandsCache.has(cacheKey)) return _nativeUaBrandsCache.get(cacheKey);
+  let result = null;
+  let server = null;
+  let tempPage = null;
+  try {
+    server = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><body>ua-ch-capture</body></html>');
+    });
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+    const port = server.address().port;
+    tempPage = await context.newPage();
+    await tempPage.goto('http://127.0.0.1:' + port + '/', { waitUntil: 'load', timeout: 10000 });
+    result = await tempPage.evaluate(async () => {
+      const u = navigator.userAgentData;
+      if (!u || !Array.isArray(u.brands) || !u.brands.length) return null;
+      const brands = u.brands.map((b) => ({ brand: String(b.brand), version: String(b.version) }));
+      let fullVersionList = null;
+      try {
+        const he = await u.getHighEntropyValues(['fullVersionList']);
+        if (he && Array.isArray(he.fullVersionList) && he.fullVersionList.length) {
+          fullVersionList = he.fullVersionList.map((b) => ({ brand: String(b.brand), version: String(b.version) }));
+        }
+      } catch (e) {}
+      return { brands, fullVersionList };
+    });
+  } catch (e) {
+    console.warn('[ua] native brands 捕获失败(双层降级为浏览器原生):', e.message);
+    result = null;
+  } finally {
+    if (tempPage) await tempPage.close().catch(() => {});
+    if (server) server.close();
+  }
+  if (result && cacheKey) _nativeUaBrandsCache.set(cacheKey, result);
+  return result;
 }
 
 // 通过 CDP Emulation.setUserAgentOverride 一次性对齐【网络层 Client Hints 请求头】与【JS 层 navigator 属性】。
@@ -91,44 +180,122 @@ function buildAcceptLanguage(lang) {
 // Sec-CH-UA-Mobile 等 Client Hints 头仍由 Chromium 按真实二进制版本自动生成，与伪造 UA 对不上。
 // Google / Cloudflare / reCAPTCHA 会同时比对「请求头里的 Client Hints」与「JS 读到的 navigator.userAgentData」，
 // 一旦版本/平台不一致即判定自动化 → 跳人机验证。CDP override 让两者完全一致（adsPower 同理）。
+//
+// P4.2：brands/fullVersionList 不再硬编码——唯一事实源 = 浏览器原生运行时捕获（fp._uaBrands，
+// 由 createProfileContext 在 addInitScript 之前捕获并施加既有 HeadlessChrome 契约）。
+// Chrome 153+ 改变 GREASE 格式/顺序时，本层自动跟随原生值，不存在版本快照漂移。
+
+// Phase 16-B C2（platformversion-identity）行为接线 gate。
+// 相干性要求（缺一不可）：
+//   ① manifest 判定 patch active（enabled=双回归全过；或显式测试通道 FPB_FORCE_ACTIVE_PATCHES）；
+//   ② 本次 launch 实际使用 native patched 二进制（FPB_NATIVE_CHROME 指向）——
+//      stock 系统 Chrome 无 fp-platform-version switch/merge 语义，此时让位会造成
+//      platformVersion 空值直漏（B 类一致性缺陷），必须保持既有 '15.0.0' 行为。
+function isC2PlatformVersionActive() {
+  return isPatchActive('platformversion-identity') && !!process.env.FPB_NATIVE_CHROME;
+}
+
+// Phase 16-B C3（navigator-identity）行为接线 gate。与 C2 同款相干性要求：
+// manifest active（或 FPB_FORCE_ACTIVE_PATCHES 测试通道）+ 实际使用 native
+// patched 二进制；stock 二进制上注入 --fp-platform 无人消费，此时让位会造成
+// navigator.platform 直漏本机原生值（B 类一致性缺陷），必须保持 JS 生产既有行为。
+function isC3PlatformActive() {
+  return isPatchActive('navigator-identity') && !!process.env.FPB_NATIVE_CHROME;
+}
+
+// Phase 16-B C4（hardwareConcurrency-identity）行为接线 gate。patch 在
+// NavigatorBase::hardwareConcurrency() 单 virtual 点消费 --fp-hardware-concurrency；
+// 仅当 manifest 激活且运行 native patched 二进制时才注入（stock 二进制上无人消费）。
+function isC4HardwareConcurrencyActive() {
+  return isPatchActive('hardwareConcurrency-identity') && !!process.env.FPB_NATIVE_CHROME;
+}
+
+// Phase 16-B C5（deviceMemory-identity）行为接线 gate。patch 在
+// NavigatorDeviceMemory::deviceMemory() 单函数点消费 --fp-device-memory；
+// 仅当 manifest 激活且运行 native patched 二进制时才注入（stock 二进制上无人消费）。
+// 白名单 = Chromium 真实输出域 {1,2,4,8,16,32}（ApproximatedDeviceMemory 实际
+// clamp 桌面 [2,32]/Android [1,8]，crbug 454354290；非 spec 文本域 {0.25..8}）。
+function isC5DeviceMemoryActive() {
+  return isPatchActive('deviceMemory-identity') && !!process.env.FPB_NATIVE_CHROME;
+}
+
+// Phase 16-B C6（maxTouchPoints-identity）行为接线 gate。patch 在
+// NavigatorEvents::maxTouchPoints() 单函数点消费 --fp-max-touch-points；
+// 仅当 manifest 激活且运行 native patched 二进制时才注入（stock 二进制上无人消费）。
+// 白名单 = 真实输出域 {0,5,10}（Windows SM_MAXIMUMTOUCHES 触摸屏常见 10 /
+// 无数字化仪 0；移动端典型 5）。
+function isC6MaxTouchPointsActive() {
+  return isPatchActive('maxTouchPoints-identity') && !!process.env.FPB_NATIVE_CHROME;
+}
+
 async function applyClientHints(page, fp) {
   if (!page || !fp || !fp.userAgent) return;
   try {
     const client = await page.context().newCDPSession(page);
-    const uaVer = (function () {
-      const p = fp.userAgent.split('Chrome/')[1];
-      if (!p) return '120.0.0.0';
-      return p.split(' ')[0] || '120.0.0.0';
-    })();
-    const majorVer = uaVer.split('.')[0];
     const osPlatform = (fp.os === 'Windows' ? 'Windows'
       : (fp.os === 'macOS' || fp.os === 'Mac') ? 'macOS'
       : fp.os === 'Linux' ? 'Linux'
       : fp.os === 'Android' ? 'Android'
       : fp.os === 'iOS' ? 'iOS' : 'Windows');
-    const platformVersion = (fp.os === 'Windows' ? '10.0.0'
-      : (fp.os === 'macOS' || fp.os === 'Mac') ? '14.0.0'
-      : fp.os === 'Linux' ? '6.0.0'
-      : '15.0.0');
-    const brands = [
-      { brand: 'Google Chrome', version: majorVer },
-      { brand: 'Chromium', version: majorVer },
-      { brand: 'Not?A_Brand', version: '24' },
-    ];
-    const fullVersionList = [
-      { brand: 'Google Chrome', version: uaVer },
-      { brand: 'Chromium', version: uaVer },
-      { brand: 'Not?A_Brand', version: '24.0.0.0' },
-    ];
+    // P4.2（B 类修复·层一致性）：网络层 Client Hints 头与 JS 层 navigator.userAgentData（inject.js）
+    // 必须逐字段一致——真实 Chrome 两层恒一致。两层均消费同一份 fp._uaBrands（原生捕获回放）。
+    let brands = Array.isArray(fp._uaBrands) && fp._uaBrands.length
+      ? fp._uaBrands.map((b) => ({ brand: String(b.brand), version: String(b.version) }))
+      : null;
+    let fullVersionList = Array.isArray(fp._uaFullVersionList) && fp._uaFullVersionList.length
+      ? fp._uaFullVersionList.map((b) => ({ brand: String(b.brand), version: String(b.version) }))
+      : null;
+    if (!brands && page) {
+      // 二次兜底：直接读当前页面（若 init script 已注入则与本层同源；若未注入则为原生值）
+      try {
+        const cap = await page.evaluate(() => {
+          const u = navigator.userAgentData;
+          return (u && Array.isArray(u.brands) && u.brands.length)
+            ? u.brands.map((b) => ({ brand: String(b.brand), version: String(b.version) }))
+            : null;
+        });
+        if (cap) brands = applyHeadlessBrandContract(cap);
+      } catch (e) {}
+    }
+    if (!brands) {
+      // 终极兜底：不发送 userAgentMetadata → 网络层与 JS 层均保持浏览器原生 UA-CH
+      // （原生两层天然同源，见 .benchmark/step19_drift_probe.json），绝不伪造。
+      await client.send('Emulation.setUserAgentOverride', {
+        userAgent: fp.userAgent,
+        acceptLanguage: fp.languages.join(','),
+        platform: osPlatform,
+      });
+      client.detach().catch(() => {});
+      console.log('[ua] Client Hints: brands 无原生捕获 → 保留浏览器原生 UA-CH（双层原生同源）');
+      return;
+    }
+    if (!fullVersionList) {
+      fullVersionList = brands.map((b) => ({
+        brand: b.brand,
+        version: /^\d+$/.test(b.version) ? b.version + '.0.0.0' : b.version,
+      }));
+    }
+    // C2（platformversion-identity）active：UA-CH platformVersion 让位 Native。CDP 协议结构
+    // 实证（16-B C2 修复轮）：userAgentMetadata.platformVersion 是 required String（缺字段 =
+    // InvalidParams；空串虽被 browser 层 merge 回退，但 renderer 管道 navigation_request →
+    // DocumentLoader → LocalFrameClientImpl「整体替换」绕过 merge → JS hev 直漏空串）。因此
+    // C2 active 时整个 CDP UA-CH override 停发：JS/HTTP/Worker 全部回落 browser 级 patched
+    // GetUserAgentMetadata()（单源）；UA 字符串由 Playwright context userAgent option 提供
+    //（P4.2 实测：UA option 不污染原生 brands）。仅此 surface 让位；C2 inactive：逐字节 stock。
+    if (isC2PlatformVersionActive()) {
+      client.detach().catch(() => {});
+      console.log('[ua] C2 platformVersion->Native: CDP UA-CH override skipped (Native single-source), UA string via Playwright option');
+      return;
+    }
     await client.send('Emulation.setUserAgentOverride', {
       userAgent: fp.userAgent,
-      acceptLanguage: buildAcceptLanguage(fp.language),
+      acceptLanguage: fp.languages.join(','),
       platform: osPlatform,
       userAgentMetadata: {
         brands,
         fullVersionList,
         platform: osPlatform,
-        platformVersion,
+        platformVersion: '15.0.0',
         architecture: 'x86',
         bitness: '64',
         model: '',
@@ -137,7 +304,7 @@ async function applyClientHints(page, fp) {
       },
     });
     client.detach().catch(() => {});
-    console.log(`[ua] Client Hints 已对齐: UA=${fp.userAgent} platform=${osPlatform} brandsVer=${majorVer}`);
+    console.log(`[ua] Client Hints 已对齐(原生回放): UA=${fp.userAgent} platform=${osPlatform} brands=${brands.map((b) => b.brand + '@' + b.version).join(', ')}`);
   } catch (e) {
     console.warn('[ua] Client Hints 覆盖失败(已忽略):', e.message);
   }
@@ -168,19 +335,22 @@ function buildArgs(profile) {
     '--disable-background-networking',
     '--disable-component-updates',
     '--disable-quic',
-    // 稳定性：禁用崩溃转储处理器与 GPU 进程，避免弱网下 GPU/崩溃进程异常导致整个 Chromium 瞬间退出
+    // 稳定性：禁用崩溃转储处理器，避免弱网下崩溃进程异常导致整个 Chromium 瞬间退出
     '--disable-crashpad-handler',
     '--disable-breakpad',
-    '--disable-gpu',
-    '--disable-gpu-sandbox',
-    '--disable-software-rasterizer',
   ];
   const fp = profile.fingerprint || {};
   const behavior = profile.launchBehavior || {};
 
+  // GPU（STEP 19 修复）：此前 base args 无条件 --disable-gpu/--disable-software-rasterizer，
+  // 导致 ①headless 下 WebGL 完全不可用（无 WebGL 的桌面浏览器是强 headless/自动化信号，
+  // CreepJS 67% headless 的主因）②fp.hardwareAcceleration 旋钮为死参数。
+  // 现按 fp.hardwareAcceleration 决定：默认 true 保留硬件加速（WebGL 真实可用），
+  // 显式 false 才禁用（弱网/稳定性场景保留原有行为）。
   if (fp.hardwareAcceleration === false) {
-    args.push('--disable-gpu', '--disable-software-rasterizer');
+    args.push('--disable-gpu', '--disable-gpu-sandbox', '--disable-software-rasterizer');
   }
+
   if (fp.tlsDisabled) {
     args.push('--ssl-version-max=tls1.2', '--disable-features=HttpsUpgrades');
   }
@@ -196,6 +366,22 @@ function buildArgs(profile) {
   }
   if (behavior.blockImages || (behavior.blockImagesThresholdKB !== undefined && behavior.blockImagesThresholdKB <= 0)) {
     args.push('--blink-settings=imagesEnabled=false');
+  }
+
+  // CAP hidden-headful（STEP 20）：launchBehavior.hiddenWindow=true 时窗口移出屏幕——
+  // 进程仍是有界面 headful Chrome（UA/Worker/UA-CH 全真，无 HeadlessChrome 痕迹），
+  // 兼顾反检测与「无头式」自动化体验。三个参数配合：
+  //   --window-position=-32000,-32000 窗口移出可视区（-32000 而非 -3200 防止部分 WM 边缘吸附）；
+  //   --disable-backgrounding-occluded-windows 窗口不可见时 Chromium 会将渲染器降级为
+  //     backgrounding 状态（requestAnimationFrame 停摆、定时器节流、visibilityState 变化），
+  //     禁掉它保证离屏窗口内页面照常渲染（自动化/取证依赖）；
+  //   --disable-renderer-backgrounding 同理，防止后台 renderer 进程优先级被压低导致超时。
+  if (behavior.hiddenWindow === true) {
+    args.push(
+      '--window-position=-32000,-32000',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding'
+    );
   }
 
   // 用户自定义启动参数
@@ -471,6 +657,23 @@ async function humanType(page, selector, text, options = {}) {
   // 但配合 tools.js 的 withBrowserOp 上下文检测，可大幅降低悬挂概率。
   const _deadline = Date.now() + (Number(process.env.TOOL_OP_TIMEOUT_MS) || 25000);
   await humanClick(page, selector, options);
+  // P3.2 replace-input 语义：humanType 契约是「输入目标值」（与 fill/locator.fill 的
+  // replace 语义对齐），输入前先清空已有内容——Ctrl/Cmd+A 全选 + Backspace 删除，
+  // 保持 human 层键盘路径不变。守卫：仅当聚焦元素确为可编辑输入元素时清空，
+  // 避免聚焦意外落在非输入元素时 Ctrl+A 全选页面。对空输入框是幂等 no-op
+  // （credential 注入路径的输入框通常为空，不受影响）。
+  const activeTag = await page.evaluate(() => {
+    const el = document.activeElement;
+    if (!el) return null;
+    const tag = String(el.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea') return tag;
+    if (el.isContentEditable) return 'contenteditable';
+    return null;
+  }).catch(() => null);
+  if (activeTag) {
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.press('Backspace');
+  }
   const baseDelay = options.baseDelay || 60;
   const randomDelay = options.randomDelay || 100;
   const mistakes = options.mistakes || 0; // 0 表示不模拟输错；1 表示可能输错一次再回退
@@ -620,6 +823,13 @@ async function launch(profile, proxies) {
     if (before !== fp.userAgent) console.log(`[ua] 已将伪造 UA 版本对齐到引擎: ${before} -> ${fp.userAgent}`);
   }
 
+  // Phase 16-B §9（Option B）：profile launch 时确保 profile-bound identity.json。
+  // identity 派生自 UA 对齐后的最终 fp（与注入面一致）；首次落盘后幂等读回（同 profile 跨 launch 稳定，§20/S3）。
+  // 校验失败 fail-fast 阻断启动（继承 identitySchema V1-V6 纪律，无 fallback）。
+  // Native 侧（Gate A 后）从 <userDataDir>/identity.json 读取——两处同根已实证（data/profiles/）。
+  const identity = ensureIdentity(profile.id, () => buildIdentity(seedFromProfile(profile), fp));
+  console.log(`[identity] profile ${profile.id} -> ${identity.identity.identityId} (browserVersion ${identity.identity.browserVersion}, ${identity.created ? 'created' : 'existing'})`);
+
   // Profile Integrity：启动前内部一致性体检（只报警、不阻断启动，供开发期排查"脏 Profile"）
   try {
     const report = runIntegrityCheck(profile, { fp, engineVersion: realVer, proxies });
@@ -640,6 +850,9 @@ async function launch(profile, proxies) {
 
   const userDataDir = profileDataDir(profile.id);
 
+  // C7-CONFIG：Worker/pref 链 Accept-Language 注入（必须在 launch 前；见函数注释）
+  injectAcceptLanguagesPref(userDataDir, fp.languages);
+
   // ---- 分辨率策略 ----
   // adsPower 模式：headful 下默认「真实最大化分辨率」——把窗口最大化到本机真实显示器，
   // 并把指纹 screen 写成真实显示器尺寸，使 screen / outerWidth / innerWidth / devicePixelRatio
@@ -648,15 +861,79 @@ async function launch(profile, proxies) {
   // 仅当用户显式配置 fingerprintOverride.screen（自定义分辨率）时，才按自定义尺寸开窗口。
   const isHeadful = profile.headless === false;
   const customScreen = (override.screen && override.screen.width && override.screen.height) ? override.screen : null;
-  const useRealScreen = isHeadful && !customScreen;
+  // CAP hidden-headful（STEP 20）：launchBehavior.hiddenWindow=true = 有界面但窗口移出屏幕——
+  // UA/Worker/UA-CH 全部为真实 Chrome（无 HeadlessChrome 痕迹，addInitScript 不可达的 Worker 层天然一致），
+  // 兼顾反检测与无头式自动化。隐藏窗口与「真实最大化分辨率」互斥（off-screen 窗口无法最大化）。
+  const hiddenWindow = isHeadful && behavior.hiddenWindow === true;
+  const useRealScreen = isHeadful && !customScreen && !hiddenWindow;
 
   const geo = fp.geolocation;
+  // Phase 16-B C2（platformversion-identity）：Native platformVersion opt-in。
+  // switch 携带 identity 值（identity.osVersion，schema V4 校验格式）；identity 缺失时
+  // 发裸开关 = Native value_or fallback 语义（原生 GetPlatformVersion()）。
+  // C2 inactive（manifest 未激活或非 native 二进制）：不注入任何 fp-* switch = stock。
+  const launchArgs = buildArgs(profile);
+  if (isC2PlatformVersionActive()) {
+    const identityPv = identity.identity.osVersion;
+    launchArgs.push(identityPv ? '--fp-platform-version=' + identityPv : '--fp-platform-version');
+    console.log('[fp16b] C2 platformVersion -> Native (switch=' + (identityPv ? 'identity:' + identityPv : 'bare/fallback') + ')');
+  }
+  // Phase 16-B C3（navigator-identity）：Native navigator.platform opt-in。
+  // switch 携带 identity 值（identity.cpuProfile.platform，Win32/MacIntel 等纯
+  // ASCII 词表）；identity 缺失时发裸开关 = Native value_or fallback 语义（原生
+  // GetReducedNavigatorPlatform()）。非 ASCII 值由 patch 侧逐字符校验 fail-open
+  // 回 stock（WTF::String latin1 构造语义防误读）。C3 inactive：不注入 = stock。
+  if (isC3PlatformActive()) {
+    const identityPlatform = identity.identity.cpuProfile.platform;
+    launchArgs.push(identityPlatform ? '--fp-platform=' + identityPlatform : '--fp-platform');
+    console.log('[fp16b] C3 navigator.platform -> Native (switch=' + (identityPlatform ? 'identity:' + identityPlatform : 'bare/fallback') + ')');
+  }
+  // Phase 16-B C4（hardwareConcurrency-identity）：Native navigator.hardwareConcurrency
+  // opt-in。switch 携带 identity 值（identity.cpuProfile.hardwareConcurrency，严格十进制
+  // [1,1024] 由 patch 侧校验，bare/invalid fail-open 回 stock SysInfo 值）；identity 缺失
+  // 时发裸开关 = Native value_or fallback 语义。CDP 显式 override（Emulation.
+  // setHardwareConcurrencyOverride）在 patch 插入点之后生效 = 显式 CDP 仍获胜。
+  // C4 inactive：不注入 = stock。
+  if (isC4HardwareConcurrencyActive()) {
+    const identityHc = identity.identity.cpuProfile.hardwareConcurrency;
+    launchArgs.push(identityHc ? '--fp-hardware-concurrency=' + identityHc : '--fp-hardware-concurrency');
+    console.log('[fp16b] C4 navigator.hardwareConcurrency -> Native (switch=' + (identityHc ? 'identity:' + identityHc : 'bare/fallback') + ')');
+  }
+  // Phase 16-B C5（deviceMemory-identity）：Native navigator.deviceMemory opt-in。
+  // switch 携带 identity 值（identity.memoryProfile.deviceMemoryGB）；patch 侧白名单 =
+  // Chromium 真实输出域 {1,2,4,8,16,32} 精确 token（ApproximatedDeviceMemory 实际
+  // clamp 桌面 [2,32]/Android [1,8]，crbug 454354290），其余 fail-open 回 stock。
+  // data.js 池 [4,8,8,16,16,32] 全部在真实域内（与白名单一致，I2 断言固化）。
+  // C5 inactive：不注入 = stock。
+  if (isC5DeviceMemoryActive()) {
+    const identityDm = identity.identity.memoryProfile.deviceMemoryGB;
+    if ([1, 2, 4, 8, 16, 32].includes(identityDm)) {
+      launchArgs.push('--fp-device-memory=' + identityDm);
+      console.log('[fp16b] C5 navigator.deviceMemory -> Native (switch=identity:' + identityDm + ')');
+    } else {
+      console.log('[fp16b] C5 navigator.deviceMemory -> out-of-domain identity value (' + identityDm + ') NOT injected; Native stays stock (real domain {1,2,4,8,16,32})');
+    }
+  }
+  // Phase 16-B C6（maxTouchPoints-identity）：Native navigator.maxTouchPoints opt-in。
+  // switch 携带 identity 派生值（fp.os 同源：Android/iOS=5，桌面=0 —— 与 inject.js
+  // JS 层现行规则逐字节一致，JS→Native 迁移零值漂移，零 schema/池变更）；patch 侧
+  // 白名单 = 真实输出域 {0,5,10}（Windows SM_MAXIMUMTOUCHES / 无数字化仪 0），
+  // bare/越域 fail-open 回 stock Settings。C6 inactive：不注入 = stock。
+  if (isC6MaxTouchPointsActive()) {
+    const identityMt = (fp.os === 'Android' || fp.os === 'iOS') ? 5 : 0;
+    launchArgs.push('--fp-max-touch-points=' + identityMt);
+    console.log('[fp16b] C6 navigator.maxTouchPoints -> Native (switch=identity:' + identityMt + ')');
+  }
   const launchOpts = {
     // 默认无头（配合网页"云查看"截图稳定）；仅当配置明确选"有界面"时才弹窗
     headless: isHeadful ? false : true,
     proxy: proxyToPlaywright(proxy),
-    args: buildArgs(profile),
-    executablePath: process.env.BENCH_PW_CHROMIUM ? undefined : (fs.existsSync(SYSTEM_CHROME) ? SYSTEM_CHROME : undefined),
+    args: launchArgs,
+    // FPB_NATIVE_CHROME：native patched 二进制选择（Phase 16-B POC 惯例 env，测试通道）；
+    // 优先级高于系统 Chrome，未设置时行为与此前逐字节一致。
+    executablePath: process.env.BENCH_PW_CHROMIUM ? undefined
+      : (process.env.FPB_NATIVE_CHROME && fs.existsSync(process.env.FPB_NATIVE_CHROME)) ? process.env.FPB_NATIVE_CHROME
+      : (fs.existsSync(SYSTEM_CHROME) ? SYSTEM_CHROME : undefined),
   };
   if (useRealScreen) {
     // viewport:null => Playwright 以「最大化窗口」启动；--start-maximized + --window-position 双保险
@@ -675,10 +952,14 @@ async function launch(profile, proxies) {
     locale: fp.language,
     timezoneId: fp.timezone,
     colorScheme: 'no-preference',
-    extraHTTPHeaders: (() => {
-      const al = buildAcceptLanguage(fp.language);
-      return al ? { 'Accept-Language': al } : undefined;
-    })(),
+    // C7-CONFIG：不设置 extraHTTPHeaders.Accept-Language——HTTP Accept-Language 仅由
+    // ① pref 链（intl.accept_languages，injectAcceptLanguagesPref 注入）与
+    // ② CDP override（browser 侧 EmulationHandler::ApplyOverrides →
+    //    GenerateAcceptLanguageHeader 原生生成 q）驱动。
+    // 实测（.benchmark/c7_worker_probe3.js V11/V12）：Playwright locale 派生头在
+    // navigation 上优先于 extraHTTPHeaders，保留第三写只会造成 subresource 头
+    // 三态分裂（locale 裸单值 / 无 q 列表 / 原生 q）；删除后收敛为两写。
+    // locale option 保留（Intl 层既有一致性，inject.js 无 Intl locale hook，删除即回退）。
     geolocation: geo && geo.mode !== 'real' && geo.mode !== 'block'
       ? { latitude: geo.lat, longitude: geo.lng, accuracy: geo.accuracy }
       : undefined,
@@ -708,7 +989,25 @@ async function launch(profile, proxies) {
     }
   }
 
+  // P4.2：native UA-CH brands 捕获——必须在 addInitScript 之前（捕获页未被注入 = 纯原生值）。
+  // 捕获结果施加既有 HeadlessChrome 契约后写入 fp._uaBrands / fp._uaFullVersionList，
+  // 供 inject.js（JS 层）与 applyClientHints（HTTP 层）同源消费。
+  try {
+    const nativeUa = await captureNativeUaBrands(
+      context,
+      (launchOpts.executablePath || 'bundled') + '|' + (realVer || '') + '|' + (launchOpts.headless ? 'h' : 'f')
+    );
+    if (nativeUa && Array.isArray(nativeUa.brands) && nativeUa.brands.length) {
+      fp._uaBrands = applyHeadlessBrandContract(nativeUa.brands);
+      fp._uaFullVersionList = nativeUa.fullVersionList ? applyHeadlessBrandContract(nativeUa.fullVersionList) : null;
+      console.log('[ua] native brands 已捕获: ' + fp._uaBrands.map((b) => b.brand + '@' + b.version).join(', '));
+    }
+  } catch (e) {}
+
   // 注入指纹 JS（覆盖 canvas/webgl/audio/webrtc/navigator 等）；使用最终 fp.screen
+  // Phase 16-B：ownership 基线随 fp 注入（fp._nativeOwned = NATIVE_OWNED surface 列表），
+  // inject.js 内 NATIVE_OWNED_SET 消费 → JS hook 自动让位；基线空集时行为逐字节等价。
+  fp._nativeOwned = nativeOwnership.nativeOwnedSurfaces();
   await context.addInitScript(buildInjectionScript(fp));
 
   // 初始 about:blank 页在 addInitScript 之前已存在，重新导航一次使其获得注入
@@ -998,7 +1297,7 @@ async function close(profileId) {
   // 用 taskkill /T 递归杀整棵树，防止僵尸进程累积撑爆内存。
   if (s.chromePid) {
     try {
-      execSync('taskkill /F /T /PID ' + s.chromePid + ' 2>nul', { stdio: 'ignore', timeout: 5000 });
+      killPid(s.chromePid, true);
     } catch (e) {}
   }
   sessions.delete(profileId);
@@ -1046,38 +1345,85 @@ async function navigate(profileId, url) {
 }
 
 // ---- 僵尸进程强杀 ----
-// 查找与指定 profile data dir 关联的 chrome.exe PID 列表（Windows PowerShell）。
-function findChromePidsForDir(dir) {
+// STEP 0.5 §2.3：PID 必须是正整数才允许拼入系统命令，杜绝命令注入。
+function killPid(pid, recursiveTree) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  const flags = recursiveTree ? '/F /T' : '/F';
   try {
-    // PowerShell Get-CimInstance 获取 chrome 进程的 CommandLine + ProcessId，
-    // 筛选命令行中包含目标 user-data-dir 路径的进程。
-    const escaped = dir.replace(/'/g, "''").replace(/\\/g, '\\\\');
-    const cmd = 'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name=\'chrome.exe\'\\" | Where-Object { $_.CommandLine -like \\"*' + escaped + '*\\" } | Select-Object -ExpandProperty ProcessId"';
-    const out = execSync(cmd, { encoding: 'utf8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'] });
-    return out.trim().split('\n').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n > 0);
+    execSync('taskkill ' + flags + ' /PID ' + n + ' 2>nul', { stdio: 'ignore', timeout: 5000 });
+    return true;
+  } catch (e) { return false; }
+}
+
+// 一次性列举系统全部 chrome.exe 进程（PID + CommandLine）。
+// STEP 0.5 §2.3 安全语义保留：spawnSync 参数数组、不经 cmd.exe shell 解析；枚举结果只读。
+// 性能关键（2026-08-30 修复）：无论有多少 profile 目录，进程枚举只做【一次】——
+// 此前实现对每个 profile 目录各起一次 spawnSync('powershell')（数据目录增长到 1538 个时，
+// 启动清理可同步阻塞小时级，事件循环完全冻结，HTTP 服务假死）。
+function listChromeProcesses() {
+  try {
+    const script =
+      'Get-CimInstance Win32_Process -Filter "Name=\'chrome.exe\'" | ' +
+      'Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress';
+    const r = spawnSync('powershell', ['-NoProfile', '-Command', script], {
+      encoding: 'utf8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const out = ((r && r.stdout) || '').trim();
+    if (!out) return [];
+    const parsed = JSON.parse(out);
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    return list
+      .map((p) => ({ pid: parseInt(p && p.ProcessId, 10), cl: String((p && p.CommandLine) || '') }))
+      .filter((p) => Number.isInteger(p.pid) && p.pid > 0);
   } catch (e) { return []; }
 }
 
-// 服务启动时清理：扫描所有 profile data dir，强杀关联的残留 chrome 进程
-// （防止上次崩溃后遗留的孤儿进程占用内存 / 占用 SingletonLock 导致重启失败）。
-function cleanupOrphanedChromium() {
+// 查找与指定 profile data dir 关联的 chrome.exe PID 列表（基于一次性进程枚举）。
+function findChromePidsForDir(dir) {
+  try {
+    const full = String(path.resolve(String(dir || ''))).toLowerCase();
+    const name = path.basename(full);
+    // STEP 0.5 §2.3：目录名（源自文件系统列举，间接受 profileId 影响）必须先过白名单
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name)) return [];
+    return listChromeProcesses()
+      .filter((p) => p.cl.toLowerCase().replace(/\//g, '\\').includes(full))
+      .map((p) => p.pid);
+  } catch (e) { return []; }
+}
+
+// 强杀「命令行指向孤儿 profile data dir」的 chrome 进程（服务启动清理与定时扫描共用）。
+// 只做一次进程枚举 + Node 侧路径匹配；沙箱/无 powershell 环境 fail-open（枚举为空 → 不杀）。
+function killOrphanChromium() {
   try {
     const profilesDir = path.join(__dirname, '..', 'data', 'profiles');
     if (!fs.existsSync(profilesDir)) return;
     let dirs = [];
-    try { dirs = fs.readdirSync(profilesDir).filter(d => fs.statSync(path.join(profilesDir, d)).isDirectory()); } catch (e) {}
-    for (const dir of dirs) {
-      if (sessions.has(dir)) continue; // 活跃 session，跳过
-      const fullDir = path.join(profilesDir, dir);
-      const pids = findChromePidsForDir(fullDir);
-      for (const pid of pids) {
+    try { dirs = fs.readdirSync(profilesDir).filter((d) => { try { return fs.statSync(path.join(profilesDir, d)).isDirectory(); } catch (e) { return false; } }); } catch (e) {}
+    const orphanDirs = dirs.filter((d) => !sessions.has(d)); // 活跃 session 跳过
+    if (!orphanDirs.size) return;
+    // 目录名白名单（STEP 0.5 §2.3）：仅匹配合法 profileId 形态的目录
+    const wanted = orphanDirs
+      .filter((d) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(d))
+      .map((d) => path.join(profilesDir, d).toLowerCase());
+    if (!wanted.length) return;
+    const procs = listChromeProcesses();
+    for (const p of procs) {
+      const cl = p.cl.toLowerCase().replace(/\//g, '\\');
+      if (wanted.some((full) => cl.includes(full))) {
         try {
-          execSync('taskkill /F /PID ' + pid + ' 2>nul', { stdio: 'ignore', timeout: 5000 });
-          console.warn('[zombie] 启动清理：强杀残留 chrome PID', pid, '(profile', dir + ')');
+          killPid(p.pid, false);
+          console.warn('[zombie] 强杀孤儿 chrome PID', p.pid);
         } catch (e) {}
       }
     }
   } catch (e) {}
+}
+
+// 服务启动时清理：强杀所有残留 chrome 孤儿进程
+// （防止上次崩溃后遗留的孤儿进程占用内存 / 占用 SingletonLock 导致重启失败）。
+function cleanupOrphanedChromium() {
+  killOrphanChromium();
 }
 
 // 定时僵尸进程扫描：对比活跃 session 数与系统 chrome 进程数，
@@ -1086,23 +1432,7 @@ let zombieTimer = null;
 function startZombieKiller(intervalMs) {
   if (zombieTimer) clearInterval(zombieTimer);
   zombieTimer = setInterval(() => {
-    try {
-      const profilesDir = path.join(__dirname, '..', 'data', 'profiles');
-      if (!fs.existsSync(profilesDir)) return;
-      let dirs = [];
-      try { dirs = fs.readdirSync(profilesDir).filter(d => fs.statSync(path.join(profilesDir, d)).isDirectory()); } catch (e) {}
-      for (const dir of dirs) {
-        if (sessions.has(dir)) continue; // 活跃，跳过
-        const fullDir = path.join(profilesDir, dir);
-        const pids = findChromePidsForDir(fullDir);
-        for (const pid of pids) {
-          try {
-            execSync('taskkill /F /PID ' + pid + ' 2>nul', { stdio: 'ignore', timeout: 5000 });
-            console.warn('[zombie] 定时扫描：强杀孤儿 chrome PID', pid, '(profile', dir + ')');
-          } catch (e) {}
-        }
-      }
-    } catch (e) {}
+    try { killOrphanChromium(); } catch (e) {}
   }, intervalMs || 5 * 60 * 1000); // 默认 5 分钟
 }
 
@@ -1110,6 +1440,6 @@ module.exports = {
   launch, getSession, isRunning, getPage, close, closeAll, screenshot, navigate,
   cleanupOrphanedChromium, startZombieKiller, setupRoutes, isVerificationHost,
   humanMove, humanClick, humanType, humanScroll,
-  getChromeVersion,
+  getChromeVersion, captureNativeUaBrands, applyHeadlessBrandContract,
   getPages, switchToPage, openPage, closePage, acceptDialog, dismissDialog,
 };

@@ -1,0 +1,15 @@
+{
+  "id": "rw.050",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "榜单观察5",
+  "objective": "打开榜单确认「飞利浦 279C9」条目可见",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "飞利浦 279C9 出现在榜单中"
+  }
+}

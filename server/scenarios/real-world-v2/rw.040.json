@@ -1,0 +1,15 @@
+{
+  "id": "rw.040",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "加购计数5",
+  "objective": "搜索「鼠标」并加入购物车确认购物车数量为 1",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "购物车计数变为 1"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.073",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "字段校验3",
+  "objective": "只填邮箱不填姓名提交表单，确认校验提示出现",
+  "fixture": "data_entry/form.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "请填写必填项提示出现"
+  }
+}

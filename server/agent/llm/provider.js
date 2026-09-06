@@ -8,6 +8,7 @@
 const recorder = require('../recorder');
 const budget = require('../budget');
 const events = require('../events');
+const { extractJsonCandidate } = require('./jsonExtract');
 
 const factories = {}; // kind -> factory(config)
 function register(kind, factory) { factories[kind] = factory; }
@@ -79,16 +80,15 @@ function wrap(raw, kind) {
     }
   }
 
-  // 提取 JSON（容忍 ```json 围栏）
+  // 提取 JSON（P1：与 deepseek.plan 共用单一可审计实现 jsonExtract.js；
+  // 只做外壳规范化，截断/非法输出必须拒绝，绝不替模型补语义）
   function extractJson(text) {
-    const t = String(text || '').trim();
-    const fenced = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    const candidate = fenced ? fenced[1] : t;
-    const start = candidate.search(/[{[]/);
-    if (start < 0) throw new ProviderError('LLM 输出无 JSON', 'INVALID_JSON');
-    const end = Math.max(candidate.lastIndexOf('}'), candidate.lastIndexOf(']'));
-    if (end <= start) throw new ProviderError('LLM 输出 JSON 不完整', 'INVALID_JSON');
-    return JSON.parse(candidate.slice(start, end + 1));
+    const ex = extractJsonCandidate(text);
+    if (!ex.ok) {
+      if (ex.reason === 'EMPTY_OUTPUT') throw new ProviderError('LLM 输出为空', 'INVALID_JSON');
+      throw new ProviderError('LLM 输出 JSON 无法解析（截断或非法，不得恢复）', 'INVALID_JSON');
+    }
+    return ex.json;
   }
 
   async function structured(ctx, { system, prompt, schema, maxRetries = 2, label = 'output' }) {

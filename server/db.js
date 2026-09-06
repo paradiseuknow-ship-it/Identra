@@ -8,7 +8,10 @@ const path = require('path');
 // 避免明文 JSON 残留（与 vault 凭据加密策略一致）。
 const vault = require('./vault');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+// CAP-O1：FPB_DATA_DIR 供测试/部署隔离（identity.js 与 agent/storage 同步支持）
+const DATA_DIR = process.env.FPB_DATA_DIR
+  ? path.resolve(process.env.FPB_DATA_DIR)
+  : path.join(__dirname, '..', 'data');
 const PROFILES_FILE = path.join(DATA_DIR, 'profiles.json');
 const PROXIES_FILE = path.join(DATA_DIR, 'proxies.json');
 const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');

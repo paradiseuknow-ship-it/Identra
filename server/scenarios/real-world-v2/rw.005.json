@@ -1,0 +1,19 @@
+{
+  "id": "rw.005",
+  "credentialRequirement": "required",
+  "riskLevel": "MEDIUM",
+  "credentialRef": "saas_demo",
+  "category": "saas",
+  "name": "SaaS登录5",
+  "objective": "使用邮箱密码登录控制台",
+  "fixture": "saas/login.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "登录后数据看板区域可见"
+  },
+  "credentialValue": {
+    "email": "ops@cloudsaas.io",
+    "password": "Saas#2024"
+  }
+}

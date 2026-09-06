@@ -118,6 +118,17 @@ function build({ task, observation, steps, checkpoint, errorHistory, verificatio
     history: historyCtx,                            // 兼容：执行轨迹
     budget: budgetCtx,
     siteKnowledge: knowledge,
+    // CAP-K2：Router 经验提示（历史失败 warnings）随任务进入 Planner 上下文。
+    // 此前 Router 只在 /chat 决定 profileId，其失败经验在执行链上零消费。
+    routerHints: (function () {
+      try {
+        const rh = task && task.routerHints;
+        if (rh && Array.isArray(rh.warnings) && rh.warnings.length) {
+          return { warnings: rh.warnings.slice(0, 5), summary: rh.summary || null };
+        }
+      } catch (e) {}
+      return null;
+    })(),
     currentError: error ? { code: error.code, message: context.truncate(red(error.message), 300) } : null,
   };
 }

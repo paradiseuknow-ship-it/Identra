@@ -1,0 +1,15 @@
+{
+  "id": "rw.072",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "字段校验2",
+  "objective": "提交空表单验证必填提示出现",
+  "fixture": "data_entry/form.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "请填写必填项提示出现"
+  }
+}

@@ -16,7 +16,10 @@ const { StoreInterface } = require('./store.interface');
 
 function resolveDataDir() {
   // 与旧 store.js 默认目录保持一致：server/data（JsonStore 的 FILES 集合根）
-  return path.join(__dirname, '..', '..', 'data');
+  // CAP-O1：FPB_DATA_DIR 供测试/部署隔离（与 server/db.js、identity.js 同步支持）
+  return process.env.FPB_DATA_DIR
+    ? path.resolve(process.env.FPB_DATA_DIR)
+    : path.join(__dirname, '..', '..', 'data');
 }
 
 function resolveSqlitePath() {

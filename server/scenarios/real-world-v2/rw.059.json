@@ -1,0 +1,15 @@
+{
+  "id": "rw.059",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "表格填写4",
+  "objective": "录入会员：姓名赵六，邮箱 z@y.io，手机号 13600000000",
+  "fixture": "data_entry/form.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "注册成功，欢迎 赵六 提示出现"
+  }
+}

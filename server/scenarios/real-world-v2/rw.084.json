@@ -1,0 +1,15 @@
+{
+  "id": "rw.084",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "动态DOM4",
+  "objective": "在懒加载完成后搜索「移动电源」，确认结果区域显示搜索结果文本",
+  "fixture": "ecommerce/search_lazy.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "搜索结果：移动电源 回显出现"
+  }
+}

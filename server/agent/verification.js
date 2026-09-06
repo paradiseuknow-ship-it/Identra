@@ -12,9 +12,9 @@ function isKeyBusiness(t) {
 }
 
 const VERIFICATION_TYPES = [
-  'url_contains', 'text_present', 'text_absent', 'element_present',
+  'url_contains', 'url_pattern', 'text_present', 'text_absent', 'element_present',
   'element_absent', 'login_state', 'page_change', 'field_value', 'field_checked',
-  'action_success', 'none',
+  'storage', 'action_success', 'none',
 ];
 
 // 输入：{ verification: {type, expect}, after: observation, before?: observation }
@@ -39,6 +39,14 @@ function verify(v, after, before) {
   switch (type) {
     case 'url_contains': {
       const ok = !!expect && url.includes(String(expect));
+      // P2 无效证据守卫：URL 条件若在动作执行前（before 观察）已经成立，
+      // 则它是「恒真证据」——与本次动作的因果无关，不能单独作为本动作成功的证明。
+      // 背景（2026-08-31 run6 实证）：/saas/login.html 上 url_contains "saas" 恒真，
+      // 错误凭据也被判 SUCCESS（假阳性）。守卫只拒绝「无效证据」，不改变 Success Definition。
+      if (ok && before && before.url && String(before.url).includes(String(expect))) {
+        evidence.push('P2 无效证据守卫: url 条件在动作执行前已成立（before url=' + String(before.url) + ' 已包含 "' + String(expect) + '"，恒真证据与本次动作无因果），不能作为本动作成功的证明');
+        return { success: false, confidence: 0.8, evidence, invalidEvidence: 'precondition_true' };
+      }
       evidence.push(`url=${url} ${ok ? '包含' : '不包含'} "${expect}"`);
       return { success: ok, confidence: ok ? 0.95 : 0.8, evidence };
     }
@@ -106,6 +114,67 @@ function verify(v, after, before) {
       const ok = !loggedOut || loggedIn;
       evidence.push(`文本登录态线索: 未登录=${loggedOut} 已登录=${loggedIn}`);
       return { success: ok, confidence: ok ? 0.75 : 0.6, evidence };
+    }
+    case 'storage': {
+      // STEP 22 (V1)：真实页面 Web Storage 证据（登录态 / 业务状态持久化断言）。
+      // 数据来自 observation.storage（页内只读真实采集），绝不从任务元数据推断成功。
+      // 缺 key → FAIL；值不匹配 → FAIL；观察层无 storage 数据（旧观察/采集失败）→ FAIL（fail-closed）。
+      // 子句形态：{ type:'storage', storageType:'localStorage'|'sessionStorage', key, equals? , exists? }
+      const st = (v && v.storageType) === 'sessionStorage' ? 'sessionStorage' : 'localStorage';
+      const key = String((v && v.key) || '');
+      const store = (after && after.storage && after.storage[st]) || null;
+      if (!key) {
+        evidence.push('storage: 子句缺少 key');
+        return { success: false, confidence: 0.5, evidence };
+      }
+      if (!store) {
+        evidence.push('storage: 观察结果不含 ' + st + ' 数据（观察层未采集或页面不可访问）');
+        return { success: false, confidence: 0.5, evidence };
+      }
+      const present = Object.prototype.hasOwnProperty.call(store, key);
+      if (v.equals !== undefined) {
+        const want = String(v.equals);
+        const actual = String(store[key]);
+        const ok = present && actual === want;
+        evidence.push(`storage: ${st}["${key}"] 实际="${actual.slice(0, 60)}" 期望="${want.slice(0, 60)}" → ${ok ? '匹配' : (present ? '不匹配' : '键不存在')}`);
+        return { success: ok, confidence: ok ? 0.95 : 0.6, evidence };
+      }
+      const wantExists = v.exists === undefined ? true : !!v.exists;
+      const ok = wantExists ? present : !present;
+      evidence.push(`storage: ${st}["${key}"] ${present ? '存在' : '不存在'}（期望${wantExists ? '存在' : '不存在'}）`);
+      return { success: ok, confidence: ok ? 0.85 : 0.6, evidence };
+    }
+    case 'url_pattern': {
+      // STEP 22 (V1)：基于真实 page.url() 的正则匹配（业务导航状态断言）。
+      // 非法 pattern → 验证失败（fail-closed），绝不抛异常崩 Runtime。
+      // 不改动既有 url_contains 行为；仅当 contract 显式声明本类型时生效。
+      const pat = (v && v.pattern) != null ? String(v.pattern) : '';
+      if (!pat) {
+        evidence.push('url_pattern: 缺少 pattern');
+        return { success: false, confidence: 0.5, evidence };
+      }
+      if (pat.length > 200) {
+        evidence.push('url_pattern: pattern 超长(>200)，拒绝评估');
+        return { success: false, confidence: 0.5, evidence };
+      }
+      let re = null;
+      try { re = new RegExp(pat); } catch (e) {
+        evidence.push('url_pattern: 非法正则 "' + pat.slice(0, 80) + '" → 验证失败（fail-closed）');
+        return { success: false, confidence: 0.5, evidence };
+      }
+      let ok = false;
+      try { ok = re.test(url); } catch (e) { ok = false; }
+      // P2 无效证据守卫（与 url_contains 同理）：pattern 在 before url 上已匹配 = 恒真证据。
+      if (ok && before && before.url && pat) {
+        let preHit = false;
+        try { preHit = re.test(String(before.url)); } catch (e) { preHit = false; }
+        if (preHit) {
+          evidence.push('P2 无效证据守卫: url_pattern 在动作执行前已匹配（before url=' + String(before.url) + '，恒真证据与本次动作无因果），不能作为本动作成功的证明');
+          return { success: false, confidence: 0.7, evidence, invalidEvidence: 'precondition_true' };
+        }
+      }
+      evidence.push(`url_pattern: url=${url} ${ok ? '匹配' : '不匹配'} /${pat.slice(0, 80)}/`);
+      return { success: ok, confidence: ok ? 0.95 : 0.7, evidence };
     }
     case 'page_change': {
       if (!before) {

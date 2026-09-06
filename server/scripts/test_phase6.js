@@ -39,17 +39,22 @@ function okReplay(cond, msg) {
 
 console.log('\n=== Phase 6.1 pageStateClassifier ===');
 (function () {
+  // STEP 1 去站点化：状态枚举改为通用 Web 形态（与站点品类无关）。
+  // 判定信号不得依赖任何压测站点品牌词 —— 下方刻意加入零品牌词的通用语料作证。
   const cases = [
     ['BLANK', { visibleTexts: [] }],
     ['BLANK', { visibleTexts: ['', '  '] }],
-    ['LOGIN_WALL', { visibleTexts: ['CloudSaaS 控制台 企业邮箱 密码 登录 邮箱或密码错误'] }],
+    ['LOGIN_WALL', { visibleTexts: ['控制台 企业邮箱 密码 登录 邮箱或密码错误'] }],
     ['LOGIN_WALL', { visibleTexts: ['请登录后继续', '注册'], url: 'https://x.com/login' }],
     ['DOWNLOAD_PAGE', { visibleTexts: ['资源下载 点击下面的链接下载示例文件。 下载示例文件'] }],
     ['REGISTRATION', { visibleTexts: ['会员注册 姓名 邮箱 手机号 提交注册'] }],
-    ['SHOP_SEARCH_EMPTY', { visibleTexts: ['搜索 购物车：0 件'] }],
-    ['SHOP_SEARCH_EMPTY', { visibleTexts: ['未找到相关商品 购物车：0 件'] }],
-    ['PRODUCT_LISTING', { visibleTexts: ['戴尔 U2723QE 27寸 4K ¥3299 加入购物车'] }],
-    ['PRODUCT_LISTING', { visibleTexts: ['LG 27UP850 ¥2499 飞利浦'] }],
+    ['EMPTY_RESULT', { visibleTexts: ['搜索 购物车：0 件'] }],
+    ['EMPTY_RESULT', { visibleTexts: ['未找到相关商品 购物车：0 件'] }],
+    ['LISTING', { visibleTexts: ['显示器 27寸 4K ¥3299 加入购物车'] }],
+    // 零品牌词：仅凭价格/数量/分页等通用信号即可判列表（去站点化的正面证据）
+    ['LISTING', { visibleTexts: ['云服务器 2核4G 价格 ¥199 立即购买 共 32 条 下一页'] }],
+    ['ERROR', { visibleTexts: ['404 页面不存在'] }],
+    ['LOADING', { visibleTexts: ['加载中...'] }],
   ];
   for (const [exp, obs] of cases) {
     const r = pageStateClassifier.classify(obs);
@@ -92,17 +97,22 @@ console.log('\n=== Phase 6.2 contextGuard ===');
   ok(contextGuard.guard({ type: 'click' }, { state: 'BLANK' }, null).blocked === true, 'click on BLANK -> blocked (E2)');
   // E2 不阻止 navigate（页面即将切换）
   ok(contextGuard.guard({ type: 'navigate' }, { state: 'BLANK' }, null).blocked === false, 'navigate on BLANK -> NOT blocked');
-  // E5：SaaS 期望但落在商品列表 → 阻止
-  ok(contextGuard.guard({ type: 'click', target: { url: 'http://x/saas' } }, { state: 'PRODUCT_LISTING' }, 'saas').blocked === true, 'saas expected but PRODUCT_LISTING -> blocked (E5)');
-  // E5：上传任务落在下载页 → 阻止
+  // E5：上传动作落在下载页（页面能力与动作前提冲突）→ 阻止
   ok(contextGuard.guard({ type: 'upload', target: { semantic: '上传文件' } }, { state: 'DOWNLOAD_PAGE' }, null).blocked === true, 'upload on DOWNLOAD_PAGE -> blocked (E5)');
-  // 合法：SaaS 期望且落在登录页 → 不阻止
-  ok(contextGuard.guard({ type: 'fill', target: { url: 'http://x/saas/login' } }, { state: 'LOGIN_WALL' }, 'saas').blocked === false, 'saas expected + LOGIN_WALL -> NOT blocked (合法)');
-  // 合法：商品页操作落在商品列表 → 不阻止
-  ok(contextGuard.guard({ type: 'click', target: { semantic: '加入购物车' } }, { state: 'PRODUCT_LISTING' }, 'shop').blocked === false, 'shop expected + PRODUCT_LISTING -> NOT blocked (合法)');
-  // deriveExpectedSite
-  ok(contextGuard.deriveExpectedSite({ target: { url: 'http://x/saas/x' } }) === 'saas', 'deriveExpectedSite saas');
-  ok(contextGuard.deriveExpectedSite({ target: { semantic: '上传' } }) === 'upload', 'deriveExpectedSite upload');
+  // E5：错误页上执行会改变状态的动作 → 阻止
+  ok(contextGuard.guard({ type: 'click', target: { semantic: '提交' } }, { state: 'ERROR', confidence: 0.9, signals: [] }, null).blocked === true, 'click on ERROR -> blocked (E5)');
+  // 前提校验：支付动作要求页面具备 cart/checkout/payment 能力；列表页不具备 → 阻止
+  ok(contextGuard.guard({ type: 'payment', target: { semantic: '支付' } }, { state: 'LISTING', confidence: 0.7, signals: [], capabilities: ['navigation', 'listing'] }, null).blocked === true, 'payment on LISTING (no payment capability) -> blocked');
+  // 合法：结算页具备 checkout 能力 → 支付动作不阻止（安全由 policy 独立把关）
+  ok(contextGuard.guard({ type: 'payment', target: { semantic: '支付' } }, { state: 'CHECKOUT', confidence: 0.85, signals: [], capabilities: ['checkout', 'cart'] }, null).blocked === false, 'payment on CHECKOUT -> NOT blocked (合法)');
+  // fail-open：能力证据缺失时不得阻断（避免过度阻断导致任务死亡）
+  ok(contextGuard.guard({ type: 'payment', target: { semantic: '支付' } }, { state: 'GENERIC', confidence: 0.6, signals: [], capabilities: [] }, null).blocked === false, 'no capability evidence -> NOT blocked (fail-open)');
+  // 通用动作目标推导（取代旧的「期望站点」枚举）
+  ok(contextGuard.deriveActionGoal({ type: 'upload', target: {} }) === 'upload', 'deriveActionGoal upload');
+  ok(contextGuard.deriveActionGoal({ type: 'download', target: {} }) === 'download', 'deriveActionGoal download');
+  ok(contextGuard.deriveActionGoal({ type: 'click', target: {} }) === null, 'deriveActionGoal null');
+  // 旧签名（第三参数为站点字符串）不得崩溃，且完全不参与判定
+  ok(contextGuard.guard({ type: 'fill', target: { semantic: '任意字段' } }, { state: 'GENERIC', confidence: 0.6, signals: [] }, 'legacy-hint').blocked === false, 'legacy site-hint arg ignored (no block, no throw)');
 })();
 
 console.log('\n=== Phase 6.3 selectorFallback + semanticResolver (E1) ===');

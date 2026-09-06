@@ -80,7 +80,9 @@ function ok(name, cond) { if (cond) { pass++; console.log('  PASS', name); } els
       structured: async () => { calls++; return { steps: badPlan.steps }; },
     };
     const r = await planObjective({ objective: '测试目标', target: '/', provider, ctx: ctx() });
-    ok('D. password 字面量仍被拒(安全不变)', r.ok === false && calls === 3);
+    // 2026-08-31 B 类缺口修复后契约更新：空凭据清单 + 纯敏感字段门错误 = 确定性不可满足，
+    // 首次即短路 needsCredentials（不再空转 3 次重试）。安全属性不变：计划仍被拒绝、永不执行。
+    ok('D. password 字面量仍被拒(安全不变) + 确定性短路', r.ok === false && calls === 1 && r.needsCredentials === true);
   }
 
   console.log(`\nPhase8 planner-retry: ${pass} passed, ${fail} failed`);

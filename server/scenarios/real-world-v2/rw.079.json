@@ -1,0 +1,15 @@
+{
+  "id": "rw.079",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "多步确认4",
+  "objective": "搜索「键盘」加购后确认按钮文本变为已加入购物车",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "已加入购物车按钮文本出现"
+  }
+}

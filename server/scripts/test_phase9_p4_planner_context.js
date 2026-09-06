@@ -270,23 +270,26 @@ function testD() {
     !(r && r.success === true) && r.failureType !== 'SUCCESS',
     'failureType=' + (r && r.failureType));
 
-  // D.2 Guard 仍在：expectedSite=saas + GENERIC + 无 SaaS 证据 → 仍 BLOCK（P0 修复的保守分支）
+  // D.2 Guard 仍在：动作前提不成立（上传动作落在资源下载页）→ 仍 BLOCK
+  // （STEP 1 后守卫不再判定「站点类型」，改为判定「页面能力是否满足动作前提」；
+  //   拦截能力本身不得被任何改动削弱。）
   const g = guard.guard(
-    { type: 'click', target: { semantic: '导出' } },
-    { state: 'GENERIC' }, 'saas', {}
+    { type: 'upload', target: { semantic: '头像上传控件' } },
+    { state: 'DOWNLOAD_PAGE', confidence: 0.9, signals: ['资源下载'], capabilities: ['download', 'navigation'] },
+    { observation: { url: 'https://files.example.com/download.html', title: '资源下载', textSummary: '资源下载 点击下面的链接下载', elements: [] } }
   );
-  ok('D.2 [红线] Context Guard 未被绕过（GENERIC + 无 SaaS 证据仍拦截）',
+  ok('D.2 [红线] Context Guard 未被绕过（动作前提不成立仍拦截）',
     !!(g && g.blocked) && g.code === 'CONTEXT_WRONG_APP',
     'guard=' + JSON.stringify({ blocked: g && g.blocked, code: g && g.code }));
 
-  // D.2b P0 修复仍在：GENERIC + 强 SaaS 证据 → 放行（不是"GENERIC → always SaaS"）
+  // D.2b STEP 1 去站点化仍在：页面具备所需能力 → 放行（不是"无特征页 → always 阻断"）
   const g2 = guard.guard(
-    { type: 'click', target: { semantic: '导出' } },
-    { state: 'GENERIC' }, 'saas',
-    { observation: { url: 'https://app.cloudsaas.io/dashboard', title: 'CloudSaaS 控制台', textSummary: '工作区 团队成员 订阅套餐' } }
+    { type: 'upload', target: { semantic: '头像上传控件' } },
+    { state: 'FORM_PAGE', confidence: 0.65, signals: [], capabilities: ['form', 'upload'] },
+    {}
   );
-  ok('D.2b [P0 仍在] GENERIC + 强 SaaS 证据 → 放行（修复未被回退）',
-    !!(g2 && g2.blocked === false) && g2.guardMode === 'saas_evidence',
+  ok('D.2b [STEP1] 页面具备 upload 能力 → 放行（前提校验未被做成无条件阻断）',
+    !!(g2 && g2.blocked === false) && g2.guardMode === 'pass',
     'guard=' + JSON.stringify({ blocked: g2 && g2.blocked, mode: g2 && g2.guardMode }));
 
   // D.3 关键动作无验证契约仍被拒绝

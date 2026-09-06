@@ -5,6 +5,48 @@
 
 const store = require('./store');
 const tsm = require('./taskStateManager');
+const fs = require('fs');
+const path = require('path');
+
+// 存储治理（2026-09-04）：aiAttempts error 内嵌完整 observation 曾产生 171KB 长尾记录
+// （42MB 主文件的主要来源）。超过阈值的大证据体外置到 data/evidence/attempt_errors/，
+// store 内保留 { externalized, file, byteSize } 指针 + url/title 轻摘要。
+// 离线分析脚本（analyze_phase10 / trace_single_task 等）读 externalized 字段可按 file 还原。
+const EVIDENCE_EXTERNAL_LIMIT = 4 * 1024;
+
+function evidenceErrorDir() {
+  const base = process.env.FPB_DATA_DIR
+    ? path.resolve(process.env.FPB_DATA_DIR)
+    : path.join(__dirname, '..', 'data'); // server/agent → server/data（与 storage/index.js resolveDataDir 一致）
+  return path.join(base, 'evidence', 'attempt_errors');
+}
+
+function externalizeEvidence(attemptId, field, value) {
+  let size = 0;
+  try { size = (JSON.stringify(value) || '').length; } catch (e) { size = 0; }
+  if (!value || typeof value !== 'object' || size <= EVIDENCE_EXTERNAL_LIMIT) {
+    return { kept: value, externalized: false };
+  }
+  const file = attemptId + '.' + field + '.json';
+  try {
+    const dir = evidenceErrorDir();
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, file), JSON.stringify({ externalizedAt: Date.now(), attemptId, field, value }), 'utf8');
+    return {
+      kept: {
+        externalized: true,
+        file: 'evidence/attempt_errors/' + file,
+        byteSize: size,
+        url: value.url || null,
+        title: value.title || null,
+      },
+      externalized: true,
+    };
+  } catch (e) {
+    // 外置失败（磁盘/权限）不改变失败记录语义：退回原值（宁可记录大，不丢证据）
+    return { kept: value, externalized: false };
+  }
+}
 
 function uid(p) {
   return p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -32,6 +74,20 @@ function createStep(taskId, planStep, index) {
 
 function listSteps(taskId) {
   return store.findWhere('aiSteps', (s) => s.taskId === taskId).sort((a, b) => a.index - b.index);
+}
+
+// B1 修复（2026-09-01）：replan 生成的 plan 步骤被 normalizeStrictToCanonical 统一重编号为
+// step_001..N，若直接 createStep 会与既有（已 SUCCESS）步骤 id 冲突 —— getStep 命中旧步骤，
+// 主循环「已终态跳过」逻辑误跳过 replan 新步骤，最终 B.4 收口守卫以 PENDING 残留判 FAILED
+// （Final100 实证：rw.005/060/061/075，错误 id 与步骤位置错位是直接铁证）。
+// 为 replan 步骤分配无冲突 id：base 未被占用原样返回；被占用则追加 _rp 序号（再冲突递增）。
+// 无 base 时原样返回（createStep 走 uid 兜底，天然唯一）。
+function uniqueStepId(taskId, baseId) {
+  if (!baseId) return baseId;
+  if (!getStep(taskId + '_' + baseId)) return baseId;
+  let n = 1;
+  while (getStep(taskId + '_' + baseId + '_rp' + n)) n++;
+  return baseId + '_rp' + n;
 }
 
 function getStep(id) {
@@ -148,25 +204,35 @@ function attributeRepairOnSuccess(att) {
 // 失败错误必须保留结构化 { code, message }（Phase 3 契约）：原始失败不被二次异常覆盖，
 // 也不降级为字符串——否则 errorClassifier / runtime errorHistory 读取 a.error.code 永远为 undefined，
 // 导致错误被误分类（如导航失败被当成元素缺失）。
-function normalizeErrorShape(err) {
+function normalizeErrorShape(err, attemptId) {
   if (err && typeof err === 'object') {
     const out = { code: err.code || 'UNKNOWN', message: String(err.message || '失败').slice(0, 300) };
     // v0.2.1：保留 Verification Intelligence 分类埋点字段（不新增 storage，随 error 落 aiAttempts）
     if (err.failureType) out.failureType = err.failureType;
     if (typeof err.confidence === 'number') out.confidence = err.confidence;
     if (Array.isArray(err.evidence)) out.evidence = err.evidence.slice(0, 5);
-    if (err.observationBefore) out.observationBefore = err.observationBefore;
-    if (err.observationAfter) out.observationAfter = err.observationAfter;
+    // 存储治理：大观察体外置（>4KB），store 内留指针 + 轻摘要
+    if (err.observationBefore) {
+      const ex = externalizeEvidence(attemptId || 'att_unknown', 'observationBefore', err.observationBefore);
+      out.observationBefore = ex.kept;
+    }
+    if (err.observationAfter) {
+      const ex = externalizeEvidence(attemptId || 'att_unknown', 'observationAfter', err.observationAfter);
+      out.observationAfter = ex.kept;
+    }
     // C2（Phase 4）：透传 previousObservationDiff 到 error 顶层，保证 Observation→Diff→Evidence 链路完整。
     // 仅做字段透传，不新增存储、不改动 Evidence 评分逻辑（评分仍由 verificationIntelligence.aggregateEvidence 负责）。
     const diffSrc = (err.observationAfter && err.observationAfter.previousObservationDiff) || err.previousObservationDiff;
-    if (diffSrc && typeof diffSrc === 'object') out.previousObservationDiff = diffSrc;
+    if (diffSrc && typeof diffSrc === 'object') {
+      const ex = externalizeEvidence(attemptId || 'att_unknown', 'previousObservationDiff', diffSrc);
+      out.previousObservationDiff = ex.kept;
+    }
     return out;
   }
   return { code: 'UNKNOWN', message: String(err || '失败').slice(0, 300) };
 }
 function failAttempt(id, error) {
-  return updateAttempt(id, { status: 'FAILED', endedAt: Date.now(), error: normalizeErrorShape(error) });
+  return updateAttempt(id, { status: 'FAILED', endedAt: Date.now(), error: normalizeErrorShape(error, id) });
 }
 
 function listAttempts(stepId) {
@@ -175,6 +241,7 @@ function listAttempts(stepId) {
 
 module.exports = {
   createStep, listSteps, getStep, setStepState,
+  uniqueStepId, // B1 修复：replan 步骤 id 无冲突分配（导出供 tryReplan 与针对性测试）
   createAttempt, getAttempt, updateAttempt, succeedAttempt, failAttempt, listAttempts, finalizeOrphanAttempts,
   orphanCodeFor,
   normalizeErrorShape, // 导出供测试（仅暴露既有纯函数，不改运行时行为）

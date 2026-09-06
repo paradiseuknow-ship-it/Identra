@@ -5,7 +5,23 @@
 // EventID 全局单调唯一；客户端重连带 Last-Event-ID，服务端回放增量，避免重复渲染。
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const store = require('./store');
+
+// 取证扩容（真实站点阶段）：aiEvents 500 条环形缓冲在长跑批/高事件率下相互覆盖
+// （run6 实证：早期任务事件被驱逐，失败变体证据丢失）。FPB_EVENTS_DIR 设置时，
+// 每条事件额外按 taskId 增量落 JSONL（<dir>/<taskId>.jsonl，无 taskId 归 _global.jsonl），
+// 只增不改、失败静默（取证落盘绝不能拖垮主链路）。零默认行为改动。
+function persistPerTask(evt) {
+  const dir = process.env.FPB_EVENTS_DIR;
+  if (!dir) return;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const name = String(evt.taskId || '_global').replace(/[^\w.-]/g, '_').replace(/\.{2,}/g, '__');
+    fs.appendFileSync(path.join(dir, name + '.jsonl'), JSON.stringify(evt) + '\n', 'utf8');
+  } catch (e) { /* 取证失败不影响推送与存储 */ }
+}
 
 let seq = 0;
 
@@ -19,17 +35,29 @@ const EVENT_TYPES = [
   'task.created', 'task.planned', 'task.started', 'task.step_started',
   'agent.observing', 'agent.planning', 'agent.tool_called', 'agent.tool_result',
   'agent.diagnosing', 'agent.repairing', 'agent.retrying', 'agent.recovered',
+  // STEP 3/4：统一诊断与升级观测（agent.diagnosed 带 rootCause/retryPolicy；
+  // agent.escalating 表示诊断判定「不可重试」，已停止消耗剩余重试次数）
+  'agent.diagnosed', 'agent.escalating',
   'task.paused', 'task.resumed', 'task.completed', 'task.failed', 'task.cancelled',
+  // A 类 cancel deadline（2026-08-31）：cancel 收尾链任一环节超时/异常时的审计事件
+  'task.cancel_timeout',
+  // Phase 5.8：显式人工升级终态（taskManager.escalate 发出；此前漏登记，每次触发都报「非标准事件类型」）
+  'task.escalated',
   'execution.created', 'execution.crash_detected', 'execution.recovered',
   // Phase 1.4：更细粒度事件
   'ai.thinking', 'ai.plan.created', 'ai.action.started', 'ai.action.completed',
   'ai.verification.completed', 'ai.warning', 'ai.needApproval', 'ai.failed',
+  // STEP 22 (V2)：persistAfterReload 复验事件族（start / reload_failed / reverified）
+  'ai.verification.persist_reload',
   'ai.approved', 'ai.rejected', 'ai.modified', 'ai.snapshot',
   // Phase 4.3：Scheduler / Dispatch 观测事件（供 4.6 Observability 消费）
   'scheduler.started', 'scheduler.stopped', 'scheduler.tick', 'scheduler.paused',
   'scheduler.resumed', 'scheduler.draining',
   'dispatch.selected', 'dispatch.assigned', 'dispatch.rejected',
   'worker.capacity.full',
+  // CAP-M1（STEP 12）：定时触发 / 批量执行观测事件
+  'schedule.created', 'schedule.updated', 'schedule.deleted',
+  'schedule.triggered', 'schedule.fire_error', 'schedule.tick_error',
 ];
 
 // 内存客户端集合（SSE 连接）
@@ -67,6 +95,7 @@ function emit(partial) {
   } catch (e) {
     // 持久化失败不影响推送
   }
+  persistPerTask(evt);
   broadcast(evt);
   // 进程内 listener（捕获异常，避免单个 listener 拖垮事件总线）
   for (const fn of listeners) {

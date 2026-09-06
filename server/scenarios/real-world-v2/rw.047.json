@@ -1,0 +1,15 @@
+{
+  "id": "rw.047",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "榜单观察2",
+  "objective": "查看榜单确认「LG 27UP850」出现",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "LG 27UP850 出现在榜单中"
+  }
+}

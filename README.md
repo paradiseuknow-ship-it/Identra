@@ -1,61 +1,92 @@
-# 指纹浏览器 (Fingerprint Browser) — MVP
+# 指纹浏览器 (Fingerprint Browser) — v0.2.0-rc1
 
-基于 **Chromium 内核**的多账号隔离与管理工具，带**指纹伪装**、**代理隔离**、**加密凭据/支付保险库**，以及**自动化执行引擎**（RPA：自动开站、填表、注册、按 CVV 自动支付）。
+基于 **Chromium** 的多账号隔离与管理工具：**指纹身份**、**代理隔离**、**加密凭据/支付保险库**，以及 **AI 自动化执行引擎**（LLM Planner 驱动真实浏览器完成任务：开站、填表、登录、搜索、验证、修复重试、业务结果核验）。
 
-> 架构采用分层设计：指纹注入逻辑独立成模块。MVP 阶段用 Playwright 驱动 Chromium 并通过 CDP 注入指纹验证效果；生产阶段这套注入逻辑可直接下沉到自定义 Chromium 编译里（AdsPower / Multilogin 同路，需自行 patch `third_party/blink` 中 fingerprint 相关 API）。
+当前版本 `0.2.0-rc1`：v2 任务池（100 真实站点任务、真实 deepseek LLM）**99% SUCCESS + 1% 可信人工升级 = 100% 可接受结局率**（canonical240 基线，run6 2026-09-04）。
 
 ## 技术栈
-- 后端：Node.js + Express + Playwright（控制 Chromium）
-- 前端：React + Vite + TailwindCSS
-- 存储：本地 JSON 文件（`data/`）
-- 敏感数据：AES-256-GCM 加密（`server/vault.js`）
+- 后端：Node.js + Express + Playwright（控制 Chromium / 自定义 native 构建）
+- 前端：React + Vite + TailwindCSS（AI Operator Console 仪表盘）
+- LLM：DeepSeek（`deepseek-chat`，Planner / Diagnosis / Repair）
+- 存储：本地 JSON（`data/`）+ 可选 SQLite（storeFacade 驱动切换）
+- 敏感数据：AES-256-GCM 加密保险库（`server/vault.js`）
 
 ## 快速开始
 ```bash
-# 1. 安装依赖
+# 1. 安装依赖（后端 + 前端）
 npm run install:all
 
-# 2. 安装 Chromium 浏览器（仅首次）
+# 2. 安装 Chromium（仅首次）
 npx playwright install chromium
 
-# 3. （可选）设置加密主密钥，否则使用一次性内存密钥
-#    Windows PowerShell:
-$env:FPB_MASTER_KEY = [Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))
-#    bash:
-export FPB_MASTER_KEY=$(head -c 32 /dev/urandom | base64)
+# 3. 配置环境变量：复制 .env.example 为 .env 并填写
+#    DEEPSEEK_API_KEY=sk-...   ← AI 自动化必需（不填则 AI 任务 fail-fast）
+#    FPB_MASTER_KEY=...        ← 加密保险库主密钥（不设则一次性内存密钥，重启后凭据不可解）
 
-# 4. 启动（同时起后端 + 前端）
-npm run dev
-#   后端: http://localhost:8787  前端: http://localhost:5173
+# 4. 启动
+npm run dev     # 开发模式（后端 8787 + 前端 5173 热更新）
+npm start       # 仅后端（生产/长跑）
+npm run build   # 前端构建（client/dist）
+npm test        # 全量回归（runRegression.js，当前 112/0）
 ```
 
-## 模块说明
-| 模块 | 文件 | 作用 |
-|------|------|------|
-| 指纹生成 | `server/fp/generate.js` | 种子化可复现指纹（UA/屏幕/时区/语言/字体/WebGL/硬件） |
-| 指纹注入 | `server/fp/inject.js` | `addScriptToEvaluateOnNewDocument` 覆盖 navigator/screen/Date/canvas/WebGL/Audio/WebRTC |
-| 浏览器管理 | `server/browserManager.js` | 每 profile 一实例，绑定代理与指纹 |
-| 代理检测 | `server/proxyChecker.js` | 经代理访问检测站点，回传出口 IP/延迟 |
-| 加密保险库 | `server/vault.js` | AES 加密存储邮箱/密码/卡号/CVV，前端仅见脱敏摘要 |
-| 自动化引擎 | `server/automation/engine.js` | 执行工作流（goto/fill/click/wait/extract…），占位符从保险库解密注入 |
-| 工作流模板 | `server/automation/templates.js` | 注册 / 结账预设，选择器按站点配置 |
+前端控制台：`http://localhost:5173`（开发）/ 后端 API：`http://localhost:8787`。
 
-## 典型用法
-1. **配置管理**：新建 profile → 生成指纹（按 seed 可复现）→ 绑定代理 → 在编辑器中填写邮箱/密码、卡号/CVV（加密保存）。
-2. **代理管理**：新增 HTTP/SOCKS5 代理，点「检测」验证出口 IP。
-3. **自动化任务**：新建「注册流程」或「结账流程」，填目标 URL 与选择器；运行时选一个 profile 执行。
-   - 账号类值用 `{{email}}` `{{password}}`；
-   - 支付类值用 `{{card.number}}` `{{card.name}}` `{{card.expMonth}}` `{{card.expYear}}` `{{card.cvv}}` `{{card.zip}}`；
-   - 运行时由保险库解密注入，绝不回传明文到前端。
+## 功能总览
+| 能力 | 说明 |
+|------|------|
+| Profile 与指纹身份 | 种子化可复现指纹（UA/UA-CH/screen/时区/语言/字体/WebGL/Canvas/Audio/硬件），headful 真实分辨率回填，headless CDP metrics 对齐 |
+| Native 身份架构（16-B） | 6 个 Chromium native patch ACTIVE（webdriver/platform/platformVersion/hardwareConcurrency/deviceMemory/maxTouchPoints），manifest=真实已启用架构，opt-in 缺省逐字节 stock；languages 走 CONFIG 层 pref 注入三端同源 |
+| 代理管理 | HTTP/SOCKS5，出口 IP 预检、代理-指纹一致性（基于 IP 的时区/语言/地理推导） |
+| 加密保险库 | 邮箱/密码/卡号/CVV 加密存储；LLM 永不见明文 CVV/卡号（credentialRef + masked） |
+| AI 自动化引擎 | Planner→Runtime→Verification→Repair→Escalation 全链：业务状态核验、失败诊断、churn 熔断、replan 契约、凭据启动预检、可信升级（CREDIBLE_BUSINESS） |
+| 调度与并发 | 定时触发、批量执行、Worker 池、容量管理、断点续跑、崩溃恢复 |
+| 可观测性 | AI Operator Console：任务时间线、VIL/ESCALATION 节点、指标面板、事件取证 |
+| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（112/0 + OK=105/BAD=0） |
+
+## 常用命令
+```bash
+npm run dev            # 开发：后端 + 前端
+npm start              # 仅后端
+npm test               # 全量回归（server/scripts/test_*.js 自动发现）
+bash server/scripts/run_phase9_regression.sh   # 第二回归护栏（顺序执行）
+```
+
+## 架构要点
+```
+server/
+  index.js            # Express API + 静态托管
+  browserManager.js   # 浏览器生命周期 / CDP / 指纹接线（C7-CONFIG: languages pref 注入）
+  fp/
+    generate.js       # 指纹生成（种子可复现）
+    inject.js         # JS 注入层（navigator/screen/canvas/WebGL/Audio/WebRTC/UA-CH 回放）
+    uaBrands.js       # UA-CH brands 唯一事实源=原生运行时捕获回放（P4.2）
+    nativePatchManifest.js  # Native patch 注册表（enabled=已被 POC 证明的数量）
+    identity*         # identity schema/factory/store（16-B 身份同源）
+  agent/              # AI Operator：planner/runtime/verification/repair/intelligence
+  scripts/            # 测试与基准（test_*.js 自动发现；runRegression/phase9/canonical240）
+client/               # React 仪表盘
+data/                 # 运行时存储（gitignore）
+.benchmark/           # 取证与报告（gitignore）
+```
+
+## 当前基线（2026-09-06）
+- **可靠性**：v2 池 100 任务 × 真实 deepseek：run3b→run6 = 95% → 97% → 98% → **99% SUCCESS**（唯一非 SUCCESS = CREDIBLE_BUSINESS 可信升级，按设计工作）
+- **回归护栏**：runRegression **112/0**（308s）+ phase9 **OK=105/BAD=0**（历史最佳）
+- **身份架构**：16-B 全家族收口（6 Native ACTIVE + languages CONFIG + brands/screen CLOSED，详见 `.benchmark/PHASE16B_ROI_GATE.md`）
 
 ## 合规与安全
-- 指纹伪装 + 自动化是**双用途**能力：适用于自测注册/支付流程、管理你授权拥有的账号、无障碍自动化等合法场景。
+- 指纹伪装 + 自动化是**双用途**能力：适用于自测注册/支付流程、管理你拥有或获明确授权的账号、无障碍自动化等合法场景。
 - **请只对你拥有或获明确授权的账号/卡号使用，并遵守目标网站的 ToS。**
-- 本项目**不**提供任何规避支付风控、盗卡测试、批量薅羊毛的专门设计。
-- 卡号/CVV 为敏感数据：请务必设置 `FPB_MASTER_KEY` 环境变量；数据库文件 `data/vault.json` 仅存密文。
+- 本项目**不**提供任何规避支付风控、CAPTCHA/3DS、盗卡测试、批量薅羊毛的专门设计；LLM 侧凭据判定链保证模型永不见明文 CVV/卡号。
+- 卡号/CVV 为敏感数据：务必设置 `FPB_MASTER_KEY`；`data/vault.json` 仅存密文。`.env` 与 `data/` 已被 gitignore。
 
-## 生产级 Chromium 定制路线（后续）
-1. 拉取 Chromium 源码，`gn args` 打开 `is_official_build`。
-2. patch `third_party/blink/renderer/core/frame/navigator.cc` 等，让 fingerprint API 直接读取 profile 配置（比 JS 注入更隐蔽、更难被检测）。
-3. patch WebGL/Canvas/AudioContext 实现层，从源头返回确定性噪声。
-4. 将 `server/fp/` 的伪装逻辑迁移为 C++ 侧的 profile 参数。
+## 环境变量（.env）
+| 变量 | 必填 | 说明 |
+|------|------|------|
+| `DEEPSEEK_API_KEY` | AI 任务必填 | DeepSeek API key（缺省时 AI 任务 fail-fast，Profile 管理不受影响） |
+| `FPB_MASTER_KEY` | 建议 | 保险库主密钥（base64 32 字节）；不设则一次性内存密钥 |
+| `FPB_NATIVE_CHROME` | 可选 | 指向 native patched chrome.exe（启用 16-B Native 身份架构） |
+| `FPB_SCENARIO_DIR` / `FPB_POOL_FILE` | 可选 | 基准任务池覆盖（v2 池） |
+
+完整变量清单见 `.env.example`。

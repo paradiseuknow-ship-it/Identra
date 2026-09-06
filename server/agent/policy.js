@@ -9,7 +9,9 @@
 // 安全护栏：autoPayment 仅在测试环境（NODE_ENV==='test' 或 FPB_ALLOW_AUTOPAY==='1'）才允许绕过人工审批。
 //   任何普通 API 调用者通过 task.policy.autoPayment=true 注入都无法在非测试环境生效——环境护栏在代码层强制。
 
-const { TYPE_RISK_FLOOR } = require('./schema/action');
+// riskFloorFor 而非 TYPE_RISK_FLOOR：后者看不到 dialog:accept 这类按 intent 细分的定级。
+// Policy 拿到的永远是规范化后的 action，若这里仍读平表，schema 里做的 intent 细分就白做了。
+const { riskFloorFor } = require('./schema/action');
 const events = require('./events');
 
 // autoPayment 能否在代码层生效：仅在显式测试环境标记下。避免被任意 task.policy 注入绕过 CRITICAL 门。
@@ -24,13 +26,34 @@ function autoPaymentAllowed(policy) {
 const RISK_RANK = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
 
 // Action type 是否属于"执行动作"（SIMULATION 模式下禁止）
+// STEP 7：新登记动作在 SIMULATION 下的归属。
+//   禁（有服务端副作用或不可逆）：upload / download / dialog / closeTab / drag
+//   放行（等价于 navigate / 纯观察，不放行会导致多标签页面连"看"都看不到）：openTab / switchTab / hover
 const ACT_TYPES = new Set([
   'click', 'fill', 'select', 'press', 'login', 'logout',
   'submit', 'delete', 'update_account_settings', 'purchase', 'payment', 'password_change',
+  'upload', 'download', 'dialog', 'closeTab', 'drag',
 ]);
 
-// 支付/金融动作（CRITICAL 子集，autoPayment 只对这些生效）
-const PAYMENT_TYPES = new Set(['purchase', 'payment', 'password_change', 'delete']);
+// STEP 1 §7：此前 PAYMENT_TYPES = ['purchase','payment','password_change','delete'] ——
+//   名为「自动支付」的开关，实际授权范围却是「支付 + 改密码 + 删除账号」。
+//   现在严格拆成三类，autoPayment **只能**影响 PAYMENT_TYPES。
+//
+//   ① PAYMENT          支付/购买能力 —— autoPayment 可放行
+//   ② ACCOUNT_SECURITY 账号安全      —— 任何自动开关都不生效，必须逐次人工审批
+//   ③ DESTRUCTIVE      破坏性动作    —— 任何自动开关都不生效，必须逐次人工审批
+const PAYMENT_TYPES = new Set(['purchase', 'payment']);
+// 注：checkout / subscription / upgrade 尚未登记为 action type，登记后需同步加入本集合。
+const ACCOUNT_SECURITY_TYPES = new Set(['password_change', 'update_account_settings']);
+const DESTRUCTIVE_TYPES = new Set(['delete']);
+
+// 动作归属的能力类别（供事件与审计使用）
+function capabilityOf(type) {
+  if (PAYMENT_TYPES.has(type)) return 'PAYMENT';
+  if (ACCOUNT_SECURITY_TYPES.has(type)) return 'ACCOUNT_SECURITY';
+  if (DESTRUCTIVE_TYPES.has(type)) return 'DESTRUCTIVE';
+  return 'GENERAL';
+}
 
 const DEFAULT_POLICY = {
   riskFloor: 'MEDIUM',     // 自动执行允许的最大风险级
@@ -43,7 +66,7 @@ const DEFAULT_POLICY = {
 };
 
 function effectiveRisk(action) {
-  const floor = TYPE_RISK_FLOOR[action.type] || 'MEDIUM';
+  const floor = riskFloorFor(action.type, action);
   const claimed = RISK_RANK[action.risk] !== undefined ? action.risk : floor;
   return RISK_RANK[claimed] > RISK_RANK[floor] ? claimed : floor; // 取两者更高者
 }
@@ -68,12 +91,31 @@ function allowsAction(action, task) {
     return { allowed: true, requiresApproval: false, reason: '已通过人工审批' };
   }
 
-  // CRITICAL：默认必须人工审批；仅 autoPayment 在测试环境显式开启且属于支付类才自动
+  // ① 支付能力：autoPayment 唯一能放行的集合（STEP 1 §7）
+  if (PAYMENT_TYPES.has(action.type) && autoPaymentAllowed(policy)) {
+    events.emit({
+      type: 'ai.policy.autoPayment',
+      payload: { actionType: action.type, capability: 'PAYMENT', reason: '已授权支付自动化放行' },
+    });
+    return { allowed: true, requiresApproval: false, reason: `autoPayment 授权放行支付动作 ${action.type}` };
+  }
+
+  // ② 账号安全 / ③ 破坏性：任何自动开关都不得放行，必须逐次人工审批
+  const cap = capabilityOf(action.type);
+  if (cap === 'ACCOUNT_SECURITY' || cap === 'DESTRUCTIVE') {
+    events.emit({
+      type: 'ai.policy.blocked',
+      payload: { actionType: action.type, capability: cap, risk, reason: '账号安全/破坏性动作不接受自动授权' },
+    });
+    return {
+      allowed: false,
+      requiresApproval: true,
+      reason: `${action.type} 属于 ${cap}，必须逐次人工审批；autoPayment / AUTONOMOUS 均不生效`,
+    };
+  }
+
+  // CRITICAL：默认必须人工审批（支付类已在 ① 处理，其余一律拦下）
   if (risk === 'CRITICAL') {
-    if (autoPaymentAllowed(policy) && PAYMENT_TYPES.has(action.type)) {
-      events.emit({ type: 'ai.policy.autoPayment', payload: { actionType: action.type, reason: '测试环境 autoPayment 放行' } });
-      return { allowed: true, requiresApproval: false, reason: `测试环境 autoPayment=true 放行 ${action.type}` };
-    }
     return { allowed: false, requiresApproval: true, reason: `${action.type} 属于 CRITICAL，需人工审批` };
   }
 
@@ -95,4 +137,15 @@ function isApproved(task, action) {
   return grants.some((g) => g && g.type === action.type && (sem ? g.semantic === sem : true));
 }
 
-module.exports = { allowsAction, effectiveRisk, isApproved, DEFAULT_POLICY, RISK_RANK };
+module.exports = {
+  allowsAction,
+  effectiveRisk,
+  isApproved,
+  DEFAULT_POLICY,
+  RISK_RANK,
+  // 能力分类（供测试与审计断言：autoPayment 只能影响 PAYMENT）
+  PAYMENT_TYPES,
+  ACCOUNT_SECURITY_TYPES,
+  DESTRUCTIVE_TYPES,
+  capabilityOf,
+};

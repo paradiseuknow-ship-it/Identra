@@ -1,0 +1,15 @@
+{
+  "id": "rw.039",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "加购计数4",
+  "objective": "搜索「键盘」加购后确认购物车件数增加",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "购物车计数变为 1"
+  }
+}

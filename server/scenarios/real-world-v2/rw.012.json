@@ -1,0 +1,15 @@
+{
+  "id": "rw.012",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS登录页观察2",
+  "objective": "打开登录页并确认密码输入框存在",
+  "fixture": "saas/login.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "密码输入框可见"
+  }
+}

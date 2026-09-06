@@ -45,10 +45,16 @@ console.log('[A] Static scan of real runtime.js');
 
 // run() is declared as `async function run(taskId)`
 const runBody = extractFunctionBody(src, 'async function run(');
-const declMatch = runBody.match(/(?:const|let)\s+steps\s*=/);
+// 2026-08-31 契约更新：resolvePlan 调用点包了 try/catch（needsCredentials → escalate 路由），
+// 声明形态为 `let steps;`（无初始化器）。守卫意图不变：steps 必须可重赋值（禁 const）。
+const declMatch = runBody.match(/(?:const|let)\s+steps\s*(?:=|;)/);
 assert(
   !!declMatch && declMatch[0].startsWith('let'),
   'runtime.run() declares `steps` with `let` (not `const`)'
+);
+assert(
+  !/const\s+steps\s*(?:=|;)/.test(runBody),
+  'runtime.run() must not declare `steps` with const'
 );
 assert(
   /steps\s*=\s*stepManager\.listSteps/.test(runBody),

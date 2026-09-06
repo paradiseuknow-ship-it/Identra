@@ -1,0 +1,15 @@
+{
+  "id": "rw.068",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "下载链接3",
+  "objective": "确认下载页包含资源下载标题与下载链接",
+  "fixture": "download.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "资源下载标题与下载链接可见"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.066",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "下载链接1",
+  "objective": "打开下载页确认「下载示例文件」链接可见",
+  "fixture": "download.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "下载示例文件链接可见"
+  }
+}

@@ -1,0 +1,1617 @@
+{
+  "_meta": {
+    "frozen": true,
+    "generatedAt": "2026-09-06T10:53:48.155Z",
+    "generator": "genPhase12PoolV2.js",
+    "provenance": "v2 fixture 对齐重生成（B3 池对齐契约落地）；v1 冻结池 phase12_pool.json 未改动，历史基线不可比",
+    "alignmentLint": {
+      "auditor": "pool_alignment_lint.js (audit v2 等价)",
+      "mismatch": 0,
+      "searchOnlyPass": 0
+    },
+    "taskCount": 100,
+    "sha256": "13d2e760c1d376347fce20ded599cd5651af969ed17c2155ca99fb6faee383aa"
+  },
+  "tasks": [
+    {
+      "taskId": "rw.001",
+      "category": "saas",
+      "name": "SaaS登录1",
+      "objective": "使用凭据登录 SaaS 控制台并查看看板",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "登录后数据看板区域可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.002",
+      "category": "saas",
+      "name": "SaaS登录2",
+      "objective": "登录系统并确认数据看板出现",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "登录后数据看板区域可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.003",
+      "category": "saas",
+      "name": "SaaS登录3",
+      "objective": "登录后查看本月活跃用户数",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "本月活跃用户数值可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.004",
+      "category": "saas",
+      "name": "SaaS登录4",
+      "objective": "登录后点击导出 CSV 按钮并确认导出成功",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "报表已导出提示出现"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.005",
+      "category": "saas",
+      "name": "SaaS登录5",
+      "objective": "使用邮箱密码登录控制台",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "登录后数据看板区域可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.006",
+      "category": "saas",
+      "name": "SaaS登录6",
+      "objective": "登录系统并确认看板中显示本月活跃用户",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "本月活跃用户数值可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.007",
+      "category": "saas",
+      "name": "SaaS登录7",
+      "objective": "登录后点击导出报表并确认出现「report_2024.csv」",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "report_2024.csv 出现在导出提示中"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.008",
+      "category": "saas",
+      "name": "SaaS登录8",
+      "objective": "使用正确凭据登录控制台并确认导出按钮可见",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "登录后导出 CSV 按钮可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.009",
+      "category": "saas",
+      "name": "SaaS登录9",
+      "objective": "登录后查看数据看板并导出 CSV",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "报表已导出提示出现"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.010",
+      "category": "saas",
+      "name": "SaaS登录10",
+      "objective": "登录系统并确认数据看板内容可见",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "登录后数据看板区域可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.011",
+      "category": "saas",
+      "name": "SaaS登录页观察1",
+      "objective": "打开 SaaS 控制台页面，确认企业邮箱输入框可见",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "企业邮箱输入框可见"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.012",
+      "category": "saas",
+      "name": "SaaS登录页观察2",
+      "objective": "打开登录页并确认密码输入框存在",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "密码输入框可见"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.013",
+      "category": "saas",
+      "name": "SaaS登录页观察3",
+      "objective": "打开控制台登录页确认登录按钮存在",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "登录按钮可见"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.014",
+      "category": "saas",
+      "name": "SaaS登录页观察4",
+      "objective": "输入错误密码提交登录，确认出现「邮箱或密码错误」提示",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "邮箱或密码错误提示出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.015",
+      "category": "saas",
+      "name": "SaaS登录页观察5",
+      "objective": "不填写任何内容直接提交登录，确认出现错误提示",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "邮箱或密码错误提示出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.016",
+      "category": "saas",
+      "name": "SaaS登录导出链1",
+      "objective": "登录后依次确认数据看板与导出按钮均可见",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "看板区域与导出 CSV 按钮均可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.017",
+      "category": "saas",
+      "name": "SaaS登录导出链2",
+      "objective": "登录后查看活跃用户数并点击导出 CSV",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "报表已导出提示出现"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.018",
+      "category": "saas",
+      "name": "SaaS登录导出链3",
+      "objective": "登录系统导出报表并确认 report_2024.csv 提示",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "report_2024.csv 出现在导出提示中"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.019",
+      "category": "saas",
+      "name": "SaaS登录导出链4",
+      "objective": "登录后确认看板出现，再点击导出并确认导出成功提示",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "报表已导出提示出现"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.020",
+      "category": "saas",
+      "name": "SaaS登录导出链5",
+      "objective": "使用凭据登录并确认从登录到看板到导出的完整流程",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "报表已导出提示出现"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.021",
+      "category": "saas",
+      "name": "SaaS看板确认1",
+      "objective": "登录后确认数据看板标题可见",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "数据看板标题可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.022",
+      "category": "saas",
+      "name": "SaaS看板确认2",
+      "objective": "登录系统并查看本月活跃用户数值",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "本月活跃用户数值可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.023",
+      "category": "saas",
+      "name": "SaaS看板确认3",
+      "objective": "登录后点击导出 CSV 确认导出提示出现",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "报表已导出提示出现"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.024",
+      "category": "saas",
+      "name": "SaaS看板确认4",
+      "objective": "使用凭据登录并确认看板区域展示",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "登录后数据看板区域可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.025",
+      "category": "saas",
+      "name": "SaaS看板确认5",
+      "objective": "登录后确认活跃用户数据与导出按钮同时可见",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "看板数据与导出 CSV 按钮均可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.026",
+      "category": "saas",
+      "name": "SaaS导出确认1",
+      "objective": "登录后使用导出功能并确认导出文件名为 report_2024.csv",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "report_2024.csv 出现在导出提示中"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.027",
+      "category": "saas",
+      "name": "SaaS导出确认2",
+      "objective": "登录系统确认活跃用户指标展示后点击导出",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "报表已导出提示出现"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.028",
+      "category": "saas",
+      "name": "SaaS导出确认3",
+      "objective": "登录后验证看板区域从隐藏变为可见",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "登录后数据看板区域可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.029",
+      "category": "saas",
+      "name": "SaaS导出确认4",
+      "objective": "登录后先查看活跃用户数再确认导出按钮可见",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "导出 CSV 按钮可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.030",
+      "category": "saas",
+      "name": "SaaS导出确认5",
+      "objective": "使用凭据登录后确认控制台进入已登录状态（看板可见）",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "登录后数据看板区域可见"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.031",
+      "category": "ecommerce",
+      "name": "商品搜索1",
+      "objective": "在搜索框输入「机械键盘」并点击搜索，确认结果出现该商品",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "机械键盘出现在搜索结果中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.032",
+      "category": "ecommerce",
+      "name": "商品搜索2",
+      "objective": "搜索「无线鼠标」并确认结果列表出现对应商品",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "无线鼠标出现在搜索结果中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.033",
+      "category": "ecommerce",
+      "name": "商品搜索3",
+      "objective": "搜索「4K显示器」确认价格 ¥1599 出现在结果中",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "¥1599 出现在搜索结果中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.034",
+      "category": "ecommerce",
+      "name": "商品搜索4",
+      "objective": "搜索「显示器」确认结果包含 4K显示器",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "4K显示器出现在搜索结果中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.035",
+      "category": "ecommerce",
+      "name": "商品搜索5",
+      "objective": "搜索「键盘」确认结果包含机械键盘",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "机械键盘出现在搜索结果中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.036",
+      "category": "ecommerce",
+      "name": "加购计数1",
+      "objective": "搜索「机械键盘」并点击加入购物车，确认购物车数量变为 1",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数变为 1"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.037",
+      "category": "ecommerce",
+      "name": "加购计数2",
+      "objective": "搜索「无线鼠标」加购后确认购物车计数更新",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数变为 1"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.038",
+      "category": "ecommerce",
+      "name": "加购计数3",
+      "objective": "搜索「4K显示器」并加购，确认按钮文本变为已加入购物车",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "已加入购物车按钮文本出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.039",
+      "category": "ecommerce",
+      "name": "加购计数4",
+      "objective": "搜索「键盘」加购后确认购物车件数增加",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数变为 1"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.040",
+      "category": "ecommerce",
+      "name": "加购计数5",
+      "objective": "搜索「鼠标」并加入购物车确认购物车数量为 1",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数变为 1"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.041",
+      "category": "ecommerce",
+      "name": "价格确认1",
+      "objective": "搜索「机械键盘」确认结果中价格 ¥399 出现",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "¥399 出现在搜索结果中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.042",
+      "category": "ecommerce",
+      "name": "价格确认2",
+      "objective": "搜索「无线鼠标」确认价格 ¥129 出现",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "¥129 出现在搜索结果中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.043",
+      "category": "ecommerce",
+      "name": "价格确认3",
+      "objective": "搜索「4K显示器」确认价格 ¥1599 出现",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "¥1599 出现在搜索结果中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.044",
+      "category": "ecommerce",
+      "name": "价格确认4",
+      "objective": "搜索「显示器」确认结果中包含商品价格信息",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "价格出现在搜索结果中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.045",
+      "category": "ecommerce",
+      "name": "价格确认5",
+      "objective": "搜索「键盘」确认结果行的商品描述「RGB 热插拔机械键盘」出现",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "RGB 热插拔机械键盘描述出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.046",
+      "category": "ecommerce",
+      "name": "榜单观察1",
+      "objective": "打开比价榜单确认出现「戴尔 U2723QE」",
+      "fixture": "scraping/list.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "戴尔 U2723QE 出现在榜单中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.047",
+      "category": "ecommerce",
+      "name": "榜单观察2",
+      "objective": "查看榜单确认「LG 27UP850」出现",
+      "fixture": "scraping/list.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "LG 27UP850 出现在榜单中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.048",
+      "category": "ecommerce",
+      "name": "榜单观察3",
+      "objective": "打开商品榜单确认共 10 条商品",
+      "fixture": "scraping/list.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "共 10 条商品计数可见"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.049",
+      "category": "ecommerce",
+      "name": "榜单观察4",
+      "objective": "查看榜单确认「戴尔 U2723QE」的价格 ¥3299 出现",
+      "fixture": "scraping/list.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "¥3299 出现在榜单中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.050",
+      "category": "ecommerce",
+      "name": "榜单观察5",
+      "objective": "打开榜单确认「飞利浦 279C9」条目可见",
+      "fixture": "scraping/list.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "飞利浦 279C9 出现在榜单中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.051",
+      "category": "ecommerce",
+      "name": "榜单条目1",
+      "objective": "查看榜单确认「华硕 ProArt PA279CV」条目出现",
+      "fixture": "scraping/list.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "华硕 ProArt PA279CV 出现在榜单中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.052",
+      "category": "ecommerce",
+      "name": "榜单条目2",
+      "objective": "打开比价网榜单确认「明基 PD2705Q」可见",
+      "fixture": "scraping/list.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "明基 PD2705Q 出现在榜单中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.053",
+      "category": "ecommerce",
+      "name": "榜单条目3",
+      "objective": "查看榜单确认「三星 S27A800」条目出现",
+      "fixture": "scraping/list.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "三星 S27A800 出现在榜单中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.054",
+      "category": "ecommerce",
+      "name": "榜单条目4",
+      "objective": "打开榜单确认「小米 27寸 4K 显示器」条目出现",
+      "fixture": "scraping/list.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "小米 27寸 4K 显示器出现在榜单中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.055",
+      "category": "ecommerce",
+      "name": "榜单条目5",
+      "objective": "查看榜单确认「AOC U27U2」条目出现",
+      "fixture": "scraping/list.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "AOC U27U2 出现在榜单中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.056",
+      "category": "data_entry",
+      "name": "表格填写1",
+      "objective": "填写注册表单：姓名张三，邮箱 z@x.io，手机号 13900000000，并提交",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "注册成功，欢迎 张三 提示出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.057",
+      "category": "data_entry",
+      "name": "表格填写2",
+      "objective": "提交注册表单：姓名李四，邮箱 l@x.io，手机号 13700000000",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "注册成功，欢迎 李四 提示出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.058",
+      "category": "data_entry",
+      "name": "表格填写3",
+      "objective": "填写表单姓名王五、邮箱 w@x.io 并提交，确认注册成功",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "注册成功，欢迎 王五 提示出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.059",
+      "category": "data_entry",
+      "name": "表格填写4",
+      "objective": "录入会员：姓名赵六，邮箱 z@y.io，手机号 13600000000",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "注册成功，欢迎 赵六 提示出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.060",
+      "category": "data_entry",
+      "name": "表格填写5",
+      "objective": "填写报名表单：姓名孙七，邮箱 s@y.io 并提交注册",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "注册成功，欢迎 孙七 提示出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.061",
+      "category": "data_entry",
+      "name": "多次提交1",
+      "objective": "分两次提交注册：先姓名张三邮箱 z1@x.io，再姓名李四邮箱 l1@x.io，两次均确认注册成功",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "两次提交均出现注册成功提示"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.062",
+      "category": "data_entry",
+      "name": "多次提交2",
+      "objective": "连续提交两条注册记录：王五 w2@x.io 与 赵六 z2@x.io，各自确认成功提示",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "两次提交均出现注册成功提示"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.063",
+      "category": "data_entry",
+      "name": "多次提交3",
+      "objective": "提交两条注册：孙七 s3@x.io 和 周八 z8@x.io，确认第二次也显示注册成功",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "第二次提交出现注册成功提示"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.064",
+      "category": "data_entry",
+      "name": "多次提交4",
+      "objective": "依次用两个邮箱 a4@x.io 与 b4@x.io 配合姓名钱九提交两次注册",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "两次提交均出现注册成功提示"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.065",
+      "category": "data_entry",
+      "name": "多次提交5",
+      "objective": "连续注册两名会员：吴十 w10@x.io、郑一 z1@y.io，均确认欢迎提示出现",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "两次提交均出现注册成功欢迎提示"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "MEDIUM",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.066",
+      "category": "data_entry",
+      "name": "下载链接1",
+      "objective": "打开下载页确认「下载示例文件」链接可见",
+      "fixture": "download.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "下载示例文件链接可见"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.067",
+      "category": "data_entry",
+      "name": "下载链接2",
+      "objective": "点击下载链接下载示例文件",
+      "fixture": "download.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "下载链接存在并可触发下载"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.068",
+      "category": "data_entry",
+      "name": "下载链接3",
+      "objective": "确认下载页包含资源下载标题与下载链接",
+      "fixture": "download.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "资源下载标题与下载链接可见"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.069",
+      "category": "data_entry",
+      "name": "下载链接4",
+      "objective": "点击页面中的下载链接触发 sample.txt 下载",
+      "fixture": "download.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "下载链接指向 sample.txt"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.070",
+      "category": "data_entry",
+      "name": "下载链接5",
+      "objective": "打开资源下载页并确认下载链接存在",
+      "fixture": "download.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "element_present",
+        "description": "下载链接可见"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "easy"
+    },
+    {
+      "taskId": "rw.071",
+      "category": "data_entry",
+      "name": "字段校验1",
+      "objective": "只填姓名不填邮箱直接提交，确认出现「请填写必填项」提示",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "请填写必填项提示出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.072",
+      "category": "data_entry",
+      "name": "字段校验2",
+      "objective": "提交空表单验证必填提示出现",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "请填写必填项提示出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.073",
+      "category": "data_entry",
+      "name": "字段校验3",
+      "objective": "只填邮箱不填姓名提交表单，确认校验提示出现",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "请填写必填项提示出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.074",
+      "category": "data_entry",
+      "name": "字段校验4",
+      "objective": "填写姓名与邮箱后提交，确认提示变为注册成功欢迎语",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "注册成功欢迎提示出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.075",
+      "category": "data_entry",
+      "name": "字段校验5",
+      "objective": "同一姓名连续提交两次注册，确认两次均出现注册成功提示",
+      "fixture": "data_entry/form.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "两次提交均出现注册成功提示"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "LOW",
+      "difficulty": "medium"
+    },
+    {
+      "taskId": "rw.076",
+      "category": "longflow",
+      "name": "多步确认1",
+      "objective": "搜索「机械键盘」→ 加入购物车 → 确认购物车数量变为 1",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数变为 1"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.077",
+      "category": "longflow",
+      "name": "多步确认2",
+      "objective": "搜索「无线鼠标」→ 加购 → 再搜索「机械键盘」→ 加购 → 确认购物车数量为 2",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数变为 2"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.078",
+      "category": "longflow",
+      "name": "多步确认3",
+      "objective": "搜索「4K显示器」加入购物车后确认购物车件数增加",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数变为 1"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.079",
+      "category": "longflow",
+      "name": "多步确认4",
+      "objective": "搜索「键盘」加购后确认按钮文本变为已加入购物车",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "已加入购物车按钮文本出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.080",
+      "category": "longflow",
+      "name": "多步确认5",
+      "objective": "搜索「鼠标」加购后确认购物车计数从 0 变为 1",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数变为 1"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.081",
+      "category": "longflow",
+      "name": "动态DOM1",
+      "objective": "等待页面加载完成后在搜索框输入「路由器」并搜索，确认出现搜索结果回显",
+      "fixture": "ecommerce/search_lazy.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "搜索结果：路由器 回显出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.082",
+      "category": "longflow",
+      "name": "动态DOM2",
+      "objective": "等待搜索框可见后输入「蓝牙音箱」并点击搜索，确认结果区域显示搜索结果",
+      "fixture": "ecommerce/search_lazy.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "搜索结果回显出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.083",
+      "category": "longflow",
+      "name": "动态DOM3",
+      "objective": "在搜索框（id 为 q）输入「摄像头」并搜索，确认出现搜索结果回显",
+      "fixture": "ecommerce/search_lazy.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "搜索结果：摄像头 回显出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.084",
+      "category": "longflow",
+      "name": "动态DOM4",
+      "objective": "在懒加载完成后搜索「移动电源」，确认结果区域显示搜索结果文本",
+      "fixture": "ecommerce/search_lazy.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "搜索结果：移动电源 回显出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.085",
+      "category": "longflow",
+      "name": "动态DOM5",
+      "objective": "等待页面就绪后在搜索框输入「数据线」并搜索，确认出现搜索结果提示",
+      "fixture": "ecommerce/search_lazy.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "搜索结果：数据线 回显出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.086",
+      "category": "longflow",
+      "name": "SPA多页1",
+      "objective": "登录后确认看板出现，再点击导出 CSV 并确认导出成功",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "报表已导出提示出现"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.087",
+      "category": "longflow",
+      "name": "SPA多页2",
+      "objective": "使用凭据登录系统，查看本月活跃用户数后导出报表",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "报表已导出提示出现"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.088",
+      "category": "longflow",
+      "name": "SPA多页3",
+      "objective": "登录控制台并完成从看板确认到导出 CSV 的完整链路",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "报表已导出提示出现"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.089",
+      "category": "longflow",
+      "name": "SPA多页4",
+      "objective": "登录系统确认数据看板可见后点击导出报表",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "报表已导出提示出现"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.090",
+      "category": "longflow",
+      "name": "SPA多页5",
+      "objective": "使用凭据登录并依次确认看板、活跃用户、导出提示",
+      "fixture": "saas/login.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "报表已导出提示出现"
+      },
+      "credentialRequirement": "required",
+      "credentialRef": "saas_demo",
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.091",
+      "category": "longflow",
+      "name": "高难加购1",
+      "objective": "依次搜索并加购全部三款商品（机械键盘、无线鼠标、4K显示器），确认购物车数量为 3",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数变为 3"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.092",
+      "category": "longflow",
+      "name": "高难加购2",
+      "objective": "搜索「显示器」加购后再搜索「键盘」加购，确认购物车计数为 2 且两件商品均显示已加入购物车",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数变为 2"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.093",
+      "category": "longflow",
+      "name": "长流程扩展1",
+      "objective": "搜索「机械键盘」加购后重新搜索「无线鼠标」，确认购物车计数保持为 1",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数保持为 1"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.094",
+      "category": "longflow",
+      "name": "长流程扩展2",
+      "objective": "搜索「4K显示器」加购，再搜索「耳机」确认出现未找到相关商品提示",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "未找到相关商品提示出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.095",
+      "category": "longflow",
+      "name": "长流程扩展3",
+      "objective": "搜索「键盘」加购后，再次搜索「鼠标」，确认结果区域更新为鼠标商品且购物车计数保持 1",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数保持为 1 且结果更新"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.096",
+      "category": "longflow",
+      "name": "长流程扩展4",
+      "objective": "连续搜索三款商品并逐一确认其价格出现",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "三款商品价格均出现在结果中"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.097",
+      "category": "longflow",
+      "name": "长流程扩展5",
+      "objective": "搜索「机械键盘」确认加购前购物车为 0 件，加购后变为 1 件",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数从 0 变为 1"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.098",
+      "category": "longflow",
+      "name": "长流程扩展6",
+      "objective": "搜索「扫描仪」确认出现未找到相关商品提示",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "未找到相关商品提示出现"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.099",
+      "category": "longflow",
+      "name": "长流程扩展7",
+      "objective": "搜索「鼠标」加购后确认按钮文本变为已加入购物车，再确认购物车件数为 1",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数变为 1"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    },
+    {
+      "taskId": "rw.100",
+      "category": "longflow",
+      "name": "长流程扩展8",
+      "objective": "搜索「显示器」加购，然后搜索「机械键盘」加购，最后确认购物车数量为 2",
+      "fixture": "ecommerce/search.html",
+      "expectedBusinessState": "planner-derived (contractFromObjective / deriveContract by action.type)",
+      "expectedVerification": {
+        "type": "text_present",
+        "description": "购物车计数变为 2"
+      },
+      "credentialRequirement": "none",
+      "credentialRef": null,
+      "riskLevel": "HIGH",
+      "difficulty": "hard"
+    }
+  ]
+}

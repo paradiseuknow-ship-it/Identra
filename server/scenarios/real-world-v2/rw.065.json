@@ -1,0 +1,15 @@
+{
+  "id": "rw.065",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "多次提交5",
+  "objective": "连续注册两名会员：吴十 w10@x.io、郑一 z1@y.io，均确认欢迎提示出现",
+  "fixture": "data_entry/form.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "两次提交均出现注册成功欢迎提示"
+  }
+}

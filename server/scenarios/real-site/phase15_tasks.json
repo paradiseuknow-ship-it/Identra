@@ -1,0 +1,114 @@
+{
+  "version": "phase15.1",
+  "description": "Real-Site Generic Task Contract R01-R10。site/path 仅为 target metadata，运行时禁止任何站点专用执行分支。",
+  "defaultBaseUrl": "https://webflow.com",
+  "tasks": [
+    {
+      "taskId": "R01",
+      "name": "open_home",
+      "path": "/",
+      "objective": "打开站点首页，观察页面并验证页面正常加载（存在真实页面内容与标题）",
+      "riskLevel": "LOW",
+      "credentialsRequired": false,
+      "expectedTerminalStates": ["SUCCESS", "HUMAN_ESCALATION"],
+      "maxTaskTimeoutMs": 180000
+    },
+    {
+      "taskId": "R02",
+      "name": "navigate_signup",
+      "path": "/signup",
+      "objective": "导航到站点注册页并观察；若出现外部阻断或人机验证则正确停止（HUMAN_ESCALATION），绝不换环境重试",
+      "riskLevel": "LOW",
+      "credentialsRequired": false,
+      "expectedTerminalStates": ["SUCCESS", "HUMAN_ESCALATION", "BLOCKED_EXTERNAL"],
+      "maxTaskTimeoutMs": 180000
+    },
+    {
+      "taskId": "R03",
+      "name": "navigate_login",
+      "path": "/login",
+      "objective": "导航到站点登录页并观察；若出现外部阻断或人机验证则正确停止（HUMAN_ESCALATION），绝不换环境重试",
+      "riskLevel": "LOW",
+      "credentialsRequired": false,
+      "expectedTerminalStates": ["SUCCESS", "HUMAN_ESCALATION", "BLOCKED_EXTERNAL"],
+      "maxTaskTimeoutMs": 180000
+    },
+    {
+      "taskId": "R04",
+      "name": "detect_external_challenge",
+      "path": "/signup",
+      "objective": "对注册页执行观察并区分三种状态：正常页面 / 403 外部阻断 / 交互式人机验证。只识别、不处理、不重试",
+      "riskLevel": "LOW",
+      "credentialsRequired": false,
+      "challengeClassification": true,
+      "expectedTerminalStates": ["SUCCESS", "HUMAN_ESCALATION", "BLOCKED_EXTERNAL"],
+      "maxTaskTimeoutMs": 180000
+    },
+    {
+      "taskId": "R05",
+      "name": "authorized_login",
+      "path": "/login",
+      "objective": "使用授权凭据正常登录：解析邮箱与密码输入框，经 CredentialRef 注入凭据并提交，验证登录后状态",
+      "riskLevel": "MEDIUM",
+      "credentialsRequired": true,
+      "expectedTerminalStates": ["SUCCESS", "HUMAN_ESCALATION", "BLOCKED_EXTERNAL"],
+      "maxTaskTimeoutMs": 240000
+    },
+    {
+      "taskId": "R06",
+      "name": "verify_authenticated_session",
+      "path": "/",
+      "objective": "验证当前会话处于已认证状态（基于页面观察与语义验证，不假设特定 URL），并保存 checkpoint",
+      "riskLevel": "LOW",
+      "credentialsRequired": true,
+      "dependsOn": "R05",
+      "expectedTerminalStates": ["SUCCESS", "HUMAN_ESCALATION"],
+      "maxTaskTimeoutMs": 180000
+    },
+    {
+      "taskId": "R07",
+      "name": "logout",
+      "path": "/",
+      "objective": "正常执行登出并验证未认证状态",
+      "riskLevel": "LOW",
+      "credentialsRequired": true,
+      "dependsOn": "R06",
+      "expectedTerminalStates": ["SUCCESS", "HUMAN_ESCALATION"],
+      "maxTaskTimeoutMs": 180000
+    },
+    {
+      "taskId": "R08",
+      "name": "login_again",
+      "path": "/login",
+      "objective": "再次使用同一授权凭据登录，验证会话生命周期、凭据复用与持久化 Profile",
+      "riskLevel": "MEDIUM",
+      "credentialsRequired": true,
+      "dependsOn": "R07",
+      "expectedTerminalStates": ["SUCCESS", "HUMAN_ESCALATION", "BLOCKED_EXTERNAL"],
+      "maxTaskTimeoutMs": 240000
+    },
+    {
+      "taskId": "R09",
+      "name": "invalid_credential",
+      "path": "/login",
+      "objective": "使用专用无效测试凭据尝试登录：预期认证失败，要求正确诊断（AUTH_INVALID_CREDENTIAL）、禁止无限修复、落到正确终态；禁止换 IP/指纹重试",
+      "riskLevel": "MEDIUM",
+      "credentialsRequired": true,
+      "invalidCredentials": true,
+      "expectedFailure": true,
+      "expectedTerminalStates": ["CORRECT_FAIL", "HUMAN_ESCALATION", "BLOCKED_EXTERNAL"],
+      "maxTaskTimeoutMs": 240000
+    },
+    {
+      "taskId": "R10",
+      "name": "interrupted_recovery",
+      "path": "/",
+      "objective": "在任务执行过程中被人为中断：验证 checkpoint 保存、进程重启、恢复执行、验证完成，且不重复已成功的关键动作",
+      "riskLevel": "LOW",
+      "credentialsRequired": false,
+      "interruptible": true,
+      "expectedTerminalStates": ["SUCCESS", "HUMAN_ESCALATION"],
+      "maxTaskTimeoutMs": 240000
+    }
+  ]
+}

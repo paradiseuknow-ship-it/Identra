@@ -1,0 +1,15 @@
+{
+  "id": "rw.044",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "价格确认4",
+  "objective": "搜索「显示器」确认结果中包含商品价格信息",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "价格出现在搜索结果中"
+  }
+}

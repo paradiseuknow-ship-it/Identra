@@ -57,8 +57,20 @@ function createTask(input = {}) {
     policy: { ...DEFAULT_POLICY, ...(input.policy || {}) },
     budget: input.budget || null,       // 空则启动时用默认预算
     priority: Number.isInteger(input.priority) ? input.priority : 50,
+    // STEP 1：constraints 此前被创建路径静默丢弃（grep 全仓 0 处写入），
+    // 而 runtime.resolvePlan 与 planner 都会读 task.constraints —— 属于"契约编造"的结构性成因之一：
+    // Planner 在 prompt 里渲染「约束：」却永远拿不到约束。这里补齐落库。
+    constraints: Array.isArray(input.constraints) ? input.constraints : [],
     secretRefs: Array.isArray(input.secretRefs) ? input.secretRefs : [],
     dependsOn: Array.isArray(input.dependsOn) ? input.dependsOn : [], // Phase 12B §T16 任务依赖
+    // CAP-K2：Router 决策摘要（profileId/flowId/expectedSuccess/warnings）随任务落库，
+    // 由 contextBuilder.build 读出进 Planner 上下文。null = 未咨询 Router 或无有效决策。
+    routerHints: input.routerHints || null,
+    // CAP-O1 §10：资源归属（由服务端身份层盖章；直调 createTask 的旧路径为 null，不影响既有测试）
+    workspaceId: input.workspaceId || null,
+    createdBy: input.createdBy || null,
+    // CAP-M1：来源定时计划（scheduleTrigger.fireSchedule 盖章；直调旧路径 null）
+    scheduleId: input.scheduleId || null,
     status: 'PENDING',
     plan: [],
     planVersion: null,     // plan_v1 / plan_v2 ...（支持 Plan Revision）
@@ -347,19 +359,51 @@ function recover(id) {
   return task;
 }
 
-function cancel(id) {
+function cancel(id, reason) {
   const task = getTask(id);
   if (!task) throw new Error('任务不存在');
-  if (['SUCCESS', 'CANCELLED', 'FAILED'].includes(task.status)) return task; // 终态幂等
-  _setTaskState(task, 'CANCELLED', { error: '用户取消' });
-  task.finishedAt = Date.now();
-  store.upsert('aiTasks', task);
-  if (task.currentExecutionId) {
-    recorder.markFinished(task.currentExecutionId, 'CANCELLED', '用户取消');
-    lock.releaseAllForExecution(task.currentExecutionId);
+  // B 类口径修复（2026-08-31）：deadline 取消与用户取消必须在 error 文案上可区分，
+  // 否则统计把 harness 超时取消错记为「用户取消」。可选 reason，缺省保持旧语义。
+  const cancelReason = String(reason || '用户取消').slice(0, 200);
+  // 终态幂等（CAP-K3 对齐：旧守卫漏了 HUMAN_ESCALATION —— 对升级终态再 cancel 会撞非法转换抛错）
+  if (tsm.isTaskTerminal(task.status)) return task;
+  // A 类 cancel deadline（2026-08-31）：cancel 自身同步链可能被事件循环级卡死拖住
+  // （headless 假死占死线程时，同进程内任何调用都无法执行——进程内定时器同样失效，
+  // 该场景的唯一防线是进程级隔离 + 外部 hard deadline 树杀，见 phase12_task_worker / watchdog）。
+  // 进程内能保证的是：cancel 的收尾步骤逐段 fail-open —— 任一下游（recorder/lock/queue/events）
+  // 抛错都不阻断终态落地，且留下 cancel_timeout 事件供外部看门狗/审计归因。
+  const cancelDeadlineMs = 5000;
+  const deadline = setTimeout(() => {
+    try {
+      events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'task.cancel_timeout', payload: { deadlineMs: cancelDeadlineMs } });
+    } catch (e) { /* 事件通道失效时无处可报，仅保底不抛 */ }
+  }, cancelDeadlineMs);
+  try { deadline.unref(); } catch (e) {}
+  try {
+    _setTaskState(task, 'CANCELLED', { error: cancelReason });
+    task.finishedAt = Date.now();
+    task.cancelledAt = Date.now();
+    store.upsert('aiTasks', task);
+  } catch (e) {
+    try { events.emit({ taskId: task.id, type: 'task.cancel_timeout', payload: { stage: 'state_write', error: String(e.message || e).slice(0, 200) } }); } catch (_) {}
+    throw e;
   }
-  queue.markDone(task.id, 'CANCELLED');
-  events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'task.cancelled', payload: {} });
+  if (task.currentExecutionId) {
+    try { recorder.markFinished(task.currentExecutionId, 'CANCELLED', cancelReason); } catch (e) {
+      try { events.emit({ taskId: task.id, type: 'task.cancel_timeout', payload: { stage: 'recorder_markFinished', error: String(e.message || e).slice(0, 200) } }); } catch (_) {}
+    }
+    try { lock.releaseAllForExecution(task.currentExecutionId); } catch (e) {
+      try { events.emit({ taskId: task.id, type: 'task.cancel_timeout', payload: { stage: 'lock_release', error: String(e.message || e).slice(0, 200) } }); } catch (_) {}
+    }
+  }
+  try { queue.markDone(task.id, 'CANCELLED'); } catch (e) {
+    try { events.emit({ taskId: task.id, type: 'task.cancel_timeout', payload: { stage: 'queue_markDone', error: String(e.message || e).slice(0, 200) } }); } catch (_) {}
+  }
+  try { events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'task.cancelled', payload: {} }); } catch (e) {
+    // task.cancelled 广播失败不影响终态（任务已 CANCELLED 落库）；记录超时事件供审计
+    try { events.emit({ taskId: task.id, type: 'task.cancel_timeout', payload: { stage: 'cancelled_emit', error: String(e.message || e).slice(0, 200) } }); } catch (_) {}
+  }
+  clearTimeout(deadline);
   return task;
 }
 
@@ -386,6 +430,10 @@ function retry(id) {
 function complete(id, result) {
   const task = getTask(id);
   if (!task) throw new Error('任务不存在');
+  // CAP-K3 幂等守卫：状态机对「同状态转换」直接放行（transitionTask 的 next===current 短路），
+  // 若不挡，complete 对已 SUCCESS 任务重入会整函数体重跑 —— 事件重发 + flowMemory/profileAnalyzer/
+  // siteMemory 全部双计。终态重入一律原样返回（与 cancel 的既有守卫同语义）。
+  if (tsm.isTaskTerminal(task.status)) return task;
   _setTaskState(task, 'SUCCESS');
   task.finishedAt = Date.now();
   task.result = result || null;
@@ -406,6 +454,20 @@ function complete(id, result) {
     const site = siteOfUrl(task.targetUrl);
     if (task.profileId && site) require('./intelligence/profile/profileAnalyzer').recordTaskOutcome(task.profileId, site, true);
   } catch (e) { /* 评分落库失败不影响任务结果 */ }
+  // CAP-K3 消费点：Site Memory 成功侧回写（此前 recordTaskResult 生产链零调用，只有 Phase 3.1 测试在调）。
+  // 成功依据 = 系统已认可的业务结果：runtime 只在全部 step 通过业务验证（B.4 守卫挡 silent-pass）后才调
+  // complete —— 这里绝不吃 action_success。flowName 取任务目标（与 flowMemory 的 goal 同源），avgSteps 取
+  // 真实完成步数；均缺失则退化为纯 ok 计数，绝不臆造。
+  try {
+    const site = siteOfUrl(task.targetUrl);
+    if (site) {
+      require('./intelligence/siteMemory').recordTaskResult(site, {
+        ok: true,
+        flowName: task.planGoal || task.objective || null,
+        avgSteps: (task.result && task.result.completedSteps) || undefined,
+      });
+    }
+  } catch (e) { /* 经验落库失败不影响任务结果 */ }
   return task;
 }
 
@@ -415,9 +477,31 @@ function siteOfUrl(url) {
   try { return new URL(url).hostname || null; } catch (e) { return null; }
 }
 
+// CAP-K1：runtime.resolvePlan 命中高置信度历史 flow 时，把 flowId 记到任务上，
+// 供 fail/escalate 做失败反馈（降置信度 → 下次同目标降级 LLM 规划）。
+function markFlowUsed(id, flowId, confidence) {
+  const task = getTask(id);
+  if (!task) return null;
+  task.flowUsedId = flowId || null;
+  task.flowConfidence = typeof confidence === 'number' ? confidence : null;
+  store.upsert('aiTasks', task);
+  return task;
+}
+
+// CAP-K1 失败反馈：若本次执行复用了历史 flow，记录一次失败。
+// 修复「recordOutcomeFlow 生产链零调用、置信度只涨不跌」的结构性缺陷 ——
+// 没有这一环，过期 flow（站点改版）会被永久重放；有了它，一次失败即跌破 0.85 阈值降级 LLM。
+function recordFlowFailure(task) {
+  try {
+    if (task && task.flowUsedId) require('./intelligence/flowMemory').recordOutcomeFlow(task.flowUsedId, false);
+  } catch (e) { /* 经验反馈失败不影响任务结果 */ }
+}
+
 function fail(id, error, opts = {}) {
   const task = getTask(id);
   if (!task) throw new Error('任务不存在');
+  // CAP-K3 幂等守卫（与 complete 同因：同状态重入会整函数体重跑、双计经验反馈）
+  if (tsm.isTaskTerminal(task.status)) return task;
   const terminalState = opts.escalate ? 'HUMAN_ESCALATION' : 'FAILED';
   _setTaskState(task, terminalState, { error: String((error && error.message) || error || '任务失败').slice(0, 500) });
   task.finishedAt = Date.now();
@@ -428,11 +512,27 @@ function fail(id, error, opts = {}) {
   }
   queue.markDone(task.id, terminalState);
   events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'task.failed', payload: { error: task.error, escalate: !!opts.escalate } });
+  recordFlowFailure(task); // CAP-K1：复用的 flow 也吃一次失败反馈
   // Phase 3.4 消费点：失败 → 更新 Profile 评分（恶化降级，不删除）
   try {
     const site = siteOfUrl(task.targetUrl);
     if (task.profileId && site) require('./intelligence/profile/profileAnalyzer').recordTaskOutcome(task.profileId, site, false);
   } catch (e) { /* 评分落库失败不影响任务结果 */ }
+  // CAP-K3 消费点：Site Memory 失败侧回写（现有契约 { ok:false, flowName, failureType }，不新增第二套 schema）。
+  // flowName 与成功侧同源（任务目标）—— 否则成功率聚合只吃成功不吃失败，永远虚高。
+  // failureType 只取调用方显式原因码（如 CREDENTIAL_UNAVAILABLE / VIL:VERIFY_FAILED），绝不从自由错误
+  // 文本臆造类别 —— 没有显式原因就少记，宁可缺不污染。escalate()/cancel() 不回写：升级与取消不是
+  // 「已证实的失败结果」，宁可少记不误记（成功侧红线同理）。
+  try {
+    const site = siteOfUrl(task.targetUrl);
+    if (site) {
+      require('./intelligence/siteMemory').recordTaskResult(site, {
+        ok: false,
+        flowName: task.planGoal || task.objective || null,
+        failureType: opts.reason || null,
+      });
+    }
+  } catch (e) { /* 经验落库失败不影响任务结果 */ }
   return task;
 }
 
@@ -455,6 +555,8 @@ function inferEscalationKind(reason, errorMsg) {
 function escalate(id, error, opts = {}) {
   const task = getTask(id);
   if (!task) throw new Error('任务不存在');
+  // CAP-K3 幂等守卫：终态重入原样返回（否则 recordFlowFailure/事件会被双计）
+  if (tsm.isTaskTerminal(task.status)) return task;
   const errMsg = String((error && error.message) || error || '需人工介入').slice(0, 500);
   _setTaskState(task, 'HUMAN_ESCALATION', { error: errMsg });
   task.finishedAt = Date.now();
@@ -466,6 +568,7 @@ function escalate(id, error, opts = {}) {
   }
   queue.markDone(task.id, 'HUMAN_ESCALATION');
   events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'task.escalated', payload: { error: task.error, reason: opts.reason || null, escalationKind: task.escalationKind } });
+  recordFlowFailure(task); // CAP-K1：升级同视为未完成目标，复用的 flow 也吃失败反馈（置信度有界自我修正）
   return task;
 }
 
@@ -473,7 +576,7 @@ module.exports = {
   createTask, getTask, listTasks, deleteTask, touch,
   start, pauseForHuman, resume, cancel, retry, complete, fail, escalate,
   attachPlan, revisePlan, approve, reject, modify, recover,
-  setExecutor, isTaskTerminal,
+  setExecutor, isTaskTerminal, markFlowUsed,
 };
 
 function isTaskTerminal(s) { return tsm.isTaskTerminal(s); }

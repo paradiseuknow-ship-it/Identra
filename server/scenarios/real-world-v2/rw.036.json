@@ -1,0 +1,15 @@
+{
+  "id": "rw.036",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "加购计数1",
+  "objective": "搜索「机械键盘」并点击加入购物车，确认购物车数量变为 1",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "购物车计数变为 1"
+  }
+}

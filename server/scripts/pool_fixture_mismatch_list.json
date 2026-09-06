@@ -1,0 +1,374 @@
+{
+ "provenance": {
+  "source": "server/scripts/audit_pool_fixture_alignment.js v2（B3 增强词典+语义规则）+ 逐任务人工复核（B2）",
+  "auditedAt": "2026-09-01",
+  "dl240Artifact": ".benchmark/phase12_tag_fixes_baseline_dl240_1788229276002.json",
+  "lintOutput": ".benchmark/pool_alignment_v2.json",
+  "note": "v2 快照（取代 v1 的 44 条）。v2 机械命中 57，人工剔除灰区 3（rw.064/065/089 保留在 feasible），人工补判 1（rw.076），最终 55。B1 v1 报告口径 43 与 provisional 82.5% 均为低估假阳性下的过渡数字：真实 FP 为 26pp。",
+  "grayZonePolicy": "灰区任务保留在 feasible 分母中并单列，其 SUCCESS 是否可信由 B2/watchlist 裁决"
+ },
+ "grayZones": [
+  {
+   "id": "rw.034",
+   "fixture": "",
+   "reason": "空结果搜索仍可执行（search.html 有搜索能力）"
+  },
+  {
+   "id": "rw.064",
+   "fixture": "data_entry/form.html",
+   "reason": "数据描述型目标：regForm 姓名/电话字段即「订单联系人」，提交可行"
+  },
+  {
+   "id": "rw.065",
+   "fixture": "data_entry/form.html",
+   "reason": "数据描述型目标：regForm 字段即「地址记录」，提交可行"
+  },
+  {
+   "id": "rw.081",
+   "fixture": "",
+   "reason": "结果文本回显任意 query，搜索动作可完成"
+  },
+  {
+   "id": "rw.085",
+   "fixture": "",
+   "reason": "结果文本回显任意 query，搜索动作可完成"
+  },
+  {
+   "id": "rw.089",
+   "fixture": "saas/login.html",
+   "reason": "导出 CSV 按钮存在，半匹配（筛选不存在但主动作可执行）"
+  }
+ ],
+ "mismatches": [
+  {
+   "id": "rw.003",
+   "fixture": "saas/login.html",
+   "missing": "项目",
+   "note": null
+  },
+  {
+   "id": "rw.006",
+   "fixture": "saas/login.html",
+   "missing": "通知",
+   "note": null
+  },
+  {
+   "id": "rw.009",
+   "fixture": "saas/login.html",
+   "missing": "成员",
+   "note": null
+  },
+  {
+   "id": "rw.010",
+   "fixture": "saas/login.html",
+   "missing": "设置区(objective 指向设置页/设置项，fixture 无)",
+   "note": null
+  },
+  {
+   "id": "rw.014",
+   "fixture": "saas/login.html",
+   "missing": "API 密钥/设置区(objective 指向设置页/设置项，fixture 无)",
+   "note": null
+  },
+  {
+   "id": "rw.015",
+   "fixture": "saas/login.html",
+   "missing": "账单",
+   "note": "login.html 无搜索框，站内搜索能力本身不存在（searchOnly 能力检查修正后归错配）"
+  },
+  {
+   "id": "rw.016",
+   "fixture": "saas/login.html",
+   "missing": "项目",
+   "note": null
+  },
+  {
+   "id": "rw.017",
+   "fixture": "saas/login.html",
+   "missing": "项目",
+   "note": null
+  },
+  {
+   "id": "rw.018",
+   "fixture": "saas/login.html",
+   "missing": "项目",
+   "note": null
+  },
+  {
+   "id": "rw.019",
+   "fixture": "saas/login.html",
+   "missing": "项目",
+   "note": null
+  },
+  {
+   "id": "rw.020",
+   "fixture": "saas/login.html",
+   "missing": "项目",
+   "note": null
+  },
+  {
+   "id": "rw.021",
+   "fixture": "saas/login.html",
+   "missing": "通知/设置区(objective 指向设置页/设置项，fixture 无)",
+   "note": null
+  },
+  {
+   "id": "rw.022",
+   "fixture": "saas/login.html",
+   "missing": "语言/设置区(objective 指向设置页/设置项，fixture 无)",
+   "note": null
+  },
+  {
+   "id": "rw.023",
+   "fixture": "saas/login.html",
+   "missing": "个人资料/显示名",
+   "note": null
+  },
+  {
+   "id": "rw.025",
+   "fixture": "saas/login.html",
+   "missing": "时区/设置区(objective 指向设置页/设置项，fixture 无)",
+   "note": null
+  },
+  {
+   "id": "rw.027",
+   "fixture": "scraping/list.html",
+   "missing": "报表",
+   "note": null
+  },
+  {
+   "id": "rw.028",
+   "fixture": "scraping/list.html",
+   "missing": "成员/管理员",
+   "note": null
+  },
+  {
+   "id": "rw.029",
+   "fixture": "scraping/list.html",
+   "missing": "订单",
+   "note": null
+  },
+  {
+   "id": "rw.030",
+   "fixture": "scraping/list.html",
+   "missing": "日志",
+   "note": null
+  },
+  {
+   "id": "rw.036",
+   "fixture": "ecommerce/search.html",
+   "missing": "编辑",
+   "note": null
+  },
+  {
+   "id": "rw.037",
+   "fixture": "ecommerce/search.html",
+   "missing": "库存/编辑",
+   "note": null
+  },
+  {
+   "id": "rw.038",
+   "fixture": "ecommerce/search.html",
+   "missing": "编辑",
+   "note": null
+  },
+  {
+   "id": "rw.039",
+   "fixture": "ecommerce/search.html",
+   "missing": "编辑",
+   "note": null
+  },
+  {
+   "id": "rw.040",
+   "fixture": "ecommerce/search.html",
+   "missing": "编辑",
+   "note": null
+  },
+  {
+   "id": "rw.041",
+   "fixture": "ecommerce/search.html",
+   "missing": "库存",
+   "note": null
+  },
+  {
+   "id": "rw.042",
+   "fixture": "ecommerce/search.html",
+   "missing": "库存",
+   "note": null
+  },
+  {
+   "id": "rw.043",
+   "fixture": "ecommerce/search.html",
+   "missing": "库存",
+   "note": null
+  },
+  {
+   "id": "rw.045",
+   "fixture": "ecommerce/search.html",
+   "missing": "库存",
+   "note": null
+  },
+  {
+   "id": "rw.046",
+   "fixture": "scraping/list.html",
+   "missing": "订单",
+   "note": null
+  },
+  {
+   "id": "rw.047",
+   "fixture": "scraping/list.html",
+   "missing": "订单",
+   "note": null
+  },
+  {
+   "id": "rw.048",
+   "fixture": "scraping/list.html",
+   "missing": "订单/发货",
+   "note": null
+  },
+  {
+   "id": "rw.049",
+   "fixture": "scraping/list.html",
+   "missing": "订单/收货人/详情",
+   "note": null
+  },
+  {
+   "id": "rw.050",
+   "fixture": "scraping/list.html",
+   "missing": "订单/筛选",
+   "note": null
+  },
+  {
+   "id": "rw.051",
+   "fixture": "scraping/list.html",
+   "missing": "订单/发货",
+   "note": null
+  },
+  {
+   "id": "rw.052",
+   "fixture": "scraping/list.html",
+   "missing": "订单/支付/待付款",
+   "note": null
+  },
+  {
+   "id": "rw.053",
+   "fixture": "scraping/list.html",
+   "missing": "订单/退款",
+   "note": null
+  },
+  {
+   "id": "rw.054",
+   "fixture": "scraping/list.html",
+   "missing": "订单",
+   "note": null
+  },
+  {
+   "id": "rw.055",
+   "fixture": "scraping/list.html",
+   "missing": "订单/签收",
+   "note": null
+  },
+  {
+   "id": "rw.067",
+   "fixture": "download.html",
+   "missing": "头像",
+   "note": null
+  },
+  {
+   "id": "rw.075",
+   "fixture": "data_entry/form.html",
+   "missing": "去重",
+   "note": "borderline：表单提交本身可执行，但「验证去重」行为在 fixture 中不存在（无去重逻辑）"
+  },
+  {
+   "id": "rw.076",
+   "fixture": "ecommerce/search.html",
+   "missing": "耳机/购物车明细",
+   "note": "人工补判：耳机不在 CATALOG（仅机械键盘/无线鼠标/4K显示器）且「确认购物车出现该商品」需购物车明细，cart 仅为计数器"
+  },
+  {
+   "id": "rw.077",
+   "fixture": "ecommerce/search.html",
+   "missing": "项目",
+   "note": null
+  },
+  {
+   "id": "rw.078",
+   "fixture": "ecommerce/search.html",
+   "missing": "会员",
+   "note": null
+  },
+  {
+   "id": "rw.079",
+   "fixture": "ecommerce/search.html",
+   "missing": "详情",
+   "note": null
+  },
+  {
+   "id": "rw.082",
+   "fixture": "ecommerce/search_lazy.html",
+   "missing": "显示器/id=\"query\"(objective 声称但 fixture 无)",
+   "note": "id 契约错配：objective 声称 id 已改为 query，fixture 实际 id=q"
+  },
+  {
+   "id": "rw.086",
+   "fixture": "saas/login.html",
+   "missing": "项目/任务",
+   "note": null
+  },
+  {
+   "id": "rw.087",
+   "fixture": "saas/login.html",
+   "missing": "订单/结算",
+   "note": null
+  },
+  {
+   "id": "rw.090",
+   "fixture": "saas/login.html",
+   "missing": "购物车/加入购物车",
+   "note": null
+  },
+  {
+   "id": "rw.091",
+   "fixture": "ecommerce/search.html",
+   "missing": "结算/支付",
+   "note": null
+  },
+  {
+   "id": "rw.092",
+   "fixture": "ecommerce/search.html",
+   "missing": "结算/支付",
+   "note": null
+  },
+  {
+   "id": "rw.093",
+   "fixture": "ecommerce/search.html",
+   "missing": "报表/导出/看板",
+   "note": null
+  },
+  {
+   "id": "rw.095",
+   "fixture": "ecommerce/search.html",
+   "missing": "头像/会员",
+   "note": null
+  },
+  {
+   "id": "rw.096",
+   "fixture": "ecommerce/search.html",
+   "missing": "翻页/筛选",
+   "note": null
+  },
+  {
+   "id": "rw.098",
+   "fixture": "ecommerce/search.html",
+   "missing": "成员/项目/邀请",
+   "note": null
+  },
+  {
+   "id": "rw.100",
+   "fixture": "ecommerce/search.html",
+   "missing": "结算/地址",
+   "note": null
+  }
+ ]
+}

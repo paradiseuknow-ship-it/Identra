@@ -1,0 +1,15 @@
+{
+  "id": "rw.046",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "榜单观察1",
+  "objective": "打开比价榜单确认出现「戴尔 U2723QE」",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "戴尔 U2723QE 出现在榜单中"
+  }
+}

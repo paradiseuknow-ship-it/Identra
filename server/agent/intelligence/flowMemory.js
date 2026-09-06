@@ -89,14 +89,33 @@ function recordFlowFromTask(task) {
   const v = validateFlow({ goal, states });
   if (!v.ok) return null;
   const r = recordFlow(site, goal, states, { source: { type: 'ai_success' } });
-  if (r.ok) recordOutcomeFlow(r.flow.id, true);
-  return r.ok ? r.flow : null;
+  if (!r.ok) return null;
+  // CAP-K1：返回计过一次成功后的最新记录（旧实现返回 recordFlow 时的过期快照，
+  // 其 confidence 是 0/0 样本下的 0 —— 调用方据此判断会误判为不可复用）。
+  return recordOutcomeFlow(r.flow.id, true) || r.flow;
 }
+
+// CAP-K1 敏感值守卫：这些字段名的 value 绝不落库（红线：LLM/存储不见明文凭据）。
+// 即使上游契约意外允许了 value 字面量，提炼侧也再拦一道。
+const SENSITIVE_VALUE_FIELD_RE = /pass|pwd|cvv|cvc|card|otp|token|secret|pin|密码|卡号|验证码/i;
 
 function stateFromStep(s, i, steps, taskId) {
   const rawId = (s.id && taskId && s.id.indexOf(taskId + '_') === 0) ? s.id.slice(taskId.length + 1) : s.id;
-  const t = (s.action && s.action.target) || {};
+  const act = s.action || {};
+  const t = act.target || {};
   const sem = t.semantic || t.field || t.text;
+  // CAP-K1 写读保真：旧实现只存 semantic，toPlan 一律重建成 click —— fill/select/press
+  // 全部退化为点击，重放必失败且无人知晓（失败反馈此前也是零调用）。这里保留可重放的最小集：
+  // 动作类型 / field / 非敏感 value / credentialRef（引用非明文）/ verification / 业务契约。
+  // 禁止项不变：selector / 坐标 / xpath 由 flowSchema.validateFlow 拒绝。
+  const actionType = typeof act.type === 'string' ? act.type : undefined;
+  const field = t.field || undefined;
+  const credentialRef = act.credentialRef || undefined;
+  let value;
+  if (!credentialRef && typeof act.value === 'string' && act.value.length <= 200
+    && !(field && SENSITIVE_VALUE_FIELD_RE.test(field))) {
+    value = act.value;
+  }
   const kind = i === 0 ? 'START' : (s.type === 'NAVIGATE' ? 'NAVIGATE' : 'STEP');
   const nextRaw = i < steps.length - 1
     ? ((steps[i + 1].id && taskId && steps[i + 1].id.indexOf(taskId + '_') === 0) ? steps[i + 1].id.slice(taskId.length + 1) : steps[i + 1].id)
@@ -105,22 +124,44 @@ function stateFromStep(s, i, steps, taskId) {
     id: rawId || ('st' + i),
     name: s.description || (s.type || 'step'),
     type: kind,
+    // 旧字段保留（向后兼容既有落库数据）
     elementHints: sem ? { semantic: sem } : undefined,
+    // CAP-K1 新增：可重放字段
+    actionType,
+    field: field || undefined,
+    semantic: sem || undefined,
+    value,
+    credentialRef,
     context: s.context || (kind === 'START' ? { urlPattern: '/' } : undefined),
-    verification: s.verification || { type: 'page_change' },
-    risk: s.risk || (kind === 'START' ? 'LOW' : 'MEDIUM'),
+    // verification 优先取步骤级（createStep 落库处），否则取动作级；都不在才退 page_change
+    verification: s.verification || act.verification || { type: 'page_change' },
+    expectedBusinessState: act.expectedBusinessState || undefined,
+    risk: s.risk || act.risk || (kind === 'START' ? 'LOW' : 'MEDIUM'),
     next: nextRaw,
   };
 }
 
 // 历史 flow → 可执行的 Plan（不含 selector/坐标；START/NAVIGATE 由调用方填 URL）。
+// CAP-K1：新格式 state 带 actionType/field/value/credentialRef，按原动作类型重建；
+// 旧格式（无 actionType，语义只有 elementHints）退回 click —— 与历史行为一致。
+// 重建结果必须再过 schema/plan.validatePlan（由 flowPlanner.tryFlowPlan 统一把关），
+// 旧数据缺 verification 等 MUST_VERIFY 契约时校验不过 → 自动降级 LLM 规划，绝不带病重放。
 function toPlan(flow, targetUrl) {
   const steps = (flow.states || []).map((st, i) => {
     const hint = st.elementHints || {};
+    const sem = st.semantic || hint.semantic || st.name;
     const isNav = st.type === 'NAVIGATE' || st.type === 'START';
-    const action = isNav
-      ? { type: 'navigate', target: { url: i === 0 ? (targetUrl || '') : (st.context && st.context.urlPattern ? st.context.urlPattern : '') }, risk: st.risk || 'LOW', verification: st.verification }
-      : { type: 'click', target: { semantic: hint.semantic || st.name }, risk: st.risk || 'MEDIUM', verification: st.verification };
+    let action;
+    if (isNav) {
+      action = { type: 'navigate', target: { url: i === 0 ? (targetUrl || '') : (st.context && st.context.urlPattern ? st.context.urlPattern : '') }, risk: st.risk || 'LOW', verification: st.verification };
+    } else if (st.actionType && st.actionType !== 'navigate') {
+      action = { type: st.actionType, target: { field: st.field, semantic: sem }, risk: st.risk || 'MEDIUM', verification: st.verification };
+      if (st.value !== undefined && st.value !== null) action.value = st.value;
+      if (st.credentialRef) action.credentialRef = st.credentialRef;
+      if (st.expectedBusinessState) action.expectedBusinessState = st.expectedBusinessState;
+    } else {
+      action = { type: 'click', target: { semantic: sem }, risk: st.risk || 'MEDIUM', verification: st.verification };
+    }
     return {
       id: st.id, type: isNav ? 'NAVIGATE' : 'ACT', description: st.name,
       expectedOutcome: st.name, risk: st.risk || 'MEDIUM', action, verification: st.verification, fromFlow: true,

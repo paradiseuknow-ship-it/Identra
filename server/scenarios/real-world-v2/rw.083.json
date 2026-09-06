@@ -1,0 +1,15 @@
+{
+  "id": "rw.083",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "动态DOM3",
+  "objective": "在搜索框（id 为 q）输入「摄像头」并搜索，确认出现搜索结果回显",
+  "fixture": "ecommerce/search_lazy.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "搜索结果：摄像头 回显出现"
+  }
+}

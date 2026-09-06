@@ -1,0 +1,15 @@
+{
+  "id": "rw.054",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "榜单条目4",
+  "objective": "打开榜单确认「小米 27寸 4K 显示器」条目出现",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "小米 27寸 4K 显示器出现在榜单中"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.099",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "长流程扩展7",
+  "objective": "搜索「鼠标」加购后确认按钮文本变为已加入购物车，再确认购物车件数为 1",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "购物车计数变为 1"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.064",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "多次提交4",
+  "objective": "依次用两个邮箱 a4@x.io 与 b4@x.io 配合姓名钱九提交两次注册",
+  "fixture": "data_entry/form.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "两次提交均出现注册成功提示"
+  }
+}

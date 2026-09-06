@@ -1,0 +1,15 @@
+{
+  "id": "rw.062",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "多次提交2",
+  "objective": "连续提交两条注册记录：王五 w2@x.io 与 赵六 z2@x.io，各自确认成功提示",
+  "fixture": "data_entry/form.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "两次提交均出现注册成功提示"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.056",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "表格填写1",
+  "objective": "填写注册表单：姓名张三，邮箱 z@x.io，手机号 13900000000，并提交",
+  "fixture": "data_entry/form.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "注册成功，欢迎 张三 提示出现"
+  }
+}

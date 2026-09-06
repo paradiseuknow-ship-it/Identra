@@ -1,0 +1,15 @@
+{
+  "id": "rw.011",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS登录页观察1",
+  "objective": "打开 SaaS 控制台页面，确认企业邮箱输入框可见",
+  "fixture": "saas/login.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "企业邮箱输入框可见"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.061",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "多次提交1",
+  "objective": "分两次提交注册：先姓名张三邮箱 z1@x.io，再姓名李四邮箱 l1@x.io，两次均确认注册成功",
+  "fixture": "data_entry/form.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "两次提交均出现注册成功提示"
+  }
+}

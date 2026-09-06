@@ -1,0 +1,15 @@
+{
+  "id": "rw.100",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "长流程扩展8",
+  "objective": "搜索「显示器」加购，然后搜索「机械键盘」加购，最后确认购物车数量为 2",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "购物车计数变为 2"
+  }
+}

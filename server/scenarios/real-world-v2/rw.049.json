@@ -1,0 +1,15 @@
+{
+  "id": "rw.049",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "榜单观察4",
+  "objective": "查看榜单确认「戴尔 U2723QE」的价格 ¥3299 出现",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "¥3299 出现在榜单中"
+  }
+}

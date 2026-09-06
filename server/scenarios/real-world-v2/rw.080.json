@@ -1,0 +1,15 @@
+{
+  "id": "rw.080",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "多步确认5",
+  "objective": "搜索「鼠标」加购后确认购物车计数从 0 变为 1",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "购物车计数变为 1"
+  }
+}

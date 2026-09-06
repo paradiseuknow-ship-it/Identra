@@ -1,0 +1,15 @@
+{
+  "id": "rw.052",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "榜单条目2",
+  "objective": "打开比价网榜单确认「明基 PD2705Q」可见",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "明基 PD2705Q 出现在榜单中"
+  }
+}

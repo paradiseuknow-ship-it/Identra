@@ -483,6 +483,12 @@ function AccountTab({ form, setField, setBehavior, vault, setVault }) {
         <div className="space-y-3">
           <Toggle label="继续浏览上次打开的网页" checked={form.launchBehavior?.restoreLastSession === true} onChange={(v) => setBehavior('restoreLastSession', v)} />
           <Toggle label="禁止加载视频" checked={form.launchBehavior?.blockVideo === true} onChange={(v) => setBehavior('blockVideo', v)} />
+          <div>
+            <Toggle label="隐身窗口模式（有界面但移出屏幕外）" checked={form.launchBehavior?.hiddenWindow === true} onChange={(v) => setBehavior('hiddenWindow', v)} />
+            <div className="text-xs text-slate-500 mt-1">
+              真实有界面浏览器进程，窗口放到屏幕外不可见：指纹真实度最高（推荐反检测场景使用）。启用后使用指纹固定分辨率、截图稳定；与「使用真实屏幕分辨率」互斥。
+            </div>
+          </div>
           <div className="flex items-center gap-3">
             <Toggle label="禁止加载大图（省流量）" checked={form.launchBehavior?.blockImages === true} onChange={(v) => setBehavior('blockImages', v)} />
             <input
@@ -752,6 +758,7 @@ function emptyProfile() {
       clearCacheOnLaunch: false,
       cacheClearMode: 'none',
       clearCookies: false,
+      hiddenWindow: false,
     },
     fingerprintOverride: {
       timezoneMode: 'ip',
@@ -797,6 +804,7 @@ function normalizeProfile(profile) {
       clearCacheOnLaunch: false,
       cacheClearMode: 'none',
       clearCookies: false,
+      hiddenWindow: false,
       ...(profile.launchBehavior || {}),
     },
     fingerprintOverride: (() => {
@@ -843,6 +851,7 @@ function buildPayload(form) {
       blockImages: false,
       blockImagesThresholdKB: 10,
       clearCacheOnLaunch: false,
+      hiddenWindow: false,
     },
     fingerprintOverride: form.fingerprintOverride,
   };

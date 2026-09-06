@@ -1,0 +1,15 @@
+{
+  "id": "rw.041",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "价格确认1",
+  "objective": "搜索「机械键盘」确认结果中价格 ¥399 出现",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "¥399 出现在搜索结果中"
+  }
+}

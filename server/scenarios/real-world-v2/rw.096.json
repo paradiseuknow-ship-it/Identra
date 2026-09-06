@@ -1,0 +1,15 @@
+{
+  "id": "rw.096",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "长流程扩展4",
+  "objective": "连续搜索三款商品并逐一确认其价格出现",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "三款商品价格均出现在结果中"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.097",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "长流程扩展5",
+  "objective": "搜索「机械键盘」确认加购前购物车为 0 件，加购后变为 1 件",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "购物车计数从 0 变为 1"
+  }
+}

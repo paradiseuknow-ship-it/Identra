@@ -43,6 +43,27 @@ const FIELD_TOKENS = {
   submit: ['submit', 'signin', 'signup', 'login', 'search', 'continue', 'next', 'proceed', 'ok', 'done', 'save'],
 };
 
+// Phase 9 P6（CJK 缩写扩展）：电商/表单高频行业缩写 → 全称。
+// 背景（smoke5 rw.094 铁证）：语义「加购按钮」与「加入购物车」无连续子串关系
+// （加_入_购_物_车），中文 bigram 重叠为 0；而任意带「按钮」后缀的元素（如搜索按钮，
+// aria「搜索按钮」）凭 1/3 部分重叠分胜出 → 解析到错误元素。
+// 缩写表只收通用行业缩写，不针对任何特定站点/fixture。
+const CJK_ABBREVIATIONS = {
+  '加购': '加入购物车',
+};
+
+// 语义变体：原语义 + 缩写展开变体。scoreSemantic / scoreNearbyText 对每个变体独立
+// 评分取最优（变体数有界：每语义至多 |CJK_ABBREVIATIONS| 个展开）。
+function semanticVariants(semantic) {
+  const s = String(semantic || '');
+  if (!s) return [s];
+  const out = [s];
+  for (const [abbr, full] of Object.entries(CJK_ABBREVIATIONS)) {
+    if (s.indexOf(abbr) >= 0 && s.indexOf(full) < 0) out.push(s.split(abbr).join(full));
+  }
+  return out;
+}
+
 function normalize(s) {
   return String(s || '').toLowerCase().replace(/[\s_\-:]+/g, ' ').trim();
 }
@@ -83,6 +104,7 @@ function wordIncludes(haystack, needle) {
 function canonicalMatchedBy(by) {
   if (by === 'semantic' || by === 'text') return by;
   if (['id', 'name', 'aria', 'placeholder', 'label', 'cls', 'field'].includes(by)) return 'attribute';
+  if (by === 'tag') return 'attribute'; // P1.2 bare-tag 属元素结构身份信号，与 id/name 同类
   if (['nearby_text', 'dom_relationship'].includes(by)) return 'text';
   if (['role', 'role-button'].includes(by)) return 'fallback';
   return 'fallback';
@@ -123,8 +145,18 @@ function scoreField(field, el) {
   return { score: best, reason, matchedBy };
 }
 
-// Signal 2：semantic 文本匹配（子串 + 中英文 token 重叠；中文走 bigram 模糊）
+// Signal 2：semantic 文本匹配（子串 + 中英文 token 重叠；中文走 bigram 模糊）。
+// P6：先做 CJK 缩写展开（semanticVariants），对每个变体独立评分取最优。
 function scoreSemantic(semantic, el) {
+  let best = { score: 0, reason: '', matchedBy: null };
+  for (const variant of semanticVariants(semantic)) {
+    const r = scoreSemanticOnce(variant, el);
+    if (r.score > best.score) best = r;
+  }
+  return best;
+}
+
+function scoreSemanticOnce(semantic, el) {
   if (!semantic) return { score: 0, reason: '', matchedBy: null };
   const text = el.text ? String(el.text) : '';
   const pool = [text, el.placeholder, el.ariaLabel, el.label, el.innerText, el.roleText]
@@ -151,7 +183,17 @@ function scoreSemantic(semantic, el) {
 // Signal 3：nearby-text / DOM-relationship（父/兄弟/容器文本与 target semantic 的 token 重叠）。
 // 解决「目标元素自身无文本/无 name，但邻近容器文字描述其语义」的定位场景（例如图标按钮附近的说明文字）。
 // 命中强（子串或 >=50% token 重叠）→ matchedBy 'nearby_text'；中等重叠（25%~50%）→ 'dom_relationship'。
+// P6：与 scoreSemantic 同样先做 CJK 缩写展开，取变体最优。
 function scoreNearbyText(semantic, el) {
+  let best = { score: 0, reason: '', matchedBy: null };
+  for (const variant of semanticVariants(semantic)) {
+    const r = scoreNearbyTextOnce(variant, el);
+    if (r.score > best.score) best = r;
+  }
+  return best;
+}
+
+function scoreNearbyTextOnce(semantic, el) {
   if (!semantic || !el) return { score: 0, reason: '', matchedBy: null };
   const nearby = [el.parentText, el.siblingText, el.nearbyText, el.containerText]
     .map((x) => (x ? String(x) : ''))
@@ -180,6 +222,61 @@ function typeBonus(target, el) {
   return { bonus: 0, reason: '' };
 }
 
+// ── 元素类别：可操作性（修复 CAP-E5-LABEL-RANKING）──────────────────────────
+// 候选池里混着两类元素（见 observation.js 中 Phase 9 P1 的说明）：
+//   控件 control —— input/textarea/select/button/a/summary 以及显式交互 role：
+//                   动作可以真正作用在它们身上（fill / click / select）。
+//   描述性容器 descriptive —— form/label/h1~h3/img。当初把它们补齐进候选池，
+//                   是**为了候选发现与 element_present 验证**（例如 <form id="regForm">
+//                   在页面上真实存在却一个候选都进不了），**不是为了当动作目标**：
+//                   fill 一个 <label> 不会产生任何效果，后续 fill 无响应。
+// 因此：当两类元素命中同一个语义时，控件必须胜出。
+// 这是一条 DOM 结构规则（什么标签可被操作），与站点/品类/语言完全无关。
+const CONTROL_TAGS = new Set(['input', 'textarea', 'select', 'button', 'a', 'summary']);
+const CONTROL_ROLES = new Set(['button', 'link', 'textbox', 'checkbox', 'radio', 'combobox',
+  'listbox', 'option', 'switch', 'searchbox', 'menuitem', 'tab', 'slider', 'spinbutton']);
+const DESCRIPTIVE_TAGS = new Set(['form', 'label', 'h1', 'h2', 'h3', 'img']);
+
+// P1.2 bare-tag matching signal（Phase 13，v2 baseline rw.068 铁证）：
+// expect 为合法裸 HTML tag 名（如 "h2"）且候选池中存在该 tag 元素时，resolver 必须能命中。
+// 此前五信号无 tag 名匹配信号 → resolve("h2") 对池内真实 h2 返回 0 候选 → VERIFY_FAILED。
+// 词表 = CONTROL_TAGS ∪ DESCRIPTIVE_TAGS（observation contract 实际可能入池的标签全集），
+// 显式 HTML tag vocabulary，禁止任何长度/字符串猜测 heuristic。
+// 不满足词表（如「商品列表容器」）或池中无该 tag（如页面无 form）时仍返回 0 候选——零放宽。
+const BARE_TAGS = new Set([...CONTROL_TAGS, ...DESCRIPTIVE_TAGS]);
+
+// target 是否为合法裸 tag 名：全词命中词表 + 非 CSS 选择器形态（CSS 形态优先走 Signal 5 fallback）。
+// normalize 已 toLowerCase → 天然大小写不敏感（"H2" ≡ "h2"）。返回归一小写 tag 或 null。
+function bareTagHint(target) {
+  const pick = (v) => {
+    if (typeof v !== 'string') return null;
+    if (sf.looksLikeCss(v)) return null;
+    const n = normalize(v);
+    return (n && BARE_TAGS.has(n)) ? n : null;
+  };
+  if (typeof target === 'string') return pick(target);
+  if (target && typeof target === 'object') return pick(target.field) || pick(target.semantic || target.text);
+  return null;
+}
+
+// bare-tag 命中：仅当元素 tag 与 tagHint 严格相等（结构身份精确匹配，非包含/前缀）。
+// 分数 0.85（与 field TIER aria 层同级）：低于 field 精确命中(1.0)，高于语义 token 重叠(0.85 封顶但需重叠证据)——
+// tag 名是显式结构指令，命中即高置信，但多个同 tag 元素同分时按 DOM 顺序取第一个（与 CSS "h2" 语义一致）。
+function scoreBareTag(tagHint, el) {
+  if (!tagHint) return { score: 0, reason: '', matchedBy: null };
+  const t = String((el && el.tag) || '').toLowerCase();
+  if (t && t === tagHint) return { score: 0.85, reason: 'bare-tag 命中「' + tagHint + '」', matchedBy: 'tag' };
+  return { score: 0, reason: '', matchedBy: null };
+}
+
+function elementClass(el) {
+  const tag = String((el && el.tag) || '').toLowerCase();
+  const role = String((el && el.role) || '').toLowerCase();
+  if (CONTROL_TAGS.has(tag) || CONTROL_ROLES.has(role)) return 'control';
+  if (DESCRIPTIVE_TAGS.has(tag)) return 'descriptive';
+  return 'passive';
+}
+
 // 输入 target + 观察结果 → 候选列表 [{ elementId?, selector?, index, score, reason, el }]
 function resolve(target, observation, opts = {}) {
   let field = null, semantic = null, roleHint = null, cssSel = null;
@@ -194,6 +291,7 @@ function resolve(target, observation, opts = {}) {
     roleHint = target.role || null;
   }
   const elems = (observation && observation.elements) || [];
+  const tagHint = bareTagHint(target); // P1.2 bare-tag 信号（仅词表内裸 tag，CSS 形态除外）
   const out = [];
   elems.forEach((el, i) => {
     const fs = scoreField(field, el);
@@ -201,6 +299,8 @@ function resolve(target, observation, opts = {}) {
     const ns = scoreNearbyText(semantic, el);
     // Phase 6.3：CSS 选择器形态的 target 按属性匹配（剥离脆属性后）
     const cs = cssSel ? sf.matchCssSelector(cssSel, el) : { score: 0, reason: '', matchedBy: null };
+    // P1.2：裸 tag 名精确匹配元素 tag（词表外/无同 tag 元素时恒为 0）
+    const ts = scoreBareTag(tagHint, el);
     // 角色提示：target.role 直接命中元素 role（如 target.role='button' 且 el.role='button'）
     let roleScore = 0, roleBy = null;
     if (roleHint && el.role && normalize(roleHint) === normalize(el.role)) { roleScore = 0.7; roleBy = 'role'; }
@@ -212,6 +312,7 @@ function resolve(target, observation, opts = {}) {
       { s: ss.score, r: ss.reason, by: ss.matchedBy || 'semantic' },
       { s: roleScore, r: roleHint ? ('role 提示命中「' + el.role + '」') : '', by: roleBy },
       { s: cs.score, r: cs.reason, by: cs.matchedBy || 'attribute' },
+      { s: ts.score, r: ts.reason, by: ts.matchedBy || 'tag' },
     ];
     let score = 0, reason = '', matchedBy = null;
     cands.forEach((c) => { if (c.s > score) { score = c.s; reason = c.r; matchedBy = c.by; } });
@@ -238,7 +339,56 @@ function resolve(target, observation, opts = {}) {
       el,
     });
   });
-  out.sort((a, b) => b.score - a.score || a.index - b.index);
+  // ── 可操作性优先排序（CAP-E5-LABEL-RANKING）──
+  // 修复前：`<label for="uname">用户名</label><input id="uname" name="username">`
+  // 中 target={"semantic":"用户名"} 时，label 与 input 都得 0.92 分，
+  // 排序退化为「DOM 顺序」→ label（在前）胜出 → 后续 fill 打在不可输入的 label 上。
+  // 真实登录/注册表单中 label[for] 极常见，这是 ELEMENT_NOT_FOUND 的重要来源。
+  out.forEach((c) => { c.elementClass = elementClass(c.el); });
+
+  // (1) 标签冗余降权：若某 <label> 的文本正是另一个候选控件的 label 字段
+  //     （即 observation 的 labelFor() 通过 label[for] / 包裹关系解析出的关联），
+  //     那么该 label 只是那个控件的**文字注解**，控件严格更可操作。
+  //     降权而非剔除：它仍需留在候选池里供 element_present 等结构性验证使用。
+  const labelledControls = new Set();
+  out.forEach((c) => {
+    if (c.elementClass === 'control' && c.el && c.el.label) labelledControls.add(normalize(c.el.label));
+  });
+  out.forEach((c) => {
+    if (c.elementClass !== 'descriptive') return;
+    if (String((c.el && c.el.tag) || '').toLowerCase() !== 'label') return;
+    const own = normalize((c.el && c.el.text) || '');
+    if (own && labelledControls.has(own)) {
+      c.score = Math.round(c.score * 0.8 * 100) / 100;
+      c.reason += ' | label 是某控件的文字注解，已降权（控件优先）';
+    }
+  });
+
+  // (2) 描述性元素封顶：候选池里存在「评分可信的控件」时，描述性元素必须让位。
+  //     背景（CAP-E6 收尾）：`<h3>用户名</h3><input name="username">` 里
+  //     h3 靠自身文字直击 semantic 得 0.92，input 只能靠邻近文本得 0.82 ——
+  //     纯按分数排 h3 胜出，而 fill 一个 <h3> 不会产生任何业务效果。
+  //     语义上：描述性元素的文字命中没有回答「它是目标」，只回答了「目标在它附近」。
+  //     因此**只在确实存在可信控件候选（分数高于封顶线）时才封顶**：
+  //     页面上没有任何控件命中时（例如找 <form>、或页面上只有一个纯展示 label），
+  //     描述性元素就是唯一合理答案，必须保持原分（这是刻意保留的出口，不是漏网）。
+  const DESCRIPTIVE_CEILING = 0.75;
+  let controlBest = 0;
+  out.forEach((c) => { if (c.elementClass === 'control' && c.score > controlBest) controlBest = c.score; });
+  if (controlBest > DESCRIPTIVE_CEILING) {
+    out.forEach((c) => {
+      if (c.elementClass !== 'descriptive' || c.score <= DESCRIPTIVE_CEILING) return;
+      c.score = DESCRIPTIVE_CEILING;
+      c.reason += ' | 描述性元素封顶 ' + DESCRIPTIVE_CEILING + '（存在评分更高的可操作控件）';
+    });
+  }
+
+  // (3) 同分时控件优先：descriptive 元素（form/label/h1~h3/img）本就不是动作目标，
+  //     只是候选发现与 element_present 的载体，同分下必须让位给真正的控件。
+  const CLASS_RANK = { control: 0, passive: 1, descriptive: 2 };
+  out.sort((a, b) => (b.score - a.score)
+    || (CLASS_RANK[a.elementClass] - CLASS_RANK[b.elementClass])
+    || (a.index - b.index));
   return out.slice(0, (opts && opts.limit) || 8);
 }
 
@@ -268,4 +418,4 @@ function selectorFor(el, index) {
   return '#' + escapeCss(el.id || 'el-' + index);
 }
 
-module.exports = { resolve, normalize, synonymSet, selectorFor, escapeCss, SYNONYMS, scoreNearbyText, scoreSemantic, scoreField };
+module.exports = { resolve, normalize, synonymSet, semanticVariants, selectorFor, escapeCss, SYNONYMS, CJK_ABBREVIATIONS, scoreNearbyText, scoreSemantic, scoreField, BARE_TAGS, bareTagHint, scoreBareTag };

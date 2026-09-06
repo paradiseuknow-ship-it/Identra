@@ -10,21 +10,29 @@
     "  2. 每条必须有「业务影响」—— 说清楚不修会让哪类真实任务失败。",
     "  3. 每条必须有「追踪」ID，且该 ID 必须出现在 PRODUCT_CORE_ROADMAP 的待办清单里。",
     "     不在路线图里的缺口不许登记 —— 那等于承认它永远不修。",
-    "  4. 只登记「能力缺口」，不登记「测试写错了」。测试写错就改测试。"
+    "  4. 只登记「能力缺口」，不登记「测试写错了」。测试写错就改测试。",
+    "",
+    "已修复并移出的条目（保留痕迹，避免重复排查）：",
+    "  - CAP-E5-LABEL-RANKING（2026-08-29 修复）：中文 label 与关联 input 同分时 label 靠 DOM",
+    "    顺序胜出，导致 fill 打在不可输入的 label 上。修复方式见 semanticResolver.js 的",
+    "    elementClass / 标签冗余降权 / 描述性封顶 / 同分控件优先四段。回归测试：",
+    "    server/scripts/test_step5_label_ranking.js（26 条）。",
+    "",
+    "  - CAP-E6-NEARBY-TEXT-DEAD（2026-08-29 修复）：Signal 3（邻近文本）在生产中恒 0 分，",
+    "    因为 COLLECT_JS 从不写 parentText/siblingText/nearbyText/containerText。",
+    "    修复：observation.js 新增 precedingText / siblingTextOf / containerTextOf 三路采集",
+    "    （只取「紧邻在前」的文本，避免同容器多字段串味），并全部走 redact；",
+    "    semanticResolver.js 新增「描述性元素封顶」解决 h3 自击语义仍压过控件的问题。",
+    "    回归测试：server/scripts/test_step5_nearby_text.js（62 条，含 COLLECT_JS 语法守卫）。",
+    "",
+    "  - SEC-E7-TEMPLATE-ESCAPE（2026-08-29 修复，**由 CAP-E6 的测试连带发现**）：",
+    "    COLLECT_JS 是模板字面量，页内正则的单反斜杠被当转义序列吃掉（\\s→字母 s、",
+    "    \\b→退格符 U+0008、\\d→字母 d），导致脱敏六条规则中四条完全失效 —— 卡号、CVV、",
+    "    Bearer token 长期以明文进入喂给 LLM 的 observation。修复：页内正则一律写双反斜杠；",
+    "    并修掉 CVV「词在前」顺序（cvc 123）此前两种规则都不覆盖的盲区。",
+    "    护栏：test_step5_nearby_text.js Case 8/11（端到端 + 源码层单反斜杠检测）；",
+    "    test_security_baseline.js 的 loadRedact() 也改为从**页内生效脚本**抽取，",
+    "    不再从源码文件 eval（旧写法会绕过模板字面量处理，所以测试全绿而生产失效）。"
   ],
-  "gaps": [
-    {
-      "file": "test_resolver.js",
-      "断言": "4. 中文 label —— target={\"semantic\":\"用户名\"} 应定位到 input#uname，实际定位到 <label> 元素 #el-0",
-      "性质": "真实能力缺口（非测试写错）",
-      "证据": "server/agent/semanticResolver.js:139 —— Signal 2 命中即给 0.9 分；<label>元素凭自身可见文本命中，其关联 <input> 凭 el.label 命中，两者同分。同分时 label 靠微小加成胜出，而 label 不可输入。",
-      "业务影响": "中文 <label for> 登录/注册表单中，要找的是输入框却定位到不可输入的 label，后续 fill 无效果。label[for] 在真实登录表单极常见，这是 ELEMENT_NOT_FOUND 的重要来源之一，直接卡住 Scenario 002（登录）与 001（注册）。",
-      "验证方式": "node test_resolver.js，观察第 4 组用例的 ❌ 行",
-      "归类": "P1",
-      "追踪": "CAP-E5-LABEL-RANKING",
-      "记录日期": "2026-08-29",
-      "修复方向备忘": "排序层对「不可交互元素」加惩罚，或对 input/textarea/select 在语义同分时给可编辑性加成；不要整体重写 Resolver。",
-      "不要在什么前提下修": "在 Scenario 001/002 未建立前单独修此缺口，无法证明修复有效 —— 应先有可回归的真实场景。"
-    }
-  ]
+  "gaps": []
 }

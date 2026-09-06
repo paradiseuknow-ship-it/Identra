@@ -1,0 +1,15 @@
+{
+  "id": "rw.015",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS登录页观察5",
+  "objective": "不填写任何内容直接提交登录，确认出现错误提示",
+  "fixture": "saas/login.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "邮箱或密码错误提示出现"
+  }
+}

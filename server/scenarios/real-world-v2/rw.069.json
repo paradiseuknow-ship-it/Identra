@@ -1,0 +1,15 @@
+{
+  "id": "rw.069",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "下载链接4",
+  "objective": "点击页面中的下载链接触发 sample.txt 下载",
+  "fixture": "download.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "下载链接指向 sample.txt"
+  }
+}

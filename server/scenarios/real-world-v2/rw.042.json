@@ -1,0 +1,15 @@
+{
+  "id": "rw.042",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "价格确认2",
+  "objective": "搜索「无线鼠标」确认价格 ¥129 出现",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "¥129 出现在搜索结果中"
+  }
+}

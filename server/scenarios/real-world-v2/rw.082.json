@@ -1,0 +1,15 @@
+{
+  "id": "rw.082",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "动态DOM2",
+  "objective": "等待搜索框可见后输入「蓝牙音箱」并点击搜索，确认结果区域显示搜索结果",
+  "fixture": "ecommerce/search_lazy.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "搜索结果回显出现"
+  }
+}

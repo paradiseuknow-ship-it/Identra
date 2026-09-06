@@ -1,0 +1,15 @@
+{
+  "id": "rw.045",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "价格确认5",
+  "objective": "搜索「键盘」确认结果行的商品描述「RGB 热插拔机械键盘」出现",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "RGB 热插拔机械键盘描述出现"
+  }
+}

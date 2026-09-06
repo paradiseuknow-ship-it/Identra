@@ -23,13 +23,33 @@ function siteOf(url) {
   try { return new URL(url).hostname || null; } catch (e) { return null; }
 }
 
-async function handleStepFailure({ task, step, error, observation, execution, provider, repairAttemptId }) {
+async function handleStepFailure({ task, step, error, observation, execution, provider, repairAttemptId, priorDiagnosis }) {
   const ctx = { taskId: task.id, executionId: task.currentExecutionId };
   const _diagId = repairAttemptId || (process.env.E3_1_DIAG === '1' ? 'RA_orphan_' + Date.now().toString(36) : null);
   if (_diagId) console.warn('[E3.1-DIAG] REPAIR_ENTER', JSON.stringify({ repairAttemptId: _diagId, taskId: task.id, stepId: step.id, errorCode: error && error.code, errorMsg: String(error && error.message || error || '').slice(0, 120) }));
 
   // 0) 廉价错误分类（无 LLM）
   const classifier = errorClassifier.classify(error, { url: observation && observation.url });
+
+  // 0.05) STEP 4 统一诊断短路门：诊断已判定「不可重试」时，不再走 LLM 重分类、
+  //      也不再让修复链路在页面上执行任何动作。
+  //      验证码 / OTP / 权限 / 支付被拒 / 凭据错误 / 记录重复 —— 这些失败的正确处理
+  //      是把根因交给人。花一次 LLM 调用把它重分类成 ELEMENT_CHANGED 后去点三次按钮，
+  //      既浪费成本，又可能在风控页面上放大风险（绝不允许尝试绕过验证码 / 3DS）。
+  if (priorDiagnosis && priorDiagnosis.retryPolicy === 'escalate') {
+    const reason = `${priorDiagnosis.rootCause}：${priorDiagnosis.summary}`;
+    const t0 = taskManager.getTask(task.id);
+    if (t0) {
+      t0.lastDiagnosis = { ...priorDiagnosis, fromLLM: false, fromUnifiedDiagnosis: true };
+      store.upsert('aiTasks', t0);
+    }
+    events.emit({
+      ...ctx, stepId: step.id, type: 'ai.failed',
+      payload: { code: 'DIAGNOSIS_NOT_RETRIABLE', rootCause: priorDiagnosis.rootCause, message: reason, evidence: priorDiagnosis.evidence.slice(0, 5) },
+    });
+    taskManager.pauseForHuman(task.id, reason, { stepId: step.id, action: step.action });
+    return { paused: true, reason, category: classifier.type, notRetriable: true, rootCause: priorDiagnosis.rootCause };
+  }
 
   // 0.1) 失败经验查询（在 Diagnosis 之前，命中则跳过 LLM Diagnosis，降低成本）
   let diag = null;

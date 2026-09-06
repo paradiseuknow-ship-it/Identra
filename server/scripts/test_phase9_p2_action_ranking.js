@@ -107,7 +107,14 @@ function startMockServer() {
       const sel = await tools.resolveSelector({ type: 'submit', target }, obs, meta, null, { prefer: isActionableControl });
       ok('B.4 [核心] submit 解析落在按钮上', !!sel && /searchBtn/i.test(sel.selector), sel ? sel.selector : 'null');
       ok('B.5 [核心] 不再落在 input#q 上', !!sel && !/(^|[^a-z])#q\b|input\[name="q"\]|input#q/i.test(sel.selector), sel ? sel.selector : 'null');
-      ok('B.6 prefer 生效被记录（telemetry）', meta.preferApplied === true);
+      // B.6 前提自适应（2026-08-31 修复：测试前提过期，非产品缺陷）：
+      // Element Memory 是持续学习的活数据 —— 100-task 基准运行后「搜索表单」记忆已合法学到
+      // button 模式（store aiElementMemory: patterns=[input,input,button]）。此时记忆路径直接命中
+      // 可触发控件，prefer 兜底无需介入，preferApplied 不再置位（产品行为正确，B.4/B.5 仍断言落点正确）。
+      // 两种解析来源遥测均合法：prefer 兜底生效（preferApplied=true）或记忆直接命中（matchedBy=element_memory）。
+      ok('B.6 解析来源遥测被记录（prefer 兜底生效 或 记忆直接命中）',
+        meta.preferApplied === true || meta.matchedBy === 'element_memory',
+        'matchedBy=' + meta.matchedBy + ' preferApplied=' + meta.preferApplied);
 
       // 端到端：点击该按钮后，搜索结果必须真实渲染
       await page.fill('input#q', '显示器');
@@ -155,9 +162,27 @@ function startMockServer() {
         const memSel = await tools.resolveSelector({ type: 'submit', target }, obs, memMeta, null, { prefer: isActionableControl });
         ok('E.1 [核心-根因] 存在「搜索表单→输入框」的成功记忆时，submit 仍落在按钮上',
           !!memSel && /searchBtn/i.test(memSel.selector), memSel ? memSel.selector : 'null');
-        ok('E.2 [核心-根因] 记忆因不满足动作约束被放弃，改由语义解析兜底',
-          memMeta.memoryDeclinedByPrefer === true && memMeta.matchedBy !== 'element_memory',
-          'matchedBy=' + memMeta.matchedBy + ' declined=' + memMeta.memoryDeclinedByPrefer);
+        // E.2 自播种探针（2026-08-31 重构：测试前提过期，非产品缺陷）：
+        // 原断言依赖真实 store 中的「input-only 污染记忆」，但记忆系统在 100-task 基准运行中
+        // 已合法学到 button 模式（自我纠正，matchedBy=element_memory 直接命中 → declined 不置位，
+        // 这是正确行为）。为保留「记忆因不满足动作约束被放弃」行为契约的确定性验证，改为：
+        // 播种唯一语义的 input-only 高置信记忆 → resolveSelector(prefer) 必须 declined → 测试后归档清理。
+        const probeSemantic = 'P2 守卫探针 ' + Date.now() + ' ' + Math.random().toString(36).slice(2, 7);
+        const store = require('../agent/store');
+        try {
+          em.recordSuccess('127.0.0.1', probeSemantic, { tag: 'input', id: 'q', name: 'q', observation: obs }, 'test-seed');
+          const probeMeta = {};
+          await tools.resolveSelector({ type: 'submit', target: { semantic: probeSemantic } }, obs, probeMeta, null, { prefer: isActionableControl });
+          ok('E.2 [核心-根因] 记忆因不满足动作约束被放弃，改由语义解析兜底（自播种确定性）',
+            probeMeta.memoryDeclinedByPrefer === true && probeMeta.matchedBy !== 'element_memory',
+            'matchedBy=' + probeMeta.matchedBy + ' declined=' + probeMeta.memoryDeclinedByPrefer);
+        } finally {
+          // 清理：归档播种记录（getCandidate 只消费 ACTIVE 记录），不污染共享记忆 store
+          try {
+            const seeded = store.findWhere('aiElementMemory', (r) => r.semantic === probeSemantic);
+            for (const rec of seeded) { rec.status = 'ARCHIVED'; store.upsert('aiElementMemory', rec); }
+          } catch (e) {}
+        }
       }
 
       // ── D. 红线 ──

@@ -10,7 +10,7 @@ const vault = require('../vault');
 
 const SECRET_TYPES = ['email_password', 'api_key', 'payment', 'oauth_token', 'cookie', 'license', 'ssh_key', 'other'];
 
-function createSecret({ profileId, type, site, label }) {
+function createSecret({ profileId, type, site, label, workspaceId, createdBy }) {
   if (!SECRET_TYPES.includes(type)) type = 'other';
   const id = 'cred_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const rec = {
@@ -21,6 +21,10 @@ function createSecret({ profileId, type, site, label }) {
     label: label || null,
     available: false,      // 经校验 vault 有对应凭据后置 true
     createdAt: Date.now(),
+    // STEP 22 (I1)：归属盖章 —— workspaceId/createdBy 由服务端身份层传入（agent/index.js 路由），
+    // 调用方 body 中的 workspaceId 一律忽略，绝不落库。
+    workspaceId: workspaceId || null,
+    createdBy: createdBy || null,
   };
   store.insert('aiCredentials', rec);
   refreshAvailability(rec);
@@ -55,6 +59,7 @@ function maskedView(rec) {
     site: rec.site,
     label: rec.label,
     available: rec.available,
+    workspaceId: rec.workspaceId || null,
     maskedEmail,
     maskedCard,
   };
@@ -81,11 +86,16 @@ function listMasked() {
   return store.read('aiCredentials', []).map((r) => maskedView(r));
 }
 
+// STEP 22 (I1)：原始记录（含归属字段），供路由层做 workspace 过滤后再脱敏输出
+function listRecords() {
+  return store.read('aiCredentials', []);
+}
+
 function remove(ref) {
   store.remove('aiCredentials', ref);
 }
 
-module.exports = { createSecret, getByRef, resolve, listMasked, remove, maskedView, recordUsage, SECRET_TYPES };
+module.exports = { createSecret, getByRef, resolve, listMasked, listRecords, remove, maskedView, recordUsage, SECRET_TYPES };
 
 // Credential 使用记录（不存值，只存引用/字段/结果）—— 供购买流程追溯"哪个账号用了哪个凭据"
 function recordUsage({ taskId, credentialId, site, fields, result, error }) {

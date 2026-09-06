@@ -39,7 +39,15 @@ if (_origFetch) {
 const argv = process.argv.slice(2);
 function arg(name, def) { const i = argv.indexOf(name); if (i < 0) return def; const n = argv[i + 1]; if (n === undefined || n.startsWith('--')) return true; return n; }
 const MAX = parseInt(arg('--max', '0'), 10) || 0;
-const PER_TASK_TIMEOUT = parseInt(arg('--timeout', '120000'), 10) || 120000;
+// 分层抽样参数（2026-08-31 smoke）：--ids rw.001,rw.002,... 显式指定任务集。
+// 仅影响抽样选择，不影响聚合/口径/门槛语义。
+const IDS = String(arg('--ids', '') || '').split(',').map((s) => s.trim()).filter(Boolean);
+// per-task deadline 解析序：argv --timeout 显式优先；无 argv 时回退 FPB_TASK_DEADLINE env
+//（phase12 harness 的 --task-deadline 透传入口，worker 以 env:process.env 全量继承）；
+// 解析失败/0/负数 → 240000 canonical 默认（2026-09-03 R1 迁移决策：P2 dl240 实证 120s
+// recovery 预算不足为真因、240s +3 SUCCESS；argv/env 显式覆盖语义不变）。
+const PER_TASK_TIMEOUT_RAW = parseInt(arg('--timeout', process.env.FPB_TASK_DEADLINE || '240000'), 10);
+const PER_TASK_TIMEOUT = PER_TASK_TIMEOUT_RAW > 0 ? PER_TASK_TIMEOUT_RAW : 240000;
 
 const db = require('../db');
 const store = require('../agent/store');
@@ -48,15 +56,29 @@ const vault = require('../vault');
 const secretManager = require('../agent/secretManager');
 // B3：单一权威「业务成功」口径（harness / store / report 同源派生）。
 const { isBusinessSuccess, businessSuccess, consistencyCheck } = require('../agent/successMetrics');
+// ② escalationSplit 口径修复（2026-08-31）：五分类统计口径（纯函数模块，事件链可复核）。
+// 只改统计分类：不改执行/升级语义、不改 final.error 文本、不动原始 taxonomy（escalationSplit legacy 保留）。
+const { classifyEscalation, CLASS_KEYS } = require('./escalationClass');
 
 process.on('unhandledRejection', (e) => { console.error('[phase9][unhandledRejection]', (e && e.stack) || e); });
 
 // ── 加载 100 真实世界任务 ──
+// 场景目录解析序：FPB_SCENARIO_DIR env 显式覆盖（池 v2 对齐池运行入口，绝对路径或相对 cwd）
+// → 默认 server/scenarios/real-world（冻结 v1 池；不设 env 时行为逐字节不变）。
 function loadTasks() {
-  const dir = path.resolve(__dirname, '..', 'scenarios', 'real-world');
+  const dir = process.env.FPB_SCENARIO_DIR
+    ? path.resolve(process.env.FPB_SCENARIO_DIR)
+    : path.resolve(__dirname, '..', 'scenarios', 'real-world');
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json') && f !== 'index.json');
   let list = files.map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')));
   list = list.sort((a, b) => a.id.localeCompare(b.id));
+  if (IDS.length) {
+    const wanted = new Set(IDS);
+    list = list.filter((t) => wanted.has(t.id));
+    const missing = IDS.filter((id) => !list.some((t) => t.id === id));
+    if (missing.length) { console.error('[phase10] --ids 中未找到的任务:', missing.join(',')); process.exit(2); }
+    return list;
+  }
   return MAX > 0 ? list.slice(0, MAX) : list;
 }
 
@@ -99,12 +121,18 @@ async function runScenario(scn, baseUrl) {
   db.upsertProfile(profile);
 
   // ── 凭据播种（仅 required 类）──
+  // P1 布线修复（2026-08-31 smoke 归因）：此前只把 ref id 拼进 objective 文案，从未接线到
+  // task.secretRefs —— planObjective 永远收到空凭据清单，required 任务退化为「模型靠 hint
+  // 蒙 ref id」；P1 空集禁令生效后更直接导致模型改用 value 填敏感字段 → schema 门拒绝 →
+  // FAILED。正解：播种后的 ref 必须挂到任务上，planner 才能走「有凭据」契约分支。
   let credRefHint = '';
+  let seededSecretRefs = [];
   if (scn.credentialRequirement === 'required' && scn.credentialValue) {
     try {
       vault.setProfileSecrets(PROFILE_ID, scn.credentialValue);
       const type = (scn.credentialValue.card) ? 'payment' : 'email_password';
       const rec = secretManager.createSecret({ profileId: PROFILE_ID, type, site: scn.category, label: scn.credentialRef || scn.id });
+      seededSecretRefs = [rec.id];
       credRefHint = '（使用凭据引用 ' + rec.id + ' 完成认证/支付）';
     } catch (e) { console.error('[phase9] 凭据播种失败', scn.id, e.message); }
   }
@@ -117,6 +145,7 @@ async function runScenario(scn, baseUrl) {
     objective,
     targetUrl,
     profileId: PROFILE_ID,
+    secretRefs: seededSecretRefs,
     executionMode: 'AUTONOMOUS',
     constraints: [],
     policy: { riskFloor: 'HIGH' },
@@ -131,7 +160,9 @@ async function runScenario(scn, baseUrl) {
     await sleep(500);
   }
   if (!final || !TERMINAL.includes(final.status)) {
-    try { taskManager.cancel(task.id); } catch (e) {}
+    // B 类口径修复（2026-08-31）：deadline 取消必须与用户取消可区分 —— error 带 benchmark_deadline
+    // 标记，classifyTaxonomy/classifyEscalation 据此归 TIMEOUT，不再污染 CANCELLED 统计。
+    try { taskManager.cancel(task.id, '任务级超时：benchmark per-task deadline（' + PER_TASK_TIMEOUT + 'ms）到期，由 harness 终止（benchmark_deadline，非用户取消）'); } catch (e) {}
     final = taskManager.getTask(task.id) || { id: task.id, status: 'TIMEOUT' };
   }
 
@@ -154,6 +185,9 @@ async function runScenario(scn, baseUrl) {
     .concat(snapshots.map((s) => s.errorType).filter(Boolean));
   const escalated = final.status === 'HUMAN_ESCALATION';
   const escalationKind = escalated ? escalationSplit(codes, final) : null;
+  // ② 五分类统计口径：基于逐任务原始事件链（final.status/escalationKind/error + codes）纯函数判定。
+  // VERIFY_RETRY 等工程型升级不再计入 REAL；原始 taxonomy（classifyTaxonomy + legacy escalationKind）保留不变。
+  const escalationClass = classifyEscalation(final, codes);
   const taxonomy = classifyTaxonomy(final, codes, escalationKind);
 
   try { taskManager.cancel(task.id); } catch (e) {}
@@ -176,13 +210,29 @@ async function runScenario(scn, baseUrl) {
     latencyMs: (final.startedAt && final.finishedAt) ? final.finishedAt - final.startedAt : null,
     tokensPrompt: curPrompt, tokensCompletion: curCompletion,
     plannerOk, hasVerification: steps.some((s) => s.verification && s.verification.type && s.verification.type !== 'none'),
-    taxonomy, escalated, escalationKind,
+    actions: buildActionsSummary(steps),
+    taxonomy, escalated, escalationKind, escalationClass,
     scores: agentScore.compute({ steps, attempts: attempts.map((a) => ({ stepId: a.stepId, status: a.status, isError: a.status !== 'SUCCESS' && !!a.error })), retries, repairs: repairCount, escalated, status: final.status }),
   };
 }
 
+// E1 证据持久化（2026-09-01）：perTask 记录附步骤级动作摘要，使 B2 类审计可逐步骤还原
+// planner→actions→verification 链（此前 dl240 只有计数器，假阳性审计只能到「高置信疑似」）。
+// 只增字段不改任何判定语义；action 绝不含 value 明文（敏感字段在 action 中本就是 credentialRef）。
+function buildActionsSummary(steps) {
+  return (Array.isArray(steps) ? steps : []).map((s) => ({
+    i: s.index,
+    type: (s.action && s.action.type) || null,
+    desc: String(s.description || '').slice(0, 60),
+    status: s.status,
+    verif: (s.verification && s.verification.type) || null,
+  }));
+}
+
 function classifyTaxonomy(final, codes, escalationKind) {
   if (final.status === 'SUCCESS') return null;
+  // harness deadline 取消本质是任务级超时（error 带 benchmark_deadline 标记），与用户/调度取消分开
+  if (final.status === 'CANCELLED' && /benchmark_deadline/.test(String(final.error || ''))) return 'TIMEOUT';
   // 升级且属预期安全门控（凭据/支付）→ 归为 POLICY_BLOCK，避免污染真实能力统计
   if (final.status === 'HUMAN_ESCALATION' && escalationKind === 'CREDIBLE') return 'POLICY_BLOCK';
   if (codes.some((c) => /ELEMENT_NOT_FOUND/.test(c))) return 'ELEMENT_NOT_FOUND';
@@ -205,8 +255,13 @@ function aggregate(results) {
   const esc = results.filter((r) => r.status === 'HUMAN_ESCALATION');
   const failed = results.filter((r) => r.status === 'FAILED' || r.status === 'HUMAN_ESCALATION').length;
 
-  const escalationCredible = esc.filter((r) => r.escalationKind === 'CREDIBLE').length;
-  const escalationReal = esc.filter((r) => r.escalationKind === 'REAL').length;
+  // ② 五分类聚合（统计口径 v2）：VERIFY_RETRY / ENGINEERING_FAILURE / CANCELLED 单列，
+  // escalationReal 只统计「真实业务拒绝（REAL）」，验证重试等工程型升级不再计入。
+  const escalationClasses = {};
+  CLASS_KEYS.forEach((k) => { escalationClasses[k] = 0; });
+  results.forEach((r) => { if (r.escalationClass) escalationClasses[r.escalationClass] += 1; });
+  const escalationCredible = escalationClasses.CREDIBLE_BUSINESS;
+  const escalationReal = escalationClasses.REAL;
 
   const avgSteps = total ? +(results.reduce((a, r) => a + r.stepCount, 0) / total).toFixed(2) : 0;
   const avgRecovery = total ? +(results.reduce((a, r) => a + (r.retries + r.repairCount), 0) / total).toFixed(2) : 0;
@@ -259,6 +314,7 @@ function aggregate(results) {
     averageDurationMs: avgLatency,
     agentScore: scoreAgg, failureTaxonomy: tax,
     escalationCredible, escalationReal,
+    escalationClasses,
   };
 }
 
@@ -304,8 +360,26 @@ function generateReport(out, agg, v) {
   L.push('| 类型 | 数量 | 占比 |');
   L.push('| --- | --- | --- |');
   L.push('| 总计 | ' + (agg.escalationCredible + agg.escalationReal) + ' | ' + pct(agg.humanEscalationRate) + ' |');
-  L.push('| Credible（凭据/支付门控，预期安全行为） | ' + agg.escalationCredible + ' | ' + pct(agg.escalationCredibleRate) + ' |');
-  L.push('| Real（验证/解析/锁等真实弱点） | ' + agg.escalationReal + ' | ' + pct(agg.escalationRealRate) + ' |');
+  L.push('| CREDIBLE_BUSINESS（凭据/支付/审批门控，预期安全行为） | ' + agg.escalationCredible + ' | ' + pct(agg.escalationCredibleRate) + ' |');
+  L.push('| REAL（真实业务拒绝：CAPTCHA/OTP/风控；VERIFY_RETRY 已单列不再计入） | ' + agg.escalationReal + ' | ' + pct(agg.escalationRealRate) + ' |');
+  // ② 五分类分解（统计口径 v2）
+  const clsDesc = {
+    CREDIBLE_BUSINESS: '凭据/支付/审批门控升级（能力边界）',
+    VERIFY_RETRY: '验证反复失败升级（工程型，不计入 REAL）',
+    TIMEOUT: '超时',
+    CANCELLED: '任务取消',
+    ENGINEERING_FAILURE: '元素定位/执行/恢复等工程型失败',
+    REAL: '真实业务拒绝（CAPTCHA/OTP/风控）',
+  };
+  L.push('');
+  L.push('**升级/失败归因五分类（escalationClass，可由逐任务原始事件链复核）：**');
+  L.push('');
+  L.push('| 类别 | 数量 | 占总任务 |');
+  L.push('| --- | --- | --- |');
+  CLASS_KEYS.forEach((k) => {
+    const n = (agg.escalationClasses && agg.escalationClasses[k]) || 0;
+    L.push('| ' + k + '（' + clsDesc[k] + '） | ' + n + ' | ' + pct(agg.totalTasks ? n / agg.totalTasks : null) + ' |');
+  });
   L.push('');
   L.push('## 4. Recovery Analysis');
   L.push('');
@@ -422,7 +496,7 @@ function pct(x) { return x == null ? '-' : (x * 100).toFixed(1) + '%'; }
 
 // Phase 11: expose internals for the balanced 20-task runner (phase11_benchmark20.js)
 // without changing behavior when run directly.
-module.exports = { runScenario, aggregate, startMockServer, generateReport, verdict, loadTasks };
+module.exports = { runScenario, aggregate, startMockServer, generateReport, verdict, loadTasks, classifyTaxonomy, buildActionsSummary, PER_TASK_TIMEOUT };
 
 if (require.main === module) {
   main().catch((e) => { console.error('[phase9] 异常:', (e && e.stack) || e); process.exit(1); });

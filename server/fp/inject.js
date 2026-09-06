@@ -7,6 +7,11 @@ function buildInjectionScript(fp) {
   return `(function(){
   const FP = ${cfg};
   const NOISE = FP.noiseSeed || 0;
+  // Phase 16-B ownership（§14 §17）：Native patch 持有的 surface 集合（由 launcher 经
+  // fp._nativeOwned 注入，来自 nativeOwnership.nativeOwnedSurfaces()）。JS hook 对
+  // NATIVE_OWNED surface 自动让位，杜绝「Native + JS 双重覆盖」；默认空集 = 全部 JS_OWNED，
+  // 行为与 16-B 之前逐字节等价。
+  const NATIVE_OWNED_SET = new Set(Array.isArray(FP._nativeOwned) ? FP._nativeOwned : []);
 
   function rng(seed){
     let a = seed >>> 0;
@@ -21,31 +26,90 @@ function buildInjectionScript(fp) {
   const r2 = rng(NOISE + 2);
 
   // 把任意注入函数的 toString 伪造成 native code，对抗 chrome.csi.toString() 等源泄露检测。
-  function whiten(obj){
+  // STEP 23（CAP 嗅探特征消隐）：toString 必须保留函数名——原生格式是
+  // 「function getContext() { [native code] }」，此前无名的「function () { [native code] }」
+  // 本身就是可嗅探痕迹（真实原生函数均有名字）。
+  // 注意：V8 对「obj.prop = function(){}」不做函数名推断（实测 name=''），因此必须
+  // 在调用点显式传入原生函数名（explicitName），否则洗白结果仍是匿名格式。
+  function whiten(obj, explicitName){
     if (!obj) return;
     if (typeof obj === 'function') {
-      try { Object.defineProperty(obj, 'toString', { value: () => 'function () { [native code] }', configurable: true }); } catch (e) {}
+      try {
+        const n = obj.name || explicitName || '';
+        Object.defineProperty(obj, 'toString', { value: () => 'function ' + n + '() { [native code] }', configurable: true });
+      } catch (e) {}
       return;
     }
     if (typeof obj !== 'object') return;
     for (const k of Object.getOwnPropertyNames(obj)) {
       try {
         const v = obj[k];
-        if (typeof v === 'function') Object.defineProperty(v, 'toString', { value: () => 'function () { [native code] }', configurable: true });
+        if (typeof v === 'function') Object.defineProperty(v, 'toString', { value: () => 'function ' + (v.name || k) + '() { [native code] }', configurable: true });
         else if (v && typeof v === 'object') whiten(v);
       } catch (e) {}
     }
   }
+  // STEP 23：把 accessor getter 的 toString 洗白为原生格式「function get <key>() { [native code] }」，
+  // 使 Object.getOwnPropertyDescriptor(...).get.toString() 与原生完全一致。
+  function whitenGetter(obj, key){
+    try {
+      const d = Object.getOwnPropertyDescriptor(obj, key);
+      if (d && typeof d.get === 'function') {
+        Object.defineProperty(d.get, 'toString', { value: () => 'function get ' + key + '() { [native code] }', configurable: true });
+      }
+    } catch (e) {}
+  }
 
   // ---- navigator 基础属性 ----
+  // STEP 23（CAP 嗅探特征消隐）：覆盖必须落在 Navigator.prototype 上——真实 Chrome 的
+  // userAgent/platform/vendor/... 描述符在【原型】上（proto:native-get），此前在实例上
+  // own 定义导致 Object.getOwnPropertyDescriptor(navigator, k) 返回注入描述符
+  // （原生返回 undefined），描述符位置迁移本身就是可嗅探痕迹（Pixelscan Browser 卡
+  // 多浏览器特征签名的候选源）。同时每个 getter 的 toString 洗白为原生格式。
   try {
-    Object.defineProperty(navigator, 'userAgent', { get: () => FP.userAgent });
-    Object.defineProperty(navigator, 'platform', { get: () => FP.platform });
-    Object.defineProperty(navigator, 'vendor', { get: () => FP.vendor });
-    Object.defineProperty(navigator, 'language', { get: () => FP.language });
-    Object.defineProperty(navigator, 'languages', { get: () => FP.languages.slice() });
-    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => FP.hardwareConcurrency });
-    Object.defineProperty(navigator, 'deviceMemory', { get: () => FP.deviceMemory, configurable: true });
+    const NP = (typeof Navigator !== 'undefined') ? Navigator.prototype : navigator;
+    const nativeEnumerable = (key) => {
+      try {
+        const d = Object.getOwnPropertyDescriptor(Navigator.prototype, key) || Object.getOwnPropertyDescriptor(navigator, key);
+        return d ? !!d.enumerable : false;
+      } catch (e) { return false; }
+    };
+    const defNav = (key, getter) => {
+      Object.defineProperty(NP, key, { get: getter, configurable: true, enumerable: nativeEnumerable(key) });
+      whitenGetter(NP, key);
+    };
+    defNav('userAgent', () => FP.userAgent);
+    // Phase 16-B C3（navigator-identity）：platform 为 NATIVE_OWNED 时 JS 完全让位
+    // —— 不在 navigator 实例上创建 own property，原生 Navigator.prototype getter
+    // 生效；patched 二进制下原生 NavigatorBase::platform() 即 identity
+    // （--fp-platform switch，window/Worker/iframe 同 renderer 进程天然同源）。
+    // own descriptor 缺席性同时构成 JS 注入 vs 原生的判别依据（N-NAV-06）。
+    // gate 未开（stock 二进制 / manifest 未 flip）：保持 JS 生产 FP.platform
+    // 既有行为逐字节不变。
+    if (!NATIVE_OWNED_SET.has('navigator.platform')) {
+      defNav('platform', () => FP.platform);
+    }
+    defNav('vendor', () => FP.vendor);
+    defNav('language', () => FP.language);
+    defNav('languages', () => FP.languages.slice());
+    // Phase 16-B C4（hardwareConcurrency-identity）：hardwareConcurrency 为
+    // NATIVE_OWNED 时 JS 完全让位（同 C3 platform 让位模式）—— 原生
+    // NavigatorBase::hardwareConcurrency() 即 identity（--fp-hardware-concurrency
+    // switch，window/Worker/iframe 同 renderer 进程天然同源）。own descriptor
+    // 缺席性构成 JS 注入 vs 原生的判别依据（N-HC 矩阵）。gate 未开：保持 JS
+    // 生产 FP.hardwareConcurrency 既有行为逐字节不变。
+    if (!NATIVE_OWNED_SET.has('navigator.hardwareConcurrency')) {
+      defNav('hardwareConcurrency', () => FP.hardwareConcurrency);
+    }
+    // Phase 16-B C5（deviceMemory-identity）：deviceMemory 为 NATIVE_OWNED 时
+    // JS 完全让位（同 C3/C4 让位模式）—— 原生 NavigatorDeviceMemory::deviceMemory()
+    // 即 identity（--fp-device-memory switch，白名单 = Chromium 真实输出域
+    // {1,2,4,8,16,32}，window/Worker 天然同源）。own descriptor 缺席性构成
+    // JS 注入 vs 原生的判别依据（N-DM 矩阵）。gate 未开：保持 JS 生产
+    // FP.deviceMemory 既有行为逐字节不变。
+    if (!NATIVE_OWNED_SET.has('navigator.deviceMemory')) {
+      defNav('deviceMemory', () => FP.deviceMemory);
+    }
     // navigator.webdriver 伪造：真实浏览器在 Navigator.prototype 上以【不可枚举 getter】定义(返回 false)。
     // 错误的做法是 delete 原型后在实例上重定义——这会让
     // Object.getOwnPropertyDescriptor(Navigator.prototype, 'webdriver') 变为 undefined，
@@ -63,79 +127,150 @@ function buildInjectionScript(fp) {
         if (wdDesc && typeof wdDesc.get === 'function') whiten(wdDesc.get);
       }
     } catch (e) {}
-    Object.defineProperty(navigator, 'maxTouchPoints', { get: () => (FP.os === 'Android' || FP.os === 'iOS' ? 5 : 0) });
-    if (FP.doNotTrack !== null) Object.defineProperty(navigator, 'doNotTrack', { get: () => FP.doNotTrack ? '1' : '0' });
+    // Phase 16-B C6（maxTouchPoints-identity）：maxTouchPoints 为 NATIVE_OWNED 时
+    // JS 完全让位（同 C3/C4/C5 让位模式）—— 原生 NavigatorEvents::maxTouchPoints()
+    // 即 identity（--fp-max-touch-points switch，白名单 = 真实输出域 {0,5,10}）。
+    // own descriptor 缺席性构成 JS 注入 vs 原生的判别依据（N-MT 矩阵）。
+    // gate 未开：保持 JS 生产 FP.os 派生值既有行为逐字节不变。
+    if (!NATIVE_OWNED_SET.has('navigator.maxTouchPoints')) {
+      defNav('maxTouchPoints', () => (FP.os === 'Android' || FP.os === 'iOS' ? 5 : 0));
+    }
+    if (FP.doNotTrack !== null) defNav('doNotTrack', () => FP.doNotTrack ? '1' : '0');
+    // STEP 23：移除 navigator.deviceName / navigator.macAddress 注入——真实 Chrome 根本
+    // 没有这两个属性（'deviceName' in navigator === false），主动添加非原生属性本身就是
+    // 可嗅探痕迹。fp 数据模型中的 deviceName/mac 字段保留（integrity/模板契约不变），
+    // 只是不再暴露到页面 navigator 上。
   } catch(e){}
 
   // ---- navigator.userAgentData（User-Agent Client Hints）----
   // 仅改 navigator.userAgent 字符串不够：headless 模式下 navigator.userAgentData.brands 会暴露
   // "HeadlessChrome"，且 platform / uaFullVersion / fullVersionList 均可能与伪造的 UA 不一致。
   // 必须同步覆盖，使 brands/platform/version 与 UA 完全对齐，掐灭无头特征。
+  //
+  // P4.2：brands 唯一事实源 = 浏览器原生运行时（native browser value is the source of truth）。
+  // 优先回放 Node 侧在注入前捕获的原生 brands（FP._uaBrands，与 HTTP 层 setUserAgentOverride
+  // 逐字节同源）；无捕获时在 init 期直接读原生 navigator.userAgentData（init script 早于任何
+  // 页面脚本运行，此刻原生值尚未被覆盖）。两者都不可得（如 about:blank 无 UA-CH）则不覆盖，
+  // 保持浏览器原生——绝不硬编码 GREASE 字符串/版本表（Chrome 153+ 变更时自动跟随原生值，
+  // 见 .benchmark/step19_drift_probe.json 漂移取证）。
   try {
     const uaVer = (function(){ const p = FP.userAgent.split('Chrome/')[1]; if (!p) return '151.0.0.0'; return p.split(' ')[0] || '151.0.0.0'; })();
-    const majorVer = uaVer.split('.')[0];
     const osPlatform = (FP.os === 'Windows' ? 'Windows'
       : (FP.os === 'macOS' || FP.os === 'Mac') ? 'macOS'
       : FP.os === 'Linux' ? 'Linux'
       : FP.os === 'Android' ? 'Android'
       : FP.os === 'iOS' ? 'iOS' : 'Windows');
-    const brands = [
-      { brand: 'Google Chrome', version: majorVer },
-      { brand: 'Chromium', version: majorVer },
-      { brand: 'Not?A_Brand', version: '24' },
-    ];
-    const fullVersionList = [
-      { brand: 'Google Chrome', version: uaVer },
-      { brand: 'Chromium', version: uaVer },
-      { brand: 'Not?A_Brand', version: '24.0.0.0' },
-    ];
-    const Ctor = (typeof NavigatorUAData !== 'undefined') ? NavigatorUAData : null;
-    const uaDataObj = Ctor ? Object.create(Ctor.prototype) : {};
-    Object.defineProperty(uaDataObj, 'brands', { get: () => brands.slice() });
-    Object.defineProperty(uaDataObj, 'mobile', { get: () => false });
-    Object.defineProperty(uaDataObj, 'platform', { get: () => osPlatform });
-    uaDataObj.getHighEntropyValues = function(hints) {
-      return Promise.resolve({
-        brands: brands.slice(),
-        mobile: false,
-        platform: osPlatform,
-        platformVersion: '15.0.0',
-        architecture: 'x86',
-        bitness: '64',
-        model: '',
-        uaFullVersion: uaVer,
-        fullVersionList: fullVersionList.slice(),
-      });
-    };
-    whiten(uaDataObj.getHighEntropyValues);
-    Object.defineProperty(navigator, 'userAgentData', { get: () => uaDataObj, configurable: true });
+    let brands = null;
+    try {
+      if (FP._uaBrands && FP._uaBrands.length) {
+        brands = FP._uaBrands.map((b) => ({ brand: String(b.brand), version: String(b.version) }));
+      } else if (typeof navigator !== 'undefined' && navigator.userAgentData
+        && Array.isArray(navigator.userAgentData.brands) && navigator.userAgentData.brands.length) {
+        brands = Array.from(navigator.userAgentData.brands).map((b) => ({
+          // 既有产品契约：无头二进制原生 brands 中的 HeadlessChrome 呈现为 Google Chrome，
+          // 其余 brand/顺序/数量/版本逐项保留，不做任何其他替换。
+          brand: (b.brand === 'HeadlessChrome') ? 'Google Chrome' : String(b.brand),
+          version: String(b.version),
+        }));
+      }
+    } catch (e) { brands = null; }
+    if (brands) {
+      const nativeUaDataRef = (typeof navigator !== 'undefined' && navigator.userAgentData) ? navigator.userAgentData : null;
+      const fullVersionList = (FP._uaFullVersionList && FP._uaFullVersionList.length)
+        ? FP._uaFullVersionList.map((b) => ({ brand: String(b.brand), version: String(b.version) }))
+        : brands.map((b) => ({ brand: b.brand, version: /^\d+$/.test(b.version) ? b.version + '.0.0.0' : b.version }));
+      const Ctor = (typeof NavigatorUAData !== 'undefined') ? NavigatorUAData : null;
+      const uaDataObj = Ctor ? Object.create(Ctor.prototype) : {};
+      Object.defineProperty(uaDataObj, 'brands', { get: () => brands.slice() });
+      Object.defineProperty(uaDataObj, 'mobile', { get: () => false });
+      Object.defineProperty(uaDataObj, 'platform', { get: () => osPlatform });
+      whitenGetter(uaDataObj, 'brands');
+      whitenGetter(uaDataObj, 'mobile');
+      whitenGetter(uaDataObj, 'platform');
+      uaDataObj.getHighEntropyValues = function(hints) {
+        // Phase 16-B C2（platformversion-identity）：platformVersion 为 NATIVE_OWNED 时
+        // JS 不再生产该值（让位），改为从原生 userAgentData 回读——CDP override 缺省时
+        // emulation 层 merge 回退到 patched 原生值（=identity），无 override 时原生
+        // metadata 本身即 identity。原生值缺失时保留空串（诚实透传原生，不伪造、
+        // 不静默 fallback 到错误 identity）。C2 inactive：保持既有 '15.0.0' 行为。
+        const pvNativeOwned = NATIVE_OWNED_SET.has('navigator.userAgentData.platformVersion');
+        const base = {
+          brands: brands.slice(),
+          mobile: false,
+          platform: osPlatform,
+          platformVersion: pvNativeOwned ? '' : '15.0.0',
+          architecture: 'x86',
+          bitness: '64',
+          model: '',
+          uaFullVersion: uaVer,
+          fullVersionList: fullVersionList.slice(),
+        };
+        // fullVersionList 优先取原生值（CDP override 之后原生即回放值，仍与 brands 同源）
+        let nativeHev = null;
+        try {
+          if (nativeUaDataRef && typeof nativeUaDataRef.getHighEntropyValues === 'function') {
+            nativeHev = nativeUaDataRef.getHighEntropyValues(pvNativeOwned
+              ? ['fullVersionList', 'platformVersion']
+              : ['fullVersionList']);
+          }
+        } catch (e) {}
+        return Promise.resolve(nativeHev).then((nv) => {
+          try {
+            if (nv && Array.isArray(nv.fullVersionList) && nv.fullVersionList.length) {
+              base.fullVersionList = nv.fullVersionList.map((b) => ({
+                brand: (b.brand === 'HeadlessChrome') ? 'Google Chrome' : String(b.brand),
+                version: String(b.version),
+              }));
+            }
+            if (pvNativeOwned && nv && typeof nv.platformVersion === 'string' && nv.platformVersion) {
+              base.platformVersion = nv.platformVersion;
+            }
+          } catch (e) {}
+          return base;
+        });
+      };
+      whiten(uaDataObj.getHighEntropyValues, 'getHighEntropyValues');
+      // userAgentData 描述符放在 Navigator.prototype（原生在原型上），避免实例 own 描述符泄露注入痕迹。
+      const NP2 = (typeof Navigator !== 'undefined') ? Navigator.prototype : navigator;
+      Object.defineProperty(NP2, 'userAgentData', { get: () => uaDataObj, configurable: true });
+      whitenGetter(NP2, 'userAgentData');
+    }
+    // brands 不可得（原生缺失且无捕获回放）→ 不覆盖 userAgentData，保持浏览器原生双层同源。
   } catch(e){}
 
-  // ---- 设备名 / MAC（部分脚本可能尝试读取 chrome.runtime 或自定义属性，先覆盖常见探测点） ----
-  try {
-    Object.defineProperty(navigator, 'deviceName', { get: () => FP.deviceName });
-    Object.defineProperty(navigator, 'macAddress', { get: () => FP.mac });
-  } catch(e){}
+  // STEP 23：navigator.deviceName / navigator.macAddress 注入已移除——真实 Chrome 没有这两个
+  // 属性，主动添加非原生属性本身就是可嗅探痕迹（fp 数据模型字段保留，见上方 navigator 块注释）。
 
   // ---- 伪装 plugins / mimeTypes（二者必须一致，否则被识别为自动化） ----
   try {
     const ITER = (typeof Symbol !== 'undefined' && Symbol.iterator) ? Symbol.iterator : '__iter';
-    // 真实 Chrome 默认内置插件清单
-    const PLUGINS = [
-      { name: 'Chrome PDF Plugin', description: 'Portable Document Format', filename: 'internal-pdf-viewer2',
-        mimeTypes: [{ type: 'application/pdf', description: 'Portable Document Format', suffixes: 'pdf' }] },
-      { name: 'Chrome PDF Viewer', description: '', filename: 'internal-pdf-viewer',
-        mimeTypes: [{ type: 'application/pdf', description: '', suffixes: 'pdf' }] },
-      { name: 'Native Client', description: '', filename: 'internal-nacl-plugin',
-        mimeTypes: [{ type: 'application/x-nacl', description: '', suffixes: '' },
-                    { type: 'application/x-pnacl', description: '', suffixes: '' }] },
+    // STEP 23（关键修复）：插件清单现代化——此前是 Chrome ~90 时代的三个老插件
+    // （Chrome PDF Plugin / Chrome PDF Viewer / Native Client），真实 Chrome 151 报告
+    // 五个 PDF Viewer 系列插件。过时清单正是 Pixelscan「多浏览器特征签名 Chrome-22-28」
+    // 古老特征的头号嫌疑源（对照组实证：原生为 5 插件清单）。
+    // STEP 19 证据归因审计（B 类修复）：原生 Chrome 151 每个 PDF 插件 length=2
+    // （application/pdf + text/pdf），navigator.mimeTypes 仅 2 条**共享实例**
+    // （enabledPlugin 均指首个插件 'PDF Viewer'）。此前每插件独立 1 个 mimeType →
+    // navigator.mimeTypes.length=5，与原生 2 不符（3 模式对照实测）。
+    const MIME_DEFS = [
+      { type: 'application/pdf', description: 'Portable Document Format', suffixes: 'pdf' },
+      { type: 'text/pdf', description: 'Portable Document Format', suffixes: 'pdf' },
     ];
+    const PLUGIN_NAMES = ['PDF Viewer', 'Chrome PDF Viewer', 'Chromium PDF Viewer', 'Microsoft Edge PDF Viewer', 'WebKit built-in PDF'];
+    const PLUGINS = PLUGIN_NAMES.map((name) => ({
+      name, description: 'Portable Document Format', filename: 'internal-pdf-viewer',
+      mimeTypes: MIME_DEFS,
+    }));
     const PluginCtor = window.Plugin;
     const MimeTypeCtor = window.MimeType;
     const PluginArrayCtor = window.PluginArray;
     const MimeTypeArrayCtor = window.MimeTypeArray;
 
+    // STEP 19 审计（B 类）：同 type 的 MimeType 必须是**共享实例**（原生 Chrome 实证
+    // plugins[i].mimeTypes[0] === navigator.mimeTypes[0] 对所有 PDF 插件成立）。
+    const sharedMime = {};
     function makeMimeType(m, owner) {
+      if (sharedMime[m.type]) return sharedMime[m.type];
       const mt = MimeTypeCtor ? Object.create(MimeTypeCtor.prototype) : {};
       Object.defineProperties(mt, {
         type: { value: m.type },
@@ -143,6 +278,7 @@ function buildInjectionScript(fp) {
         suffixes: { value: m.suffixes || '' },
         enabledPlugin: { value: owner, configurable: true },
       });
+      sharedMime[m.type] = mt;
       return mt;
     }
 
@@ -172,7 +308,13 @@ function buildInjectionScript(fp) {
 
     const built = PLUGINS.map(makePlugin);
     const allMimeTypes = [];
-    built.forEach(({ inst, mts }) => mts.forEach((mt) => { try { Object.defineProperty(mt, 'enabledPlugin', { value: inst, configurable: true }); } catch (e) {} allMimeTypes.push(mt); }));
+    // STEP 19 审计（B 类）：enabledPlugin 只归首个遭遇该 mimeType 的插件（原生指 'PDF Viewer'）；
+    // allMimeTypes 共享实例去重 → navigator.mimeTypes.length = 2 与原生一致。
+    const epAssigned = new Set();
+    built.forEach(({ inst, mts }) => mts.forEach((mt) => {
+      try { if (!epAssigned.has(mt)) { Object.defineProperty(mt, 'enabledPlugin', { value: inst, configurable: true }); epAssigned.add(mt); } } catch (e) {}
+      if (!allMimeTypes.includes(mt)) allMimeTypes.push(mt);
+    }));
 
     const pa = PluginArrayCtor ? Object.create(PluginArrayCtor.prototype) : {};
     Object.defineProperties(pa, {
@@ -183,7 +325,9 @@ function buildInjectionScript(fp) {
       [ITER]: { value: function*() { for (const b of built) yield b.inst; } },
     });
     built.forEach((b, i) => { try { Object.defineProperty(pa, i, { value: b.inst, enumerable: false, configurable: true }); } catch (e) {} }); // 支持 navigator.plugins[i] 方括号访问（不可枚举）
-    Object.defineProperty(navigator, 'plugins', { get: () => pa, configurable: true });
+    const NPP = (typeof Navigator !== 'undefined') ? Navigator.prototype : navigator; // STEP 23：描述符迁原型（原生在原型上）
+    Object.defineProperty(NPP, 'plugins', { get: () => pa, configurable: true });
+    whitenGetter(NPP, 'plugins');
 
     const ma = MimeTypeArrayCtor ? Object.create(MimeTypeArrayCtor.prototype) : {};
     Object.defineProperties(ma, {
@@ -193,18 +337,24 @@ function buildInjectionScript(fp) {
       [ITER]: { value: function*() { for (const x of allMimeTypes) yield x; } },
     });
     allMimeTypes.forEach((mt, i) => { try { Object.defineProperty(ma, i, { value: mt, enumerable: false, configurable: true }); } catch (e) {} }); // 支持 navigator.mimeTypes[i] 方括号访问（不可枚举）
-    Object.defineProperty(navigator, 'mimeTypes', { get: () => ma, configurable: true });
+    Object.defineProperty(NPP, 'mimeTypes', { get: () => ma, configurable: true });
+    whitenGetter(NPP, 'mimeTypes');
   } catch(e){}
 
   // ---- Notification.permission 与 navigator.permissions.query 一致性 ----
   // 风控会同时读两者：若一个 denied 一个 default 即判定自动化。这里让 query 的结果
   // 始终与 Notification.permission 对齐，二者永不矛盾。
+  // STEP 19 证据归因审计（B 类修复）：原生 Chrome 的映射是 default→prompt、
+  // granted→granted、denied→denied（对照组实测：default+default 组合在原生不存在）。
+  // 此前直接回显 Notification.permission（default→default），本身就是非原生语义痕迹。
   try {
     if (window.Notification && navigator.permissions && navigator.permissions.query) {
       const realQuery = navigator.permissions.query.bind(navigator.permissions);
       navigator.permissions.query = function (descriptor) {
         if (descriptor && descriptor.name === 'notifications' && typeof window.Notification.permission === 'string') {
-          return Promise.resolve({ name: 'notifications', state: window.Notification.permission, onchange: null });
+          const p = window.Notification.permission;
+          const nativeState = p === 'default' ? 'prompt' : p; // 原生映射（实测对照组）
+          return Promise.resolve({ name: 'notifications', state: nativeState, onchange: null });
         }
         // 非 notifications 查询（含非法 name）交还原生，让其按标准抛出 TypeError，避免假代跑暴露。
         return realQuery(descriptor);
@@ -213,31 +363,58 @@ function buildInjectionScript(fp) {
   } catch (e) {}
 
   // ---- screen ----
+  // STEP 23：描述符迁移到 Screen.prototype（原生 screen.* 描述符在原型上，proto:native-get），
+  // 实例 own 定义会泄露注入痕迹；getter toString 洗白为原生格式。
   try {
     const s = FP.screen;
-    Object.defineProperty(screen, 'width', { get: () => s.width });
-    Object.defineProperty(screen, 'height', { get: () => s.height });
-    Object.defineProperty(screen, 'availWidth', { get: () => s.availWidth });
-    Object.defineProperty(screen, 'availHeight', { get: () => s.availHeight });
-    Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
-    Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
+    const SP = (typeof Screen !== 'undefined' && Screen.prototype) ? Screen.prototype : screen;
+    const defScreen = (key, getter) => {
+      Object.defineProperty(SP, key, { get: getter, configurable: true });
+      whitenGetter(SP, key);
+    };
+    defScreen('width', () => s.width);
+    defScreen('height', () => s.height);
+    defScreen('availWidth', () => s.availWidth);
+    defScreen('availHeight', () => s.availHeight);
+    defScreen('colorDepth', () => 24);
+    defScreen('pixelDepth', () => 24);
   } catch(e){}
   try {
     Object.defineProperty(window, 'devicePixelRatio', { get: () => FP.screen.pixelRatio, configurable: true });
-    Object.defineProperty(window, 'outerWidth', { get: () => FP.screen.availWidth, configurable: true });
-    Object.defineProperty(window, 'outerHeight', { get: () => FP.screen.availHeight, configurable: true });
+    // STEP 19 修复：outer 必须 >= inner（真实浏览器外框恒包含内容区；fullscreen/F11 下相等）。
+    // 此前 outerHeight=availHeight 会在 headless 大视口下出现 outerHeight < innerHeight 的
+    // 物理上不可能状态（实证：1040 < 1080），是 CreepJS headless 判分的强信号。
+    Object.defineProperty(window, 'outerWidth', { get: () => Math.max(FP.screen.availWidth, window.innerWidth | 0), configurable: true });
+    Object.defineProperty(window, 'outerHeight', { get: () => Math.max(FP.screen.availHeight, window.innerHeight | 0), configurable: true });
+    // STEP 23：window 尺寸类原生描述符就在实例上（own），位置已对齐，洗白 getter 即可。
+    whitenGetter(window, 'devicePixelRatio');
+    whitenGetter(window, 'outerWidth');
+    whitenGetter(window, 'outerHeight');
   } catch(e){}
+
+  // ---- Notification.permission 合理性（STEP 19）----
+  // headless Chromium 恒返回 'denied'（Windows 系统级禁用通知也会如此），而 fresh 身份的
+  // 真实 Chrome 只会是 'default'——'denied' 是 CreepJS headless 判据之一。
+  // 仅当真实值为 'denied' 时纠正为 'default'（用户显式授权过的 persistent profile 不动）。
+  // STEP 23：getter 洗白为原生格式（原生为 own:native-get）。
+  try {
+    if (window.Notification && window.Notification.permission === 'denied') {
+      Object.defineProperty(window.Notification, 'permission', { get: () => 'default', configurable: true });
+      whitenGetter(window.Notification, 'permission');
+    }
+  } catch (e) {}
 
   // ---- 时区：Playwright 已通过 timezoneId 参数设置原生时区，此处不再 JS 覆盖，避免 Pixelscan 识别为 spoof ----
   // 保留最小兜底：确保 resolvedOptions.timeZone 与 FP.timezone 一致（通常已由 Chromium 设置好）
   try {
     const TZ = FP.timezone;
     const origResolved = Intl.DateTimeFormat.prototype.resolvedOptions;
-    Intl.DateTimeFormat.prototype.resolvedOptions = function(...a){
+    Intl.DateTimeFormat.prototype.resolvedOptions = function resolvedOptions(...a){
       const opts = origResolved.apply(this, a);
       if (TZ) opts.timeZone = TZ;
       return opts;
     };
+    whiten(Intl.DateTimeFormat.prototype.resolvedOptions);
   } catch(e){}
 
   // ---- 地理位置 ----
@@ -579,22 +756,55 @@ function buildInjectionScript(fp) {
     }
   } catch (e) {}
 
+  // ---- fonts 身份消费（Phase 16-B §29 止血）----
+  // 缺口（Phase 16-A 审计发现 #2）：fp.fonts 生成后从未被任何页面 API 消费——字体探测
+  // 主 API document.fonts.check 一直反映宿主机真实字体，与 identity 无关。
+  // 本修复让特定字族可用性由 identity 驱动：FP.fonts 列表内 → 可用，不在 → 不可用；
+  // 通用字族（serif/monospace 等）与解析失败路径交还原生（fail-open，不改变通用族语义）。
+  // STEP 23 纪律：覆盖落在 FontFaceSet.prototype（原生描述符位置，避免实例 own 描述符泄露），
+  // 覆盖函数为具名函数 check 并洗白 toString 为原生格式。
+  try {
+    if (!NATIVE_OWNED_SET.has('fonts.check') && Array.isArray(FP.fonts) && FP.fonts.length && typeof FontFaceSet !== 'undefined' && typeof FontFaceSet.prototype.check === 'function') {
+      const FONT_SET = new Set(FP.fonts.map(function (f) { return String(f).trim().toLowerCase(); }));
+      const GENERIC_FAMILIES = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui', 'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded', 'math', 'fangsong', 'emoji']);
+      const nativeCheck = FontFaceSet.prototype.check;
+      // 从 font shorthand 截取 size 之后的 family 列表（'italic bold 12px/1.5 "A", B' → '"A", B'）。
+      // 注意：本函数整体位于 buildInjectionScript 的模板字面量内，反斜杠必须双份
+      //（单份会被模板吞掉 → 整个注入脚本 Invalid regular expression → 全部 hook 未安装）。
+      const familyList = (fontStr) => {
+        const m = fontStr.match(/(?:^|\\s)\\S*[\\d.]+(?:px|pt|pc|em|rem|ex|ch|vw|vh|vmin|vmax|q|cm|mm|in)(?:\\s*\\/\\s*\\S+)?\\s+([\\s\\S]+)$/i);
+        return m ? m[1] : fontStr;
+      };
+      const stripQuotes = (s) => s.replace(/^["']+|["']+$/g, '').trim();
+      FontFaceSet.prototype.check = function check(font, text) {
+        try {
+          if (typeof font !== 'string' || !font) return nativeCheck.apply(this, arguments);
+          // 空 text 探测：原生对任意字族恒返回 true（spec quirk）。保持与原生逐字节一致
+          //（返回 false 会制造与原生不同的行为面），identity 判定仅在真实文本探测时生效。
+          if (text === undefined || text === null || text === '') return nativeCheck.apply(this, arguments);
+          const fams = familyList(font).split(',').map(stripQuotes).filter(Boolean);
+          if (!fams.length) return nativeCheck.apply(this, arguments);
+          const resolved = fams.map((f) => f.toLowerCase());
+          // 仅通用字族 → 原生判定；含特定字族 → 全部命中 identity 列表才可用（identity 驱动）。
+          if (resolved.every((f) => GENERIC_FAMILIES.has(f))) return nativeCheck.apply(this, arguments);
+          return resolved.every((f) => GENERIC_FAMILIES.has(f) || FONT_SET.has(f));
+        } catch (e) {
+          return nativeCheck.apply(this, arguments);
+        }
+      };
+      whiten(FontFaceSet.prototype.check, 'check');
+    }
+    // FP.fonts 缺失/为空 → 不覆盖，保持浏览器原生（与 brands 双缺不覆盖契约一致）。
+  } catch (e) {}
+
   // ---- 关闭自动化特征 / 补齐浏览器对象 ----
+  // STEP 23：移除 chrome.runtime / chrome.webstore 注入——真实系统 Chrome 151（headful/hidden-
+  // headful）的 window.chrome 只有 loadTimes/csi/app 三个键（对照组实证），多余的 runtime/webstore
+  // mock 对象（getManifest 返回 {} 等）本身就是深度遍历型检测（Akamai/Cloudflare）的强痕迹。
+  // 旧注释场景（headless 补齐）已由 hidden-headful 模式（真实 Chrome 进程）取代。
   try {
     delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-    // headless 下 window.chrome 不完整，补齐关键子对象避免被 Akamai/Cloudflare/reCAPTCHA Enterprise 深度遍历标记
     if (!window.chrome) window.chrome = {};
-    if (!window.chrome.runtime) window.chrome.runtime = {
-      OnConnect: {}, OnMessage: {}, OnInstalled: {}, OnStartup: {}, OnSuspend: {},
-      connect: function () {
-        return { postMessage: function () {}, onMessage: { addListener: function () {} }, onDisconnect: { addListener: function () {} }, disconnect: function () {} };
-      },
-      sendMessage: function () { return Promise.resolve(); },
-      getURL: function () { return ''; },
-      getManifest: function () { return {}; },
-      id: '',
-    };
-    if (!window.chrome.webstore) window.chrome.webstore = { onInstallStageChanged: {}, onDownloadProgress: {}, getInstallStage: function () {}, beginInstall: function () {} };
     if (!window.chrome.app) window.chrome.app = {
       isInstalled: false,
       getIsInstalled: function () { return false; },
@@ -618,17 +828,25 @@ function buildInjectionScript(fp) {
   } catch(e){}
 
   // ---- 统一洗白所有注入函数的 toString：对抗 chrome.csi.toString() / 原型方法源码泄露 / permissions.query.toString() ----
+  // STEP 23：覆盖面补齐——geo / mediaDevices / speechSynthesis 的覆盖函数此前未纳入洗白
+  // （diff 实证 fn.geo.getCurrentPosition / fn.media.enumerateDevices / fn.media.getUserMedia /
+  // fn.speech.getVoices toString 直接暴露注入源码）。
   try {
     whiten(window.chrome);
-    if (navigator.permissions && navigator.permissions.query) whiten(navigator.permissions.query);
-    if (HTMLCanvasElement.prototype.getContext) whiten(HTMLCanvasElement.prototype.getContext);
-    if (HTMLCanvasElement.prototype.toDataURL) whiten(HTMLCanvasElement.prototype.toDataURL);
-    if (HTMLCanvasElement.prototype.toBlob) whiten(HTMLCanvasElement.prototype.toBlob);
-    if (Element.prototype.getBoundingClientRect) whiten(Element.prototype.getBoundingClientRect);
-    if (window.AudioContext && window.AudioContext.prototype.createAnalyser) whiten(window.AudioContext.prototype.createAnalyser);
-    if (window.WebGLRenderingContext) { whiten(WebGLRenderingContext.prototype.getParameter); whiten(WebGLRenderingContext.prototype.getExtension); }
-    if (window.WebGL2RenderingContext) { whiten(WebGL2RenderingContext.prototype.getParameter); whiten(WebGL2RenderingContext.prototype.getExtension); }
-    if (window.RTCPeerConnection) whiten(window.RTCPeerConnection);
+    if (navigator.permissions && navigator.permissions.query) whiten(navigator.permissions.query, 'query');
+    if (HTMLCanvasElement.prototype.getContext) whiten(HTMLCanvasElement.prototype.getContext, 'getContext');
+    if (HTMLCanvasElement.prototype.toDataURL) whiten(HTMLCanvasElement.prototype.toDataURL, 'toDataURL');
+    if (HTMLCanvasElement.prototype.toBlob) whiten(HTMLCanvasElement.prototype.toBlob, 'toBlob');
+    if (Element.prototype.getBoundingClientRect) whiten(Element.prototype.getBoundingClientRect, 'getBoundingClientRect');
+    if (window.AudioContext && window.AudioContext.prototype.createAnalyser) whiten(window.AudioContext.prototype.createAnalyser, 'createAnalyser');
+    if (window.WebGLRenderingContext) { whiten(WebGLRenderingContext.prototype.getParameter, 'getParameter'); whiten(WebGLRenderingContext.prototype.getExtension, 'getExtension'); }
+    if (window.WebGL2RenderingContext) { whiten(WebGL2RenderingContext.prototype.getParameter, 'getParameter'); whiten(WebGL2RenderingContext.prototype.getExtension, 'getExtension'); }
+    if (window.RTCPeerConnection) whiten(window.RTCPeerConnection, 'RTCPeerConnection');
+    if (navigator.geolocation && navigator.geolocation.getCurrentPosition) whiten(navigator.geolocation.getCurrentPosition, 'getCurrentPosition');
+    if (navigator.geolocation && navigator.geolocation.watchPosition) whiten(navigator.geolocation.watchPosition, 'watchPosition');
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) whiten(navigator.mediaDevices.enumerateDevices, 'enumerateDevices');
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) whiten(navigator.mediaDevices.getUserMedia, 'getUserMedia');
+    if (window.speechSynthesis && window.speechSynthesis.getVoices) whiten(window.speechSynthesis.getVoices, 'getVoices');
   } catch (e) {}
 })();`;
 }

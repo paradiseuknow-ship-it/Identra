@@ -1,0 +1,15 @@
+{
+  "id": "rw.053",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "榜单条目3",
+  "objective": "查看榜单确认「三星 S27A800」条目出现",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "三星 S27A800 出现在榜单中"
+  }
+}

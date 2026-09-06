@@ -27,6 +27,9 @@ class StoreInterface {
   transaction(fn) { throw new Error('not implemented'); }
   // 只保留最近 N 条
   trimCollection(name, keep) { throw new Error('not implemented'); }
+  // 归档最老 N 条到 archive 目录（不丢数据的水位治理，JSON 文件驱动专属：
+  // 全量重写型存储才需要；SQLite 等页式存储体积不随条数线性膨胀，默认 no-op）。
+  archiveOldest(name, count) { return { archived: 0, remaining: this.read(name, []) }; }
   // 事件追加（EventStore，仅保留最近 N）
   appendEvent(evt) { throw new Error('not implemented'); }
   // 增量取事件

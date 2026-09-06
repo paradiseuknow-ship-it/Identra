@@ -106,7 +106,11 @@ async function main() {
   }
   {
     const eff = verification.buildEffectiveVerification({ action: { type: 'navigate', target: { url: 'https://app.example.com/dashboard' } } });
-    ok(verification.verify(eff, OBS_DASH, OBS_DASH).success === true, 'B5: navigate(dashboard) url 命中 → 业务完成');
+    // P2 无效证据守卫：导航成功场景 before 必须是「动作前的旧页面」（OBS_FORM）。
+    // before=after=OBS_DASH 意味着 url_contains("dashboard") 在动作前已成立（恒真证据），
+    // 按 P2 契约不得作为本次导航成功的证明 —— 显式断言两种形态。
+    ok(verification.verify(eff, OBS_DASH, OBS_FORM).success === true, 'B5: navigate(dashboard) 从旧页导航后 url 命中 → 业务完成');
+    ok(verification.verify(eff, OBS_DASH, OBS_DASH).success === false, 'B5(P2): before=after 时 url_contains 已成立（恒真证据）→ 不得证明本次导航成功');
   }
   {
     const eff = verification.buildEffectiveVerification({ action: { type: 'click', target: { semantic: 'submit' }, verification: { type: 'action_success' } } });

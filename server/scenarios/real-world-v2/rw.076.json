@@ -1,0 +1,15 @@
+{
+  "id": "rw.076",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "多步确认1",
+  "objective": "搜索「机械键盘」→ 加入购物车 → 确认购物车数量变为 1",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "购物车计数变为 1"
+  }
+}

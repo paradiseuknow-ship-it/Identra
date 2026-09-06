@@ -83,7 +83,12 @@ function mockCtx(failureType, opts) {
   return {
     error: { failureType },
     observation: opts.beforeObs || null,
-    runAction: async (a) => { calls.push(a.type); return { success: true, observation: reObs }; },
+    runAction: async (a) => {
+      calls.push(a.type);
+      // failClicks：模拟真实 DOM_CHANGED——click 重定位探测失败（元素已变），仅 reload/观察类动作成功。
+      const okFlag = opts.failClicks ? a.type !== 'click' : true;
+      return { success: okFlag, observation: reObs };
+    },
     calls,
   };
 }
@@ -118,11 +123,15 @@ const step = { action: { type: 'click', target: { field: 'submit', semantic: 'su
   const retry = out.actions.find((a) => a.tool === 'retry_verify');
   ok(out.ok === true && retry && retry.targetObject === true, 'ACTION_REAL_FAILURE → 重执行且 target 对象保留');
 
-  // DOM_CHANGED：元素结构变化 → 语义重定位（reload + 重试）→ 重观察（wait + inspect）→ 真实重验证
-  ctx = mockCtx('DOM_CHANGED', { beforeObs: NOCHANGE_OBS, reObs: NOCHANGE_OBS });
+  // DOM_CHANGED：元素结构变化 → R2 非破坏语义重定位（活跃 DOM 探测失败 → reload 最后手段）
+  //   → 重观察（wait + inspect）→ 真实重验证（未通过则 ok=false，不 silent-pass）。
+  //   R2 契约追加断言：reload 不得先于语义探测（探测先行，客户端状态零破坏优先）。
+  ctx = mockCtx('DOM_CHANGED', { beforeObs: NOCHANGE_OBS, reObs: NOCHANGE_OBS, failClicks: true });
   const stepDC = { action: { type: 'click', target: { field: 'submit', semantic: 'submit' } }, verification: { type: 'text_present', expect: 'nope' } };
   out = await verifyFailed.execute({ task: {}, step: stepDC, ctx });
-  ok(out.ok === false && ctx.calls.includes('reload') && ctx.calls.includes('inspect'), 'DOM_CHANGED → 语义重定位(reload) + 重观察(inspect) + 真实重验证（未通过则 ok=false，不 silent-pass）');
+  ok(out.ok === false && ctx.calls.includes('reload') && ctx.calls.includes('inspect')
+    && ctx.calls.indexOf('reload') > ctx.calls.indexOf('click'),
+    'DOM_CHANGED → 零破坏语义探测先行 + reload 最后手段 + 重观察(inspect) + 真实重验证（ok=false，不 silent-pass）');
 
   console.log('\n---------------------------------------------------');
   console.log('PASS=' + pass + '  FAIL=' + fail);

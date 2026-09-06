@@ -1,0 +1,15 @@
+{
+  "id": "rw.058",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "表格填写3",
+  "objective": "填写表单姓名王五、邮箱 w@x.io 并提交，确认注册成功",
+  "fixture": "data_entry/form.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "注册成功，欢迎 王五 提示出现"
+  }
+}

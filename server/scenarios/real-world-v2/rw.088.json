@@ -1,0 +1,19 @@
+{
+  "id": "rw.088",
+  "credentialRequirement": "required",
+  "riskLevel": "HIGH",
+  "credentialRef": "saas_demo",
+  "category": "longflow",
+  "name": "SPA多页3",
+  "objective": "登录控制台并完成从看板确认到导出 CSV 的完整链路",
+  "fixture": "saas/login.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "报表已导出提示出现"
+  },
+  "credentialValue": {
+    "email": "ops@cloudsaas.io",
+    "password": "Saas#2024"
+  }
+}

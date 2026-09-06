@@ -1,0 +1,725 @@
+{
+  "at": "2026-08-30T03:31:25.410Z",
+  "modes": {
+    "product-headless": {
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.174 Safari/537.36",
+      "uaHeadlessLike": false,
+      "webdriver": false,
+      "platformNav": "Win32",
+      "mimeTypes": {
+        "length": 2,
+        "loc": "proto:native-get",
+        "getterNative": true
+      },
+      "plugins": {
+        "length": 5,
+        "names": [
+          "PDF Viewer",
+          "Chrome PDF Viewer",
+          "Chromium PDF Viewer",
+          "Microsoft Edge PDF Viewer",
+          "WebKit built-in PDF"
+        ],
+        "loc": "proto:native-get"
+      },
+      "screen": {
+        "w": 3840,
+        "h": 2160,
+        "availW": 3840,
+        "availH": 2120,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "dpr": 3
+      },
+      "window": {
+        "outerW": 3840,
+        "outerH": 2160,
+        "innerW": 3840,
+        "innerH": 2160,
+        "screenX": 10,
+        "screenY": 10
+      },
+      "outerGeInner": true,
+      "notification": {
+        "permission": "default"
+      },
+      "permissionsNotification": "prompt",
+      "windowChrome": {
+        "keys": [
+          "loadTimes",
+          "csi",
+          "app"
+        ],
+        "hasApp": true,
+        "hasRuntime": false,
+        "hasCsi": true,
+        "hasLoadTimes": true
+      },
+      "connection": {
+        "effectiveType": "4g",
+        "downlink": 1.45,
+        "rtt": 100,
+        "type": null
+      },
+      "contactsManager": false,
+      "contentIndex": false,
+      "deviceMemory": 16,
+      "hardwareConcurrency": 15,
+      "webgl": {
+        "vendor": "Google Inc. (Intel)",
+        "renderer": "ANGLE (Intel, Intel(R) Iris(TM) Plus Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "unmaskedVendor": "Google Inc. (Intel)",
+        "unmaskedRenderer": "ANGLE (Intel, Intel(R) Iris(TM) Plus Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)"
+      },
+      "webgpu": {
+        "exists": true,
+        "info": "adapter-ok"
+      },
+      "mediaDevices": {
+        "count": 3,
+        "kinds": [
+          "audioinput",
+          "audiooutput",
+          "videoinput"
+        ]
+      },
+      "speechVoices": 3,
+      "fonts": {
+        "checked": 10,
+        "available": 10,
+        "sample": [
+          "Arial",
+          "Courier New",
+          "Georgia",
+          "Times New Roman",
+          "Verdana"
+        ]
+      },
+      "userAgentData": {
+        "brands": [
+          "Not=A?Brand|99",
+          "Google Chrome|151",
+          "Chromium|151"
+        ],
+        "mobile": false,
+        "platform": "Windows"
+      },
+      "uaHighEntropy": {
+        "brands": [
+          {
+            "brand": "Not=A?Brand",
+            "version": "99"
+          },
+          {
+            "brand": "Google Chrome",
+            "version": "151"
+          },
+          {
+            "brand": "Chromium",
+            "version": "151"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "15.0.0",
+        "architecture": "x86",
+        "bitness": "64",
+        "model": "",
+        "uaFullVersion": "151.0.7922.174",
+        "fullVersionList": [
+          {
+            "brand": "Not=A?Brand",
+            "version": "99.0.0.0"
+          },
+          {
+            "brand": "Google Chrome",
+            "version": "151.0.7922.174"
+          },
+          {
+            "brand": "Chromium",
+            "version": "151.0.7922.174"
+          }
+        ]
+      },
+      "timezone": "Europe/Paris",
+      "language": "ja-JP",
+      "languages": [
+        "ja-JP",
+        "ja",
+        "en-US",
+        "en"
+      ],
+      "rtcPeerConnection": true,
+      "iframe": {
+        "w": 503.9995367189217,
+        "h": 303.98383487625046,
+        "contentInnerW": 500,
+        "contentInnerH": 300
+      },
+      "headlessApiSurface": {
+        "hasHeadlessUA": false,
+        "notificationPermission": "default",
+        "pluginsEmpty": false,
+        "mimeTypesEmpty": false,
+        "missingWindowChromeApp": false
+      }
+    },
+    "product-hidden-headful": {
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.174 Safari/537.36",
+      "uaHeadlessLike": false,
+      "webdriver": false,
+      "platformNav": "Win32",
+      "mimeTypes": {
+        "length": 2,
+        "loc": "proto:native-get",
+        "getterNative": true
+      },
+      "plugins": {
+        "length": 5,
+        "names": [
+          "PDF Viewer",
+          "Chrome PDF Viewer",
+          "Chromium PDF Viewer",
+          "Microsoft Edge PDF Viewer",
+          "WebKit built-in PDF"
+        ],
+        "loc": "proto:native-get"
+      },
+      "screen": {
+        "w": 1366,
+        "h": 768,
+        "availW": 1366,
+        "availH": 728,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "dpr": 1.5
+      },
+      "window": {
+        "outerW": 1366,
+        "outerH": 768,
+        "innerW": 1366,
+        "innerH": 768,
+        "screenX": -27355,
+        "screenY": -27354
+      },
+      "outerGeInner": true,
+      "notification": {
+        "permission": "default"
+      },
+      "permissionsNotification": "prompt",
+      "windowChrome": {
+        "keys": [
+          "loadTimes",
+          "csi",
+          "app"
+        ],
+        "hasApp": true,
+        "hasRuntime": false,
+        "hasCsi": true,
+        "hasLoadTimes": true
+      },
+      "connection": {
+        "effectiveType": "4g",
+        "downlink": 1.45,
+        "rtt": 100,
+        "type": null
+      },
+      "contactsManager": false,
+      "contentIndex": false,
+      "deviceMemory": 8,
+      "hardwareConcurrency": 4,
+      "webgl": {
+        "vendor": "Google Inc. (Intel)",
+        "renderer": "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "unmaskedVendor": "Google Inc. (Intel)",
+        "unmaskedRenderer": "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)"
+      },
+      "webgpu": {
+        "exists": true,
+        "info": "adapter-ok"
+      },
+      "mediaDevices": {
+        "count": 3,
+        "kinds": [
+          "audioinput",
+          "audiooutput",
+          "videoinput"
+        ]
+      },
+      "speechVoices": 3,
+      "fonts": {
+        "checked": 10,
+        "available": 10,
+        "sample": [
+          "Arial",
+          "Courier New",
+          "Georgia",
+          "Times New Roman",
+          "Verdana"
+        ]
+      },
+      "userAgentData": {
+        "brands": [
+          "Not=A?Brand|99",
+          "Google Chrome|151",
+          "Chromium|151"
+        ],
+        "mobile": false,
+        "platform": "Windows"
+      },
+      "uaHighEntropy": {
+        "brands": [
+          {
+            "brand": "Not=A?Brand",
+            "version": "99"
+          },
+          {
+            "brand": "Google Chrome",
+            "version": "151"
+          },
+          {
+            "brand": "Chromium",
+            "version": "151"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "15.0.0",
+        "architecture": "x86",
+        "bitness": "64",
+        "model": "",
+        "uaFullVersion": "151.0.7922.174",
+        "fullVersionList": [
+          {
+            "brand": "Not=A?Brand",
+            "version": "99.0.0.0"
+          },
+          {
+            "brand": "Google Chrome",
+            "version": "151.0.7922.174"
+          },
+          {
+            "brand": "Chromium",
+            "version": "151.0.7922.174"
+          }
+        ]
+      },
+      "timezone": "Europe/Berlin",
+      "language": "es-ES",
+      "languages": [
+        "es-ES",
+        "es",
+        "en-US",
+        "en"
+      ],
+      "rtcPeerConnection": true,
+      "iframe": {
+        "w": 503.3318249803595,
+        "h": 303.34527656990105,
+        "contentInnerW": 500,
+        "contentInnerH": 300
+      },
+      "headlessApiSurface": {
+        "hasHeadlessUA": false,
+        "notificationPermission": "default",
+        "pluginsEmpty": false,
+        "mimeTypesEmpty": false,
+        "missingWindowChromeApp": false
+      }
+    },
+    "control-headed": {
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+      "uaHeadlessLike": false,
+      "webdriver": true,
+      "platformNav": "Win32",
+      "mimeTypes": {
+        "length": 2,
+        "loc": "proto:native-get",
+        "getterNative": true
+      },
+      "plugins": {
+        "length": 5,
+        "names": [
+          "PDF Viewer",
+          "Chrome PDF Viewer",
+          "Chromium PDF Viewer",
+          "Microsoft Edge PDF Viewer",
+          "WebKit built-in PDF"
+        ],
+        "loc": "proto:native-get"
+      },
+      "screen": {
+        "w": 1280,
+        "h": 720,
+        "availW": 1280,
+        "availH": 720,
+        "colorDepth": 24,
+        "pixelDepth": 24,
+        "dpr": 1.0000000282960073
+      },
+      "window": {
+        "outerW": 1298,
+        "outerH": 855,
+        "innerW": 1280,
+        "innerH": 720,
+        "screenX": 10,
+        "screenY": 10
+      },
+      "outerGeInner": true,
+      "notification": {
+        "permission": "default"
+      },
+      "permissionsNotification": "prompt",
+      "windowChrome": {
+        "keys": [
+          "loadTimes",
+          "csi",
+          "app"
+        ],
+        "hasApp": true,
+        "hasRuntime": false,
+        "hasCsi": true,
+        "hasLoadTimes": true
+      },
+      "connection": {
+        "effectiveType": "4g",
+        "downlink": 1.5,
+        "rtt": 100,
+        "type": null
+      },
+      "contactsManager": false,
+      "contentIndex": false,
+      "deviceMemory": 32,
+      "hardwareConcurrency": 20,
+      "webgl": {
+        "vendor": "WebKit",
+        "renderer": "WebKit WebGL",
+        "unmaskedVendor": "Google Inc. (NVIDIA)",
+        "unmaskedRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5060 Ti (0x00002D04) Direct3D11 vs_5_0 ps_5_0, D3D11)"
+      },
+      "webgpu": {
+        "exists": true,
+        "info": "adapter-ok"
+      },
+      "mediaDevices": {
+        "count": 3,
+        "kinds": [
+          "audioinput",
+          "videoinput",
+          "audiooutput"
+        ]
+      },
+      "speechVoices": 0,
+      "fonts": {
+        "checked": 10,
+        "available": 10,
+        "sample": [
+          "Arial",
+          "Courier New",
+          "Georgia",
+          "Times New Roman",
+          "Verdana"
+        ]
+      },
+      "userAgentData": {
+        "brands": [
+          "Not=A?Brand|99",
+          "Google Chrome|151",
+          "Chromium|151"
+        ],
+        "mobile": false,
+        "platform": "Windows"
+      },
+      "uaHighEntropy": {
+        "architecture": "x86",
+        "bitness": "64",
+        "brands": [
+          {
+            "brand": "Not=A?Brand",
+            "version": "99"
+          },
+          {
+            "brand": "Google Chrome",
+            "version": "151"
+          },
+          {
+            "brand": "Chromium",
+            "version": "151"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Not=A?Brand",
+            "version": "99.0.0.0"
+          },
+          {
+            "brand": "Google Chrome",
+            "version": "151.0.7922.174"
+          },
+          {
+            "brand": "Chromium",
+            "version": "151.0.7922.174"
+          }
+        ],
+        "mobile": false,
+        "model": "",
+        "platform": "Windows",
+        "platformVersion": "19.0.0",
+        "uaFullVersion": "151.0.7922.174"
+      },
+      "timezone": "Asia/Shanghai",
+      "language": "zh-CN",
+      "languages": [
+        "zh-CN",
+        "zh"
+      ],
+      "rtcPeerConnection": true,
+      "iframe": {
+        "w": 503.3348083496094,
+        "h": 303.3391418457031,
+        "contentInnerW": 500,
+        "contentInnerH": 300
+      },
+      "headlessApiSurface": {
+        "hasHeadlessUA": false,
+        "notificationPermission": "default",
+        "pluginsEmpty": false,
+        "mimeTypesEmpty": false,
+        "missingWindowChromeApp": false
+      }
+    }
+  },
+  "contractChecks": {
+    "product-headless": [
+      {
+        "name": "ua === fp.userAgent",
+        "expected": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.174 Safari/537.36",
+        "actual": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.174 Safari/537.36",
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "Intl timezone === fp.timezone",
+        "expected": "Europe/Paris",
+        "actual": "Europe/Paris",
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "languages === fp.languages",
+        "expected": [
+          "ja-JP",
+          "ja",
+          "en-US",
+          "en"
+        ],
+        "actual": [
+          "ja-JP",
+          "ja",
+          "en-US",
+          "en"
+        ],
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "platform === fp.platform",
+        "expected": "Win32",
+        "actual": "Win32",
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "hardwareConcurrency === fp.hardwareConcurrency",
+        "expected": 15,
+        "actual": 15,
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "deviceMemory === fp.deviceMemory",
+        "expected": 16,
+        "actual": 16,
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "screen w/h === fp.screen",
+        "expected": [
+          3840,
+          2160
+        ],
+        "actual": [
+          3840,
+          2160
+        ],
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "availW/H === fp.screen",
+        "expected": [
+          3840,
+          2120
+        ],
+        "actual": [
+          3840,
+          2120
+        ],
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "devicePixelRatio === fp.screen.pixelRatio",
+        "expected": 3,
+        "actual": 3,
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "webgl renderer === fp.webgl.renderer",
+        "expected": "ANGLE (Intel, Intel(R) Iris(TM) Plus Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "actual": "ANGLE (Intel, Intel(R) Iris(TM) Plus Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "outer>=inner（物理可能）",
+        "expected": true,
+        "actual": true,
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "Notification.permission === default（fresh Chromium 真实值）",
+        "expected": "default",
+        "actual": "default",
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "webdriver === false",
+        "expected": false,
+        "actual": false,
+        "pass": true,
+        "note": null
+      }
+    ],
+    "product-hidden-headful": [
+      {
+        "name": "ua === fp.userAgent",
+        "expected": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.174 Safari/537.36",
+        "actual": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.174 Safari/537.36",
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "Intl timezone === fp.timezone",
+        "expected": "Europe/Berlin",
+        "actual": "Europe/Berlin",
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "languages === fp.languages",
+        "expected": [
+          "es-ES",
+          "es",
+          "en-US",
+          "en"
+        ],
+        "actual": [
+          "es-ES",
+          "es",
+          "en-US",
+          "en"
+        ],
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "platform === fp.platform",
+        "expected": "Win32",
+        "actual": "Win32",
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "hardwareConcurrency === fp.hardwareConcurrency",
+        "expected": 4,
+        "actual": 4,
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "deviceMemory === fp.deviceMemory",
+        "expected": 8,
+        "actual": 8,
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "screen w/h === fp.screen",
+        "expected": [
+          1366,
+          768
+        ],
+        "actual": [
+          1366,
+          768
+        ],
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "availW/H === fp.screen",
+        "expected": [
+          1366,
+          728
+        ],
+        "actual": [
+          1366,
+          728
+        ],
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "devicePixelRatio === fp.screen.pixelRatio",
+        "expected": 1.5,
+        "actual": 1.5,
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "webgl renderer === fp.webgl.renderer",
+        "expected": "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "actual": "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "outer>=inner（物理可能）",
+        "expected": true,
+        "actual": true,
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "Notification.permission === default（fresh Chromium 真实值）",
+        "expected": "default",
+        "actual": "default",
+        "pass": true,
+        "note": null
+      },
+      {
+        "name": "webdriver === false",
+        "expected": false,
+        "actual": false,
+        "pass": true,
+        "note": null
+      }
+    ],
+    "control-headed": null
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.055",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "榜单条目5",
+  "objective": "查看榜单确认「AOC U27U2」条目出现",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "AOC U27U2 出现在榜单中"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.077",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "多步确认2",
+  "objective": "搜索「无线鼠标」→ 加购 → 再搜索「机械键盘」→ 加购 → 确认购物车数量为 2",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "购物车计数变为 2"
+  }
+}

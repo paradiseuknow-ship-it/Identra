@@ -6,7 +6,8 @@
 //          → Recorder → Event → 返回统一结果 { success, result, observation, error }。
 
 const browserManager = require('../browserManager');
-const { validateAction } = require('./schema/action');
+// resolveUploadPath：upload 的文件路径白名单（schema 校验一次，这里是执行前的最后一道门）
+const { validateAction, resolveUploadPath } = require('./schema/action');
 const policy = require('./policy');
 const lock = require('./lock');
 const events = require('./events');
@@ -18,6 +19,8 @@ const pageStateClassifier = require('./pageStateClassifier');
 const contextGuard = require('./contextGuard');
 const pageReady = require('./pageReady');
 const secretManager = require('./secretManager');
+// CAP-L1：通用支付字段识别与取值（只有这里能决定「卡号的哪一段填进哪个框」）
+const paymentField = require('./paymentField');
 const elementMemory = require('./intelligence/elementMemory');
 const taskManager = require('./taskManager');
 const evidence = require('./evidence');
@@ -201,16 +204,19 @@ async function execute(input) {
     } catch (e) { pageStateObs = null; }
     if (pageStateObs && pageStateObs.observation) {
       const ps = pageStateClassifier.classify(pageStateObs.observation);
-      const expectedSite = contextGuard.deriveExpectedSite(v.action);
-      // Phase 9 P0：把原始 observation 交给守卫做证据裁决（GENERIC 不再无条件阻断）。
-      const g = contextGuard.guard(v.action, ps, expectedSite, { observation: pageStateObs.observation });
-      // 只读 telemetry：守卫决策留痕，供 P1 归因（不改变任何行为语义）。
+      // STEP 1 去站点化：守卫不再接收「期望站点」，只接收可观察的页面能力。
+      // 动作目标（upload/download/payment/auth/registration）由动作本身推导，属通用 Web 语义。
+      const actionGoal = contextGuard.deriveActionGoal(v.action);
+      const g = contextGuard.guard(v.action, ps, { observation: pageStateObs.observation });
+      // 只读 telemetry：守卫决策留痕，供归因分析（不改变任何行为语义）。
       const guardTelemetry = {
         pageState: ps.state,
         pageStateConfidence: ps.confidence,
-        expectedSite,
+        pageCapabilities: ps.capabilities || [],
+        actionGoal,
         guardMode: g.guardMode || (g.blocked ? 'blocked' : 'pass'),
-        evidence: g.evidence ? { score: g.evidence.score, signals: g.evidence.signals, structural: g.evidence.structural } : null,
+        goal: g.goal || null,
+        evidence: g.evidence || null,
       };
       if (g.blocked) {
         recorder.recordAction(executionId, {
@@ -327,6 +333,40 @@ function makeLocator(page, selector) {
   return cur;
 }
 
+// 带自超时的 locator 计数。探测类调用一律走这里：它们失败只应导致"退化到下一个候选"，
+// 绝不能把 Runtime 挂住 —— 因此刻意不用 withBrowserOp（它超时会抛，
+// 会把"没有增强信息"变成"动作失败"，与 fail-open 原则相反）。
+async function probeCount(page, selector, ms = 3000) {
+  let timer = null;
+  const bail = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('probeCount 探测超时')), ms); });
+  try {
+    return await Promise.race([page.locator(selector).count(), bail]);
+  } catch (e) {
+    return 0; // 选择器语法非法 / 超时 → 记为未命中
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// drag 的放置目标（action.value）：模型可能给 CSS 选择器、语义描述、或干脆给可见文字。
+// 三级兜底，逐级放宽：
+//   ① CSS 选择器 —— 最精确，模型直接给出时优先用；
+//   ② 语义解析（复用 semanticResolver）—— 观察集里有该元素时可用；
+//   ③ 文本引擎 —— 放置区常常是纯 <div> 容器，不可交互、无 role，observation 采不到
+//      （即便已把 draggable="true" 收进来，放置区通常也不 draggable），
+//      于是 ② 必然落空。而"拖到写着「回收站」的那块地方"恰恰是模型最自然的表达，
+//      必须有出路。
+async function resolveDropTarget(page, obs, value) {
+  const v = String(value == null ? '' : value).trim();
+  if (!v) return null;
+  if ((await probeCount(page, v)) > 0) return v;
+  const cands = semanticResolver.resolve({ semantic: v, text: v }, obs);
+  if (cands && cands.length) return cands[0].selector;
+  const textSel = 'text=' + v;
+  if ((await probeCount(page, textSel)) > 0) return textSel;
+  return null;
+}
+
 async function runTool(action, resolved, meta) {
   const { page } = resolved;
 
@@ -352,14 +392,45 @@ async function runTool(action, resolved, meta) {
     }
     case 'scroll': {
       const deltaY = Number(action.value) || 400;
-      await withBrowserOp('scroll', page, meta.taskId, () => browserManager.humanScroll(page, deltaY, {}));
-      return RESULT.ok({ deltaY }, null, null);
+      // STEP 7：scroll 此前完全忽略 action.target，只滚主文档。
+      // 真实站点上"把 iframe 里的列表/表单滚到可见"是刚需，而 schema 又强制要求 target ——
+      // 于是 target 是个死参数。现在解析出目标就滚目标（frame 内用 scrollIntoViewIfNeeded，
+      // 普通元素用 scrollBy），解析不出就退回原来的滚页面，既有行为不退化。
+      let scrolled = 'page';
+      const hasEl = Object.keys(action.target || {}).length > 0;
+      if (hasEl) {
+        const obs = await withBrowserOp('scroll.inspect', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId }));
+        const sel = await resolveSelector(action, obs.observation, meta, page);
+        if (sel) {
+          scrolled = sel.selector.indexOf(' >> ') >= 0 ? 'frame' : 'element';
+          if (scrolled === 'frame') {
+            await withBrowserOp('scroll.frame', page, meta.taskId, () => makeLocator(page, sel.selector).scrollIntoViewIfNeeded({ timeout: Math.min(action.timeoutMs || 15000, TOOL_OP_TIMEOUT_MS) }));
+          } else {
+            await withBrowserOp('scroll.element', page, meta.taskId, () => page.locator(sel.selector).evaluate((el, dy) => { if (el && typeof el.scrollBy === 'function') el.scrollBy(0, dy); }, deltaY));
+          }
+        }
+      }
+      if (scrolled === 'page') {
+        await withBrowserOp('scroll', page, meta.taskId, () => browserManager.humanScroll(page, deltaY, {}));
+      }
+      const obsS = await withBrowserOp('scroll.inspect2', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId, skipCache: true }));
+      return RESULT.ok({ deltaY, scrolled }, obsS.observation, null);
     }
     case 'press': {
-      await withBrowserOp('press', page, meta.taskId, () => page.keyboard.press(action.value || 'Enter'));
+      const key = action.value || 'Enter';
+      // STEP 7：press 此前同样忽略 target，直接 page.keyboard.press() —— 键盘事件只发给当前焦点，
+      // 因此「在 iframe 内的搜索框里按回车 / 在指定输入框里按 Tab」根本无法实现。
+      // 现在先按 target 聚焦（跨 frame 走 makeLocator，与 click/fill 同一套寻址），
+      // 解析不出来就退回全局按键，保证既有行为不退化。
+      const obs = await withBrowserOp('press.inspect', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId }));
+      const sel = await resolveSelector(action, obs.observation, meta, page);
+      if (sel) {
+        await withBrowserOp('press.focus', page, meta.taskId, () => makeLocator(page, sel.selector).focus({ timeout: Math.min(action.timeoutMs || 10000, TOOL_OP_TIMEOUT_MS) }));
+      }
+      await withBrowserOp('press', page, meta.taskId, () => page.keyboard.press(key));
       await withBrowserOp('press.wait', page, meta.taskId, () => page.waitForTimeout(300));
-      const obs = await withBrowserOp('press.inspect', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId, skipCache: true }));
-      return RESULT.ok({ key: action.value }, obs.observation, obs.observation);
+      const obsP = await withBrowserOp('press.inspect2', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId, skipCache: true }));
+      return RESULT.ok({ key, focused: sel ? sel.selector : null }, obsP.observation, obs.ok ? obs.observation : null);
     }
     case 'screenshot': {
       const b64 = await withBrowserOp('screenshot', page, meta.taskId, () => page.screenshot({ encoding: 'base64' }));
@@ -386,6 +457,39 @@ async function runTool(action, resolved, meta) {
       await withBrowserOp('click.wait', page, meta.taskId, () => page.waitForTimeout(300));
       const after = await withBrowserOp('click.inspect2', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId, skipCache: true }));
       return RESULT.ok({ clicked: sel.selector, element: sel.pattern }, after.observation, beforeObs);
+    }
+    // STEP 7 / CAP-F2：悬浮。真实网站大量导航在 mouseover 才展开（多级菜单、表格行操作、
+    // 卡片 hover 按钮）。没有 hover 时，模型唯一的替代是去 click 一个尚未存在的元素，
+    // 直接得到 ELEMENT_NOT_FOUND —— 这不是模型笨，是动作集缺了一半。
+    case 'hover': {
+      const obs = await withBrowserOp('hover.inspect', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId }));
+      const beforeObs = obs.ok ? obs.observation : null;
+      const sel = await resolveSelector(action, obs.observation, meta, page);
+      if (!sel) return RESULT.error('ELEMENT_NOT_FOUND', '未找到悬浮目标: ' + (action.target.semantic || action.target.text || '?'));
+      // 统一走 makeLocator：跨 frame 的 ' >> ' 选择器同样可悬浮，不需另写分支
+      await withBrowserOp('hover', page, meta.taskId, () => makeLocator(page, sel.selector).hover({ timeout: Math.min(action.timeoutMs || 15000, TOOL_OP_TIMEOUT_MS) }));
+      // 悬浮的唯一目的是"把隐藏内容显示出来"，因此必须等一拍再采集：
+      // 立刻 inspect 会抓到菜单展开前的中间态，等于这一步白做，后续 click 依旧找不到元素。
+      await withBrowserOp('hover.wait', page, meta.taskId, () => page.waitForTimeout(400));
+      const after = await withBrowserOp('hover.inspect2', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId, skipCache: true }));
+      return RESULT.ok({ hovered: sel.selector, element: sel.pattern }, after.observation, beforeObs);
+    }
+    // STEP 7 / CAP-F2：拖拽。看板挪卡片、拖拽排序、拖拽上传区、滑块验证码后的排序题，
+    // 都是"必须 drag 否则做不了"的场景。
+    case 'drag': {
+      const obs = await withBrowserOp('drag.inspect', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId }));
+      const beforeObs = obs.ok ? obs.observation : null;
+      const sel = await resolveSelector(action, obs.observation, meta, page);
+      if (!sel) return RESULT.error('ELEMENT_NOT_FOUND', '未找到拖拽源: ' + (action.target.semantic || action.target.text || '?'));
+      const dst = await resolveDropTarget(page, obs.observation, action.value);
+      if (!dst) return RESULT.error('DROP_TARGET_NOT_FOUND', '未找到拖拽放置目标: ' + String(action.value || '').slice(0, 120));
+      // locator.dragTo(locator) 同时支持普通选择器与跨 frame 的 ' >> ' 选择器；
+      // 不用 page.dragAndDrop，因为它只吃字符串选择器，跨 frame 必然失效。
+      await withBrowserOp('drag', page, meta.taskId, () => makeLocator(page, sel.selector)
+        .dragTo(makeLocator(page, dst), { timeout: Math.min(action.timeoutMs || 15000, TOOL_OP_TIMEOUT_MS) }));
+      await withBrowserOp('drag.wait', page, meta.taskId, () => page.waitForTimeout(300));
+      const after = await withBrowserOp('drag.inspect2', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId, skipCache: true }));
+      return RESULT.ok({ dragged: sel.selector, droppedOn: dst, element: sel.pattern }, after.observation, beforeObs);
     }
     case 'reload': {
       const beforeObs = await withBrowserOp('reload.before', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId, skipCache: true }));
@@ -458,12 +562,19 @@ async function runTool(action, resolved, meta) {
       const beforeObs = obs.ok ? obs.observation : null;
       const sel = await resolveSelector(action, obs.observation, meta, page);
       if (!sel) return RESULT.error('ELEMENT_NOT_FOUND', '未找到输入目标: ' + (action.target.field || action.target.semantic || '?'));
-      const value = await resolveFillValue(action);
-      if (value === null) {
+      const fillCtx = { signals: await elementSignals(page, sel.selector) };
+      const filled = await resolveFill(action, fillCtx);
+      if (filled.value === null) {
         const credErr = credentialUnavailableError(action);
         if (credErr) return credErr; // 凭据不可用 → CREDENTIAL_UNAVAILABLE（转人工，不进 repair）
+        if (filled.missingPaymentField) {
+          // 凭据存在但缺这一段（例如存了卡号没存 CVV）→ 明确报错，绝不静默填空串
+          return RESULT.error('CREDENTIAL_FIELD_MISSING',
+            '凭据缺少支付字段 ' + filled.missingPaymentField + '（vault 未存该项），转人工处理');
+        }
         return RESULT.error('NO_VALUE', 'fill 缺少 value 且 credentialRef 不可用');
       }
+      const value = filled.value;
       await withBrowserOp('fill.type', page, meta.taskId, () => {
         if (sel.selector.indexOf(' >> ') >= 0) return makeLocator(page, sel.selector).fill(value);
         return browserManager.humanType(page, sel.selector, value, { baseDelay: 30, randomDelay: 60 });
@@ -517,8 +628,12 @@ async function runTool(action, resolved, meta) {
       return RESULT.ok({ unchecked: sel.selector, element: sel.pattern }, after.observation, beforeObs);
     }
     case 'upload': {
-      const filePath = (action.target && action.target.url) || action.value;
-      if (!filePath) return RESULT.error('NO_FILE', 'upload 缺少文件路径（target.url 或 value）');
+      // schema 已校验过白名单，这里再校验一次并顺带把相对路径解析成绝对路径。
+      // 不能假设上游一定走了 schema：tools 是浏览器操作前的最后一道门，
+      // 而 upload 是本产品里唯一"把本机文件内容送到远端"的动作，不可信输入必须拦在最后一刻。
+      const up = resolveUploadPath((action.target && action.target.url) || action.value);
+      if (!up.ok) return RESULT.error('UPLOAD_PATH_REJECTED', up.error);
+      const filePath = up.abs;
       const obs = await withBrowserOp('upload.inspect', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId }));
       const sel = await resolveSelector(action, obs.observation, meta, page);
       if (!sel) return RESULT.error('ELEMENT_NOT_FOUND', '未找到文件输入: ' + (action.target.field || action.target.semantic || '?'));
@@ -670,25 +785,79 @@ async function resolveSelector(action, obs, meta, page, opts) {
   return null;
 }
 
-// 解析 fill 值：credentialRef → secretManager；否则返回 value（非敏感）
-async function resolveFillValue(action) {
-  const field = (action.target && action.target.field) || '';
-  if (action.credentialRef) {
-    const resolved = secretManager.resolve(action.credentialRef);
-    if (!resolved) return null;
-    const s = resolved.secrets || {};
-    const f = String(field).toLowerCase();
-    if (f.includes('email')) return s.email || null;
-    if (f.includes('password')) return s.password || null;
-    return s.email || s.password || null;
+// CAP-L1 —— 读取目标输入框的真实信号，供支付字段识别使用。
+//
+// 为什么必须真读 DOM：resolveSelector 返回的只是一个 CSS 选择器字符串，
+// 而「这个框到底要卡号还是 CVV」的**唯一可判定信号**是站点自声明的 autocomplete
+// （W3C 标准：cc-number / cc-exp / cc-csc）。target.field 由模型给出，可以为空、
+// 可以是驼峰、也可以与页面命名完全不同 —— 只信它会重演「resolveFillValue 只认
+// email/password」的断点。
+//
+// 降级原则：探测是**增强**，绝不能成为新的故障源。iframe 选择器（含 ' >> '）不探测、
+// 任何异常返回 null，交由 target.field 兜底判定。
+async function elementSignals(page, selector) {
+  if (!page || !selector || typeof selector !== 'string') return null;
+  if (selector.indexOf(' >> ') >= 0) return null; // 跨 frame 选择器无法直接 $eval
+  try {
+    // 自带超时：探测是增强能力，绝不能因为一次 $eval 卡住而挂死 Runtime。
+    // 刻意不用 withBrowserOp —— 它超时会 throw，而这里必须 fail-open（降级为只按
+    // target.field 判定），不能让「拿不到增强信息」变成「动作失败」。
+    const probe = page.$eval(selector, (el) => ({
+      autocomplete: (el.getAttribute && el.getAttribute('autocomplete')) || null,
+      name: (el.getAttribute && el.getAttribute('name')) || null,
+      id: el.id || null,
+      placeholder: (el.getAttribute && el.getAttribute('placeholder')) || null,
+      ariaLabel: (el.getAttribute && el.getAttribute('aria-label')) || null,
+      type: (el.getAttribute && el.getAttribute('type')) || null,
+      // input.maxLength 未设置时返回 -1（规范值），必须过滤，否则有效期会被截成 1 位
+      maxlength: (Number.isInteger(el.maxLength) && el.maxLength > 0 && el.maxLength < 1000) ? el.maxLength : null,
+    }));
+    let timer = null;
+    const bail = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('elementSignals 探测超时')), 3000);
+    });
+    try {
+      return await Promise.race([probe, bail]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  } catch (e) {
+    return null; // 探测失败 = 没有增强信息，按 target.field 兜底
   }
-  return action.value !== undefined && action.value !== null ? String(action.value) : null;
+}
+
+// 解析 fill 值：credentialRef → secretManager；否则返回 value（非敏感）。
+//
+// 返回 { value, kind, missingPaymentField }。value===null 表示取不到值。
+// ⚠️ 红线：value 只流向输入层（humanType / locator.fill），
+//    绝不写入 result / observation / 事件 / 日志 —— 明文卡号/CVV 不得离开浏览器。
+async function resolveFill(action, ctx) {
+  const field = (action.target && action.target.field) || '';
+  if (!action.credentialRef) {
+    const v = (action.value !== undefined && action.value !== null) ? String(action.value) : null;
+    return { value: v, kind: null, missingPaymentField: null };
+  }
+  const resolved = secretManager.resolve(action.credentialRef);
+  if (!resolved) return { value: null, kind: null, missingPaymentField: null };
+  const s = resolved.secrets || {};
+  const signals = Object.assign({}, (ctx && ctx.signals) || null, { field: field || null });
+  const c = paymentField.classify(signals);
+  if (c && paymentField.PAYMENT_KINDS.has(c.kind)) {
+    const card = s.card || null;
+    const v = paymentField.formatValue(c.kind, card, { maxlength: signals.maxlength });
+    // card 存在但这一段缺失 → 与「整个凭据不可用」区分开，给人工一个准确的说法
+    return { value: v, kind: c.kind, missingPaymentField: (v === null && card) ? c.kind : null };
+  }
+  const f = String(field).toLowerCase();
+  if (f.includes('email')) return { value: s.email || null, kind: 'email', missingPaymentField: null };
+  if (f.includes('password')) return { value: s.password || null, kind: 'password', missingPaymentField: null };
+  return { value: s.email || s.password || null, kind: null, missingPaymentField: null };
 }
 
 // v0.2.3（Engineering Phase P1）：凭据不可用诊断（绝不打印明文/敏感信息）。
 // 当 action.credentialRef 已设置，但凭据注册表显示不可用（未注册 / vault 未解密 / 解析失败）时，
 // 返回 CREDENTIAL_UNAVAILABLE 错误，使上层直送人工处理，而非进入「NO_VALUE → repair 重试」错误链。
-// 若凭据可用（resolve 成功）则返回 null，交由 resolveFillValue 正常取值（字段缺失仍走 NO_VALUE）。
+// 若凭据可用（resolve 成功）则返回 null，交由 resolveFill 正常取值（字段缺失仍走 NO_VALUE）。
 function credentialUnavailableError(action) {
   if (!action || !action.credentialRef) return null;
   let available = false;
@@ -702,4 +871,10 @@ function credentialUnavailableError(action) {
   return null;
 }
 
-module.exports = { execute, runTool, resolveSelector, credentialUnavailableError, RESULT, isActionableControl };
+module.exports = {
+  execute, runTool, resolveSelector, credentialUnavailableError, RESULT, isActionableControl,
+  // 导出 makeLocator：' >> ' 跨 frame 选择器只有它能正确解析
+  // （实测 page.locator('iframe >> input') 在本版本不穿透 frame，恒为 0）。
+  // 测试必须用它来验证 observation 产出的选择器，否则「看起来对」与「能用」无法区分。
+  makeLocator,
+};

@@ -1,0 +1,15 @@
+{
+  "id": "rw.043",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "价格确认3",
+  "objective": "搜索「4K显示器」确认价格 ¥1599 出现",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "¥1599 出现在搜索结果中"
+  }
+}

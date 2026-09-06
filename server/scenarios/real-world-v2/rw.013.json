@@ -1,0 +1,15 @@
+{
+  "id": "rw.013",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "saas",
+  "name": "SaaS登录页观察3",
+  "objective": "打开控制台登录页确认登录按钮存在",
+  "fixture": "saas/login.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "element_present",
+    "description": "登录按钮可见"
+  }
+}

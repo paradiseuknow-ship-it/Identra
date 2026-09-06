@@ -1,0 +1,15 @@
+{
+  "id": "rw.060",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "表格填写5",
+  "objective": "填写报名表单：姓名孙七，邮箱 s@y.io 并提交注册",
+  "fixture": "data_entry/form.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "注册成功，欢迎 孙七 提示出现"
+  }
+}

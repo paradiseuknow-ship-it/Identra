@@ -1,0 +1,15 @@
+{
+  "id": "rw.051",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "榜单条目1",
+  "objective": "查看榜单确认「华硕 ProArt PA279CV」条目出现",
+  "fixture": "scraping/list.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "华硕 ProArt PA279CV 出现在榜单中"
+  }
+}

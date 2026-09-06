@@ -4,7 +4,10 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const VAULT_FILE = path.join(__dirname, '..', 'data', 'vault.json');
+// 测试隔离通道：FPB_VAULT_FILE 可把 vault 落到 os.tmpdir（默认路径不变，生产行为零变化）。
+const VAULT_FILE = process.env.FPB_VAULT_FILE
+  ? path.resolve(process.env.FPB_VAULT_FILE)
+  : path.join(__dirname, '..', 'data', 'vault.json');
 
 // 主密钥：优先读环境变量 FPB_MASTER_KEY（base64，32 字节）。缺失时生成一次性密钥（重启即失效，仅用于本地试用）。
 let MASTER_KEY;
@@ -15,8 +18,21 @@ function getKey() {
     MASTER_KEY = Buffer.from(env, 'base64');
     if (MASTER_KEY.length !== 32) throw new Error('FPB_MASTER_KEY 必须是 32 字节 base64');
   } else {
+    // STEP 0.5 §2.5：此前为静默降级 —— 生成一次性内存密钥，写入的凭据重启后永久不可解密，
+    // 且用户只会看到一行 console.warn。这是"数据静默丢失"，不是"可用性降级"。
+    // 现在：生产环境直接拒绝；开发环境仍需可跑（用户可显式 FPB_ALLOW_EPHEMERAL_KEY=1 确认）。
+    const env = String(process.env.NODE_ENV || '').toLowerCase();
+    const allowEphemeral = process.env.FPB_ALLOW_EPHEMERAL_KEY === '1';
+    if (env === 'production' || (!allowEphemeral && process.env.FPB_API_TOKEN)) {
+      throw new Error(
+        'FPB_MASTER_KEY 未设置：拒绝以一次性内存密钥启动（重启将导致全部已存凭据永久不可解密）。' +
+          '请用 `openssl rand -base64 32` 生成并写入环境变量 FPB_MASTER_KEY；' +
+          '仅在本机试用且接受凭据不可恢复时，可设置 FPB_ALLOW_EPHEMERAL_KEY=1。'
+      );
+    }
     MASTER_KEY = crypto.randomBytes(32);
-    console.warn('[vault] 未设置 FPB_MASTER_KEY，使用一次性内存密钥，重启后已存凭据不可解密。生产请设置环境变量。');
+    console.warn('[vault] ⚠️ 未设置 FPB_MASTER_KEY，使用一次性内存密钥 —— 重启后已存凭据将永久不可解密。');
+    console.warn('[vault]    生成命令: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"');
   }
   return MASTER_KEY;
 }
@@ -116,7 +132,24 @@ function deleteProfileSecrets(profileId) {
 
 // 返回脱敏摘要（供前端展示，绝不回传明文）
 function getMaskedSummary(profileId) {
-  const s = getProfileSecrets(profileId);
+  // Phase D 交付健壮性修复：getMaskedSummary 是只读展示面。解密失败（FPB_MASTER_KEY
+  // 缺失/更换/数据损坏）时 fail-soft 返回锁定摘要，而不是让 GET /profiles、
+  // GET /profiles/:id、GET /vault/:id 整个端点 500（新环境首启必踩的可用性阻断）。
+  // 语义边界：写路径（setProfileSecrets/encrypt）与执行路径（getProfileSecrets 的
+  // 自动化消费）保持 fail-closed 不变；此处绝不回传任何明文。
+  let s = null;
+  try {
+    s = getProfileSecrets(profileId);
+  } catch (e) {
+    return {
+      locked: true,
+      vaultError: 'DECRYPT_FAILED',
+      hasEmail: false,
+      emailMasked: null,
+      hasPassword: false,
+      card: null,
+    };
+  }
   if (!s) return null;
   const mask = (v, head, tail) => !v ? null : (v.length <= head + tail ? v : v.slice(0, head) + '****' + v.slice(-tail));
   return {

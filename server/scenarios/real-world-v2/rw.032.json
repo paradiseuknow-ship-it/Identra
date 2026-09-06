@@ -1,0 +1,15 @@
+{
+  "id": "rw.032",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "商品搜索2",
+  "objective": "搜索「无线鼠标」并确认结果列表出现对应商品",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "无线鼠标出现在搜索结果中"
+  }
+}

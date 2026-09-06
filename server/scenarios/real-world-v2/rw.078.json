@@ -1,0 +1,15 @@
+{
+  "id": "rw.078",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "多步确认3",
+  "objective": "搜索「4K显示器」加入购物车后确认购物车件数增加",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "购物车计数变为 1"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "rw.034",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "ecommerce",
+  "name": "商品搜索4",
+  "objective": "搜索「显示器」确认结果包含 4K显示器",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "easy",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "4K显示器出现在搜索结果中"
+  }
+}

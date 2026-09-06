@@ -1,0 +1,15 @@
+{
+  "id": "rw.093",
+  "credentialRequirement": "none",
+  "riskLevel": "HIGH",
+  "credentialRef": null,
+  "category": "longflow",
+  "name": "长流程扩展1",
+  "objective": "搜索「机械键盘」加购后重新搜索「无线鼠标」，确认购物车计数保持为 1",
+  "fixture": "ecommerce/search.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "购物车计数保持为 1"
+  }
+}

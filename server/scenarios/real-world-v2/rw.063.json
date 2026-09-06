@@ -1,0 +1,15 @@
+{
+  "id": "rw.063",
+  "credentialRequirement": "none",
+  "riskLevel": "MEDIUM",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "多次提交3",
+  "objective": "提交两条注册：孙七 s3@x.io 和 周八 z8@x.io，确认第二次也显示注册成功",
+  "fixture": "data_entry/form.html",
+  "difficulty": "hard",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "第二次提交出现注册成功提示"
+  }
+}

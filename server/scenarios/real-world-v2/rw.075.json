@@ -1,0 +1,15 @@
+{
+  "id": "rw.075",
+  "credentialRequirement": "none",
+  "riskLevel": "LOW",
+  "credentialRef": null,
+  "category": "data_entry",
+  "name": "字段校验5",
+  "objective": "同一姓名连续提交两次注册，确认两次均出现注册成功提示",
+  "fixture": "data_entry/form.html",
+  "difficulty": "medium",
+  "expectedVerification": {
+    "type": "text_present",
+    "description": "两次提交均出现注册成功提示"
+  }
+}
