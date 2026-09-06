@@ -12,6 +12,9 @@
 - 敏感数据：AES-256-GCM 加密保险库（`server/vault.js`）
 
 ## 快速开始
+**Windows 一键启动（推荐）**：双击 `start.bat` —— 自动装依赖 → 构建前端 → 生成保险库主密钥（写入 .env）→ 启动服务 → 自动打开控制台 `http://127.0.0.1:8787`。AI 功能在控制台「系统设置」里粘贴 DeepSeek API key 即可（密文落盘、即时生效，无需重启）。
+
+手动方式：
 ```bash
 # 1. 安装依赖（后端 + 前端）
 npm run install:all
@@ -20,14 +23,15 @@ npm run install:all
 npx playwright install chromium
 
 # 3. 配置环境变量：复制 .env.example 为 .env 并填写
-#    DEEPSEEK_API_KEY=sk-...   ← AI 自动化必需（不填则 AI 任务 fail-fast）
-#    FPB_MASTER_KEY=...        ← 加密保险库主密钥（不设则一次性内存密钥，重启后凭据不可解）
+#    服务端启动时自动加载 .env（显式环境变量优先，不覆盖）
+#    DEEPSEEK_API_KEY=sk-...   ← 也可在 UI「系统设置」配置（推荐）
+#    FPB_MASTER_KEY=...        ← 加密保险库主密钥（start.bat 会自动生成）
 
 # 4. 启动
 npm run dev     # 开发模式（后端 8787 + 前端 5173 热更新）
-npm start       # 仅后端（生产/长跑）
+npm start       # 仅后端（生产/长跑；自动服务 client/dist 静态前端）
 npm run build   # 前端构建（client/dist）
-npm test        # 全量回归（runRegression.js 116 项 + phase9 109 项双护栏）
+npm test        # 全量回归（runRegression.js 119 项 + phase9 112 项双护栏）
 ```
 
 前端控制台：`http://localhost:5173`（开发）/ 后端 API：`http://localhost:8787`。
@@ -72,7 +76,7 @@ data/                 # 运行时存储（gitignore）
 
 ## 当前基线（2026-09-07）
 - **可靠性**：v2 池 100 任务 × 真实 deepseek：run3b→run6 = 95% → 97% → 98% → **99% SUCCESS**（唯一非 SUCCESS = CREDIBLE_BUSINESS 可信升级，按设计工作）
-- **回归护栏**：runRegression **118/0**（295s）+ phase9 **OK=111/BAD=0**（C14 后历史最佳）
+- **回归护栏**：runRegression **119/0**（248s）+ phase9 **OK=112/BAD=0**（C15 后历史最佳）
 - **身份架构**：16-B 全家族收口（6 Native ACTIVE + languages CONFIG + brands/screen CLOSED，详见 `.benchmark/PHASE16B_ROI_GATE.md`）
 - **交付**：C14 系统设置中心上线 —— API key / 模型配置 UI 化（密文落盘 + 保存即生效 + 连通测试 + env 对账）
 

@@ -10,6 +10,8 @@ process.on('uncaughtException', (err) => {
   console.error('[uncaught] uncaughtException:', (err && err.message) || err);
 });
 
+require('./loadEnv'); // C15：.env 加载器（必须早于一切读 env 的模块：settings/browserManager/vault…）
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
