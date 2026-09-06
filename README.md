@@ -31,7 +31,7 @@ npx playwright install chromium
 npm run dev     # 开发模式（后端 8787 + 前端 5173 热更新）
 npm start       # 仅后端（生产/长跑；自动服务 client/dist 静态前端）
 npm run build   # 前端构建（client/dist）
-npm test        # 全量回归（runRegression.js 121 项 + phase9 114 项双护栏）
+npm test        # 全量回归（runRegression.js 122 项 + phase9 115 项双护栏）
 ```
 
 前端控制台：`http://localhost:5173`（开发）/ 后端 API：`http://localhost:8787`。
@@ -76,7 +76,7 @@ data/                 # 运行时存储（gitignore）
 
 ## 当前基线（2026-09-07）
 - **可靠性**：v2 池 100 任务 × 真实 deepseek：run3b→run6 = 95% → 97% → 98% → **99% SUCCESS**（唯一非 SUCCESS = CREDIBLE_BUSINESS 可信升级，按设计工作）
-- **回归护栏**：runRegression **121/0**（307s）+ phase9 **OK=114/BAD=0**（C17 后历史最佳）
+- **回归护栏**：runRegression **122/0**（307s）+ phase9 **OK=115/BAD=0**（C18 后历史最佳）
 - **身份架构**：16-B 全家族收口（6 Native ACTIVE + languages CONFIG + brands/screen CLOSED，详见 `.benchmark/PHASE16B_ROI_GATE.md`）
 - **交付**：C14 系统设置中心上线 —— API key / 模型配置 UI 化（密文落盘 + 保存即生效 + 连通测试 + env 对账）
 
