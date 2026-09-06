@@ -193,6 +193,9 @@ export default function AiPanel({ profiles, notify, onViewDetail, onGoToSettings
                   <span className="font-medium text-slate-200">{t.name}</span>
                   <span className={`ml-2 text-xs ${ST_COLOR(t.status)}`}>{t.status}</span>
                   <span className="text-slate-500 text-xs ml-2">{t.executionMode}</span>
+                  {t.scheduleId && (
+                    <span title={'来自定时调度: ' + t.scheduleId} className="ml-2 px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400 text-xs">⏱ 调度</span>
+                  )}
                 </button>
                 {t.error && <div className="text-xs text-rose-400 mt-1">{t.error}</div>}
                 <div className="flex gap-2 mt-1.5">

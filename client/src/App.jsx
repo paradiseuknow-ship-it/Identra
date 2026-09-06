@@ -168,7 +168,7 @@ export default function App() {
           {tab === 'proxies' && <ProxyPanel proxies={proxies} onChange={loadProxies} notify={notify} requestConfirm={requestConfirm} />}
           {tab === 'tasks' && <TaskPanel profiles={profiles} notify={notify} onLog={setRunLog} requestConfirm={requestConfirm} />}
           {tab === 'ai' && <AiPanel profiles={profiles} notify={notify} onViewDetail={setDetailId} onGoToSettings={() => setTab('settings')} />}
-          {tab === 'schedules' && <SchedulesPanel profiles={profiles} notify={notify} requestConfirm={requestConfirm} />}
+          {tab === 'schedules' && <SchedulesPanel profiles={profiles} notify={notify} requestConfirm={requestConfirm} onViewDetail={setDetailId} />}
           {tab === 'observability' && <ObservabilityPanel onViewDetail={setDetailId} />}
         </main>
       </div>

@@ -25,7 +25,7 @@ function fmtInterval(ms) {
   return Math.round(ms / 1000) + ' 秒';
 }
 
-export default function SchedulesPanel({ profiles, notify, requestConfirm }) {
+export default function SchedulesPanel({ profiles, notify, requestConfirm, onViewDetail }) {
   const [schedules, setSchedules] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -180,6 +180,17 @@ export default function SchedulesPanel({ profiles, notify, requestConfirm }) {
                 </div>
                 {(s.objective || s.targetUrl) && <div className="text-xs text-slate-400 mt-1 truncate">{s.targetUrl ? s.targetUrl + ' · ' : ''}{s.objective}</div>}
                 <div className="text-xs text-slate-500 mt-1">下次触发: {fmtTs(s.nextRunAt)} · 上次: {fmtTs(s.lastRunAt)}</div>
+                {s.lastRunTaskIds && s.lastRunTaskIds.length > 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                    <span className="text-xs text-slate-500">上次产生的任务:</span>
+                    {s.lastRunTaskIds.map((tid) => (
+                      <button key={tid} onClick={() => onViewDetail && onViewDetail(tid)}
+                        title="打开任务详情时间线"
+                        className="px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 hover:bg-sky-500/20 text-xs font-mono">{tid.slice(-8)}</button>
+                    ))}
+                    {s.lastRunTaskIds.length > 0 && <span className="text-xs text-slate-600">← 点击查看时间线</span>}
+                  </div>
+                )}
                 {s.lastRunErrors && s.lastRunErrors.length > 0 && (
                   <div className="text-xs text-amber-400 mt-1">上次触发失败: {s.lastRunErrors.join('; ')}</div>
                 )}
