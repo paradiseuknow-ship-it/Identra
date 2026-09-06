@@ -45,6 +45,25 @@ export default function App() {
 
   useEffect(() => { loadProfiles(); loadProxies(); }, [loadProfiles, loadProxies]);
 
+  // C20：运行态快照轮询（仅 profiles tab 活跃时，5s 一拍；失败静默——运行态是增强不是关键路径）
+  const [runtime, setRuntime] = useState({});
+  useEffect(() => {
+    if (tab !== 'profiles') return undefined;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const r = await api.profileRuntime();
+        if (!alive) return;
+        const m = {};
+        (r.profiles || []).forEach((s) => { m[s.profileId] = s; });
+        setRuntime(m);
+      } catch (e) { /* 静默 */ }
+    };
+    tick();
+    const h = setInterval(tick, 5000);
+    return () => { alive = false; clearInterval(h); };
+  }, [tab]);
+
   const launch = async (id) => {
     try { await api.launch(id); notify('已启动'); await loadProfiles(); }
     catch (e) { notify(e.message, false); }
@@ -157,7 +176,7 @@ export default function App() {
         <main className="flex-1 overflow-auto p-5">
           {tab === 'profiles' && (
             <ProfilesTab
-              profiles={profiles} proxies={proxies}
+              profiles={profiles} proxies={proxies} runtime={runtime}
               onAdd={addNew} onEdit={setEditing} onLaunch={launch} onStop={stop}
               onDuplicate={duplicate} onRemove={remove} onView={setViewingId}
               onRotate={rotate} onExport={exportProfiles} onImport={importProfiles}
@@ -215,9 +234,19 @@ export default function App() {
   );
 }
 
-function ProfilesTab({ profiles, proxies, onAdd, onEdit, onLaunch, onStop, onDuplicate, onRemove, onView, onRotate, onExport, onImport, onBatch, notify }) {
+function ProfilesTab({ profiles, proxies, runtime, onAdd, onEdit, onLaunch, onStop, onDuplicate, onRemove, onView, onRotate, onExport, onImport, onBatch, notify }) {
   const [integrity, setIntegrity] = useState(null); // { id, report } | null
   const [checkingId, setCheckingId] = useState(null);
+
+  const fmtUptime = (ms) => {
+    if (!ms || ms < 0) return '0s';
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm' + (s % 60) + 's';
+    const h = Math.floor(m / 60);
+    return h + 'h' + (m % 60) + 'm';
+  };
 
   const runIntegrity = async (p) => {
     setCheckingId(p.id);
@@ -251,6 +280,17 @@ function ProfilesTab({ profiles, proxies, onAdd, onEdit, onLaunch, onStop, onDup
                 {p.running ? '运行中' : '已停止'}
               </span>
             </div>
+            {p.running && runtime && runtime[p.id] && (
+              <div className="mt-3 rounded bg-sky-500/10 border border-sky-500/20 px-3 py-2 text-xs space-y-0.5">
+                <div>运行时长: <span className="text-sky-300 font-medium">{fmtUptime(runtime[p.id].uptimeMs)}</span>
+                  <span className="text-slate-500 ml-2">页签 {runtime[p.id].pagesCount || 1}</span>
+                  {runtime[p.id].proxyId && <span className="text-slate-500 ml-2" title="本次会话使用的代理">代理 {runtime[p.id].proxyId}</span>}
+                </div>
+                {runtime[p.id].currentUrl && (
+                  <div className="text-slate-400 truncate" title={runtime[p.id].currentUrl}>当前: {runtime[p.id].currentUrl}</div>
+                )}
+              </div>
+            )}
             {p.fingerprint && (
               <div className="mt-3 text-xs space-y-1 text-slate-400">
                 <div>OS: <span className="text-slate-200">{p.fingerprint.os} / {p.fingerprint.browser}</span></div>

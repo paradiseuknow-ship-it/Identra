@@ -296,6 +296,14 @@ router.post('/profiles/import', async (req, res) => {
   res.json({ ok: true, importedCount: imported.length, imported, errors });
 });
 
+// Profile 运行态快照（C20）：全部运行中 Profile 的实时信息（C20 前用户只能看到 running 布尔）。
+// 注意必须注册在 /profiles/:id 之前，否则 'runtime' 会被当作 id 吞掉。
+router.get('/profiles/runtime', (req, res) => {
+  const nameById = new Map(db.getProfiles().map((p) => [p.id, p.name]));
+  const snapshots = browserManager.runtimeSnapshots().map((s) => ({ ...s, name: nameById.get(s.profileId) || s.profileId }));
+  res.json({ profiles: snapshots, at: Date.now() });
+});
+
 router.get('/profiles/:id', async (req, res) => {
   const p = db.getProfile(req.params.id);
   if (!p) return res.status(404).json({ error: 'not found' });

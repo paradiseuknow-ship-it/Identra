@@ -1175,6 +1175,28 @@ function isRunning(profileId) {
   return sessions.has(profileId);
 }
 
+// C20：运行态快照 —— 每个运行中 Profile 的实时信息（UI「运行中」卡片的 uptime/当前页面/页签数/代理）。
+// page.url() 等读操作全部 try 包裹：单会话异常不拖垮整个快照。
+function runtimeSnapshots() {
+  const out = [];
+  for (const s of sessions.values()) {
+    let currentUrl = null;
+    try { currentUrl = s.page && s.page.url ? s.page.url() : null; } catch (e) { /* 页面正在销毁 */ }
+    let pagesCount = 1;
+    try { pagesCount = Array.isArray(s.pages) && s.pages.length ? s.pages.length : 1; } catch (e) { /* ignore */ }
+    out.push({
+      profileId: s.profileId,
+      startedAt: s.startedAt,
+      uptimeMs: Date.now() - (s.startedAt || Date.now()),
+      currentUrl,
+      pagesCount,
+      proxyId: (s.proxy && s.proxy.id) || null,
+      chromePid: s.chromePid || null,
+    });
+  }
+  return out;
+}
+
 async function getPage(profileId) {
   const s = sessions.get(profileId);
   if (!s) return null;
@@ -1462,7 +1484,7 @@ function startZombieKiller(intervalMs) {
 }
 
 module.exports = {
-  launch, getSession, isRunning, getPage, close, closeAll, screenshot, navigate,
+  launch, getSession, isRunning, runtimeSnapshots, getPage, close, closeAll, screenshot, navigate,
   cleanupOrphanedChromium, startZombieKiller, setupRoutes, isVerificationHost,
   humanMove, humanClick, humanType, humanScroll,
   getChromeVersion, captureNativeUaBrands, applyHeadlessBrandContract,

@@ -31,7 +31,7 @@ npx playwright install chromium
 npm run dev     # 开发模式（后端 8787 + 前端 5173 热更新）
 npm start       # 仅后端（生产/长跑；自动服务 client/dist 静态前端）
 npm run build   # 前端构建（client/dist）
-npm test        # 全量回归（runRegression.js 123 项 + phase9 116 项双护栏）
+npm test        # 全量回归（runRegression.js 124 项 + phase9 117 项双护栏）
 ```
 
 前端控制台：`http://localhost:5173`（开发）/ 后端 API：`http://localhost:8787`。
@@ -39,14 +39,20 @@ npm test        # 全量回归（runRegression.js 123 项 + phase9 116 项双护
 ## 功能总览
 | 能力 | 说明 |
 |------|------|
-| Profile 与指纹身份 | 种子化可复现指纹（UA/UA-CH/screen/时区/语言/字体/WebGL/Canvas/Audio/硬件），headful 真实分辨率回填，headless CDP metrics 对齐 |
+| Profile 与指纹身份 | 种子化可复现指纹（UA/UA-CH/screen/时区/语言/字体/WebGL/Canvas/Audio/硬件），headful 真实分辨率回填，headless CDP metrics 对齐；运行态快照（时长/当前页面/页签数/代理，5s 轮询） |
 | Native 身份架构（16-B） | 6 个 Chromium native patch ACTIVE（webdriver/platform/platformVersion/hardwareConcurrency/deviceMemory/maxTouchPoints），manifest=真实已启用架构，opt-in 缺省逐字节 stock；languages 走 CONFIG 层 pref 注入三端同源 |
 | 代理管理 | HTTP/SOCKS5，出口 IP 预检、代理-指纹一致性（基于 IP 的时区/语言/地理推导） |
 | 加密保险库 | 邮箱/密码/卡号/CVV 加密存储；LLM 永不见明文 CVV/卡号（credentialRef + masked） |
 | AI 自动化引擎 | Planner→Runtime→Verification→Repair→Escalation 全链：业务状态核验、失败诊断、churn 熔断、replan 契约、凭据启动预检、可信升级（CREDIBLE_BUSINESS） |
 | 调度与并发 | 定时触发、批量执行、Worker 池、容量管理、断点续跑、崩溃恢复 |
 | 可观测性 | AI Operator Console：任务时间线、VIL/ESCALATION 节点、指标面板、事件取证 |
-| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（112/0 + OK=105/BAD=0） |
+| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（124/0 + OK=117/BAD=0） |
+
+## 发布包（portable）
+```bash
+node server/scripts/pack_release.js --zip   # 产出 release/identra-vX.Y.Z-win64.zip
+```
+目标机器只需 Node 18+：解压 zip → 双击 `start.bat`（自动装依赖/构建/生成主密钥）→ 控制台自动打开 → 「系统设置」粘贴 DeepSeek key（即时生效）。打包器含安全红线：`.env` / vault / 运行时设置 / node_modules 一旦检出即 fail-fast，真实凭据绝不随包分发。
 
 ## 常用命令
 ```bash
@@ -76,7 +82,7 @@ data/                 # 运行时存储（gitignore）
 
 ## 当前基线（2026-09-07）
 - **可靠性**：v2 池 100 任务 × 真实 deepseek：run3b→run6 = 95% → 97% → 98% → **99% SUCCESS**（唯一非 SUCCESS = CREDIBLE_BUSINESS 可信升级，按设计工作）
-- **回归护栏**：runRegression **123/0**（313s）+ phase9 **OK=116/BAD=0**（C19 后历史最佳）
+- **回归护栏**：runRegression **124/0**（312s）+ phase9 **OK=117/BAD=0**（C20 后历史最佳）
 - **身份架构**：16-B 全家族收口（6 Native ACTIVE + languages CONFIG + brands/screen CLOSED，详见 `.benchmark/PHASE16B_ROI_GATE.md`）
 - **交付**：C14 系统设置中心上线 —— API key / 模型配置 UI 化（密文落盘 + 保存即生效 + 连通测试 + env 对账）
 

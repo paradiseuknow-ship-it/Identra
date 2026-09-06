@@ -51,6 +51,8 @@ export const api = {
   getSettings: () => req('GET', '/settings'),
   updateSettings: (b) => req('PUT', '/settings', b),
   testLlm: (b) => req('POST', '/settings/test', b),
+  // profiles 运行态快照（C20）
+  profileRuntime: () => req('GET', '/profiles/runtime'),
 
   // schedules（C17 定时调度，挂 /api/ai/schedules）
   listSchedules: () => req('GET', '/ai/schedules'),
