@@ -168,8 +168,14 @@ function ProfilesTab({ profiles, proxies, onAdd, onEdit, onLaunch, onStop, onDup
               </div>
             )}
             <div className="mt-2 text-xs text-slate-500">
-              凭据: {p.vault?.hasEmail ? '✓邮箱' : '✗'} {p.vault?.hasPassword ? '✓密码' : '✗'}
-              {p.vault?.card ? ` · ✓卡尾${p.vault.card.numberMasked?.slice(-4)}` : ''}
+              {p.vault?.locked ? (
+                <span className="text-amber-400" title="数据以其他主密钥加密，重新录入后自动恢复">🔒 凭据已锁定（主密钥不匹配）— 点击编辑重新录入</span>
+              ) : (
+                <>
+                  凭据: {p.vault?.hasEmail ? '✓邮箱' : '✗'} {p.vault?.hasPassword ? '✓密码' : '✗'}
+                  {p.vault?.card ? ` · ✓卡尾${p.vault.card.numberMasked?.slice(-4)}` : ''}
+                </>
+              )}
             </div>
             <div className="mt-4 flex flex-wrap gap-2 text-xs">
               {p.running ? (
