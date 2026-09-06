@@ -338,18 +338,24 @@ function rmTmp(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } 
     const ctx = await chromium.launchPersistentContext(tmpDir, {
       executablePath: BIN, headless: true,
       args: ['--no-first-run', '--no-default-browser-check'],
-      locale: fp.language, // 生产 launchOpts 保留项（Intl 层一致性）
+      // C10 同步：生产已删除 Playwright locale option（Browser.setLocaleOverride 裸头竞态源），
+      // Intl 一致性改由 renderer 级 Emulation.setLocaleOverride 承担（见下方 applyOverride 后）。
     });
     await ctx.addInitScript(injectScript);
     const p = await ctx.newPage();
     await p.goto(URL_BASE, { waitUntil: 'load' });
     const mark = seen.length;
-    await applyOverride(ctx, p, {
+    // C10 同步：生产 sendIntlLocaleOverride（browserManager.js）在【同一存活 session】上发
+    // renderer 级 locale override —— Intl.DateTimeFormat/NumberFormat = fp.language。
+    // 纪律（c10_locale_probe_d.js 实证）：emulation override 随 session 生命周期存活，
+    // detach 即撤销；故必须发在 applyOverride 返回的同一 client 上且不 detach。
+    const c10client = await applyOverride(ctx, p, {
       userAgent: PROD_UA,
       acceptLanguage: feed,
       platform: 'Windows',
       userAgentMetadata: PROD_METADATA,
     });
+    await c10client.send('Emulation.setLocaleOverride', { locale: fp.language });
     await p.goto(URL_BASE, { waitUntil: 'load' });
     await p.evaluate(() => fetch('/xhr', { cache: 'no-store' }).then((r) => r.text()));
     const win = await probePage(p);       // inject 掩盖层
@@ -368,6 +374,18 @@ function rmTmp(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } 
     const allAls = seen.slice(mark).map((r) => r.al).filter(Boolean);
     assert('N-LANG-04c 生产形态：全部请求头语言族一致（以 de-DE 开头）',
       allAls.length > 0 && allAls.every((v) => String(v).split(',')[0].trim() === 'de-DE'), jsonOf(allAls));
+
+    // N-LANG-12（C10）：locale option 删除后 XHR/fetch 管道不再有裸单值头；
+    // Intl 由 renderer 级 setLocaleOverride 承担，与 navigator.language 一致。
+    const xhrAls = seen.slice(mark).filter((r) => r.path === '/xhr').map((r) => r.al).filter(Boolean);
+    assert('N-LANG-12a C10 修复：XHR/fetch Accept-Language == 原生 q 形（裸头竞态消除）',
+      xhrAls.length > 0 && xhrAls.every((v) => v === EXPECT_HTTP_AL), jsonOf(xhrAls));
+    const winIntl = await p.evaluate(() => ({
+      dtf: Intl.DateTimeFormat().resolvedOptions().locale,
+      nf: new Intl.NumberFormat().resolvedOptions().locale,
+    }));
+    assert('N-LANG-12b C10 修复：Intl DateTimeFormat/NumberFormat == fp.language（renderer setLocaleOverride 补偿）',
+      winIntl.dtf === TEST_LANG && winIntl.nf === TEST_LANG, jsonOf(winIntl));
 
     const iframeFrame = p.frames().find((f) => f.url().indexOf('/iframe') !== -1);
     let iframeLangs = null;

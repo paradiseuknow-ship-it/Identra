@@ -176,6 +176,23 @@ async function captureNativeUaBrands(context, cacheKey) {
 }
 
 // 通过 CDP Emulation.setUserAgentOverride 一次性对齐【网络层 Client Hints 请求头】与【JS 层 navigator 属性】。
+
+// C10（locale HTTP 裸头竞态修复）：renderer 级 Intl locale override。
+// Playwright locale option 会同时触发 browser 级 Browser.setLocaleOverride → network 层
+// Accept-Language 变裸单值（XHR/fetch 管道不走 emulation acceptLanguage 改写，实测裸头
+// 泄漏：.benchmark/c10_locale_probe.js 形态 A xhr=BARE vs navigation=Q-FORM 竞态）。
+// 改为仅发 renderer 级 Emulation.setLocaleOverride：Intl.DateTimeFormat/NumberFormat
+// = fp.language（形态 D 实证 de-DE），HTTP 头全管道回归 pref/override 的原生 q 形。
+// 独立于 C2-active 状态发送（Intl 一致性与 UA-CH 让位正交）。
+async function sendIntlLocaleOverride(client, language) {
+  try {
+    await client.send('Emulation.setLocaleOverride', { locale: language });
+  } catch (e) {
+    if (!String(e && e.message).includes('Another locale override')) {
+      console.warn('[ua] Intl locale override 失败(已忽略):', e.message);
+    }
+  }
+}
 // 这是关键：Playwright 的 userAgent 选项只改了 User-Agent 头，但 Sec-CH-UA / Sec-CH-UA-Platform /
 // Sec-CH-UA-Mobile 等 Client Hints 头仍由 Chromium 按真实二进制版本自动生成，与伪造 UA 对不上。
 // Google / Cloudflare / reCAPTCHA 会同时比对「请求头里的 Client Hints」与「JS 读到的 navigator.userAgentData」，
@@ -265,7 +282,11 @@ async function applyClientHints(page, fp) {
         acceptLanguage: fp.languages.join(','),
         platform: osPlatform,
       });
-      client.detach().catch(() => {});
+      await sendIntlLocaleOverride(client, fp.language);
+      // C10 纪律：不 detach。emulation override（setUserAgentOverride/setLocaleOverride）
+      // 随 DevTools session 生命周期存活（c10_locale_probe_d.js 实证：detach 后 Intl
+      // override 被撤销回机器 locale）。session 保持至 context 关闭自然销毁；
+      // 重复调用（同页再入）由「Another locale override」容忍分支 + 幂等覆盖兜底。
       console.log('[ua] Client Hints: brands 无原生捕获 → 保留浏览器原生 UA-CH（双层原生同源）');
       return;
     }
@@ -283,7 +304,8 @@ async function applyClientHints(page, fp) {
     // GetUserAgentMetadata()（单源）；UA 字符串由 Playwright context userAgent option 提供
     //（P4.2 实测：UA option 不污染原生 brands）。仅此 surface 让位；C2 inactive：逐字节 stock。
     if (isC2PlatformVersionActive()) {
-      client.detach().catch(() => {});
+      await sendIntlLocaleOverride(client, fp.language);
+      // C10 纪律：session 保持（detach 撤销 emulation override），见上方 C10 注释。
       console.log('[ua] C2 platformVersion->Native: CDP UA-CH override skipped (Native single-source), UA string via Playwright option');
       return;
     }
@@ -303,7 +325,8 @@ async function applyClientHints(page, fp) {
         wow64: false,
       },
     });
-    client.detach().catch(() => {});
+    await sendIntlLocaleOverride(client, fp.language);
+    // C10 纪律：session 保持（detach 撤销 emulation override），见 fallback 分支 C10 注释。
     console.log(`[ua] Client Hints 已对齐(原生回放): UA=${fp.userAgent} platform=${osPlatform} brands=${brands.map((b) => b.brand + '@' + b.version).join(', ')}`);
   } catch (e) {
     console.warn('[ua] Client Hints 覆盖失败(已忽略):', e.message);
@@ -949,7 +972,10 @@ async function launch(profile, proxies) {
   }
   Object.assign(launchOpts, {
     userAgent: fp.userAgent,
-    locale: fp.language,
+    // C10：locale option 已删除。它触发 browser 级 Browser.setLocaleOverride → network 层
+    // Accept-Language 裸单值（XHR/fetch 管道竞态，c10_locale_probe.js 形态 A 实测）。
+    // Intl 一致性由 sendIntlLocaleOverride（renderer 级 Emulation.setLocaleOverride）承担，
+    // 形态 D 实证 Intl=fp.language 且 HTTP 全管道原生 q 形。
     timezoneId: fp.timezone,
     colorScheme: 'no-preference',
     // C7-CONFIG：不设置 extraHTTPHeaders.Accept-Language——HTTP Accept-Language 仅由
@@ -959,7 +985,6 @@ async function launch(profile, proxies) {
     // 实测（.benchmark/c7_worker_probe3.js V11/V12）：Playwright locale 派生头在
     // navigation 上优先于 extraHTTPHeaders，保留第三写只会造成 subresource 头
     // 三态分裂（locale 裸单值 / 无 q 列表 / 原生 q）；删除后收敛为两写。
-    // locale option 保留（Intl 层既有一致性，inject.js 无 Intl locale hook，删除即回退）。
     geolocation: geo && geo.mode !== 'real' && geo.mode !== 'block'
       ? { latitude: geo.lat, longitude: geo.lng, accuracy: geo.accuracy }
       : undefined,
