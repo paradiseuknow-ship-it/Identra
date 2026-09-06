@@ -399,6 +399,18 @@ router.post('/chat', async (req, res) => {
     const { message, sessionId, profileId, executionMode } = req.body || {};
     if (!message || !String(message).trim()) return res.status(400).json({ ok: false, error: 'message 必填' });
 
+    // C16：LLM key 缺失守卫。AI_PROVIDER=auto（缺省）且无任何 key 时，provider 会静默
+    // 解析为 mock 并返回"假计划"——用户无感知地拿到不可执行的结果。现在 fail-fast
+    // 返回可行动文案；显式设置 AI_PROVIDER=mock 的开发/测试路径不受影响。
+    const providerKind = String(process.env.AI_PROVIDER || 'auto').toLowerCase();
+    if (providerKind === 'auto' && !process.env.OPENAI_API_KEY && !process.env.AI_API_KEY && !process.env.DEEPSEEK_API_KEY) {
+      return res.status(409).json({
+        ok: false,
+        code: 'NO_LLM_KEY',
+        error: '未配置 LLM API key（当前为 mock 模式）——请到「系统设置」粘贴 DeepSeek API key，保存即时生效',
+      });
+    }
+
     // 1) Session（复用或新建）
     let session = sessionId ? sessionManager.getSession(sessionId) : null;
     if (!session) session = sessionManager.createSession({ userMessage: message, context: { profileId: profileId || '' } });

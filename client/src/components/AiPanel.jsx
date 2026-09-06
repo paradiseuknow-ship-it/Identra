@@ -28,7 +28,7 @@ function eventIcon(type) {
   return '·';
 }
 
-export default function AiPanel({ profiles, notify, onViewDetail }) {
+export default function AiPanel({ profiles, notify, onViewDetail, onGoToSettings }) {
   const [tasks, setTasks] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [stats, setStats] = useState(null);
@@ -103,6 +103,15 @@ export default function AiPanel({ profiles, notify, onViewDetail }) {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* C16：mock 模式引导横幅 —— key 缺失时明确告知 + 一键跳转系统设置 */}
+      {health && health.provider === 'mock' && (
+        <div className="lg:col-span-2 rounded border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex items-center justify-between gap-3">
+          <span className="text-xs text-amber-300">⚠️ AI 功能当前为 <b>mock 模式</b>（未配置 LLM API key）——任务只会产生模拟计划，不会真正执行。配置 DeepSeek API key 后即可真实执行。</span>
+          {onGoToSettings && (
+            <button onClick={onGoToSettings} className="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-xs whitespace-nowrap">前往系统设置 →</button>
+          )}
+        </div>
+      )}
       {/* 左列：Chat + Plan Preview + Approval */}
       <div className="space-y-4">
         <div className="rounded border border-edge bg-panel p-4 space-y-3">
