@@ -21,6 +21,7 @@ const store = require('./store');
 const events = require('./events');
 const taskManager = require('./taskManager');
 const identity = require('../identity');
+const { cronNext } = require('./cronExpr'); // C21：cron 模式（可选，优先于 intervalMs）
 
 const MIN_INTERVAL_MS = 1000;       // 理论下限；产品建议 >= 60s
 const MAX_PROFILES_PER_SCHEDULE = 50; // 单 schedule 批量上限（防滥用）
@@ -41,10 +42,17 @@ function guard(user, resource, permission) {
 }
 
 // ---- 校验 ----
+// C21 起支持双周期模式：cron（可选字段，优先）或 intervalMs（缺省路径，向后兼容）。
+// cron 提供时 intervalMs 可省略；两者都缺 → 400。
 function _validateTemplate(input) {
   if (!input.objective && !input.targetUrl) throw bad(400, 'objective 或 targetUrl 必填');
+  if (input.cron !== undefined && input.cron !== null && input.cron !== '') {
+    try { cronNext(String(input.cron).trim(), Date.now()); } // 解析 + 至少存在一个未来触发点（二月 31 日类直接 400）
+    catch (e) { throw bad(400, 'cron 非法: ' + String(e.message || e).slice(0, 150)); }
+    return; // cron 模式不要求 intervalMs
+  }
   if (!Number.isInteger(input.intervalMs) || input.intervalMs < MIN_INTERVAL_MS) {
-    throw bad(400, 'intervalMs 必须为整数且 >= ' + MIN_INTERVAL_MS);
+    throw bad(400, 'intervalMs 必须为整数且 >= ' + MIN_INTERVAL_MS + '（或提供合法 cron 表达式）');
   }
   if (input.profileIds !== undefined) {
     if (!Array.isArray(input.profileIds) || input.profileIds.some((p) => typeof p !== 'string')) {
@@ -69,13 +77,14 @@ function createSchedule(input, user) {
     executionMode: input.executionMode || 'ASSIST',
     constraints: Array.isArray(input.constraints) ? input.constraints : [],
     priority: Number.isInteger(input.priority) ? input.priority : 50,
-    intervalMs: input.intervalMs,
+    intervalMs: input.intervalMs !== undefined && input.intervalMs !== null ? input.intervalMs : null,
+    cron: (input.cron !== undefined && input.cron !== null && input.cron !== '') ? String(input.cron).trim() : null, // C21
     autoStart: input.autoStart !== false, // 默认触发即执行
     status: 'ACTIVE',
     // CAP-O1 归属：由服务端身份层盖章（HTTP 路径），模块直调允许显式传入（测试）
     workspaceId: (user && user.currentWorkspaceId) || input.workspaceId || null,
     createdBy: (user && user.id) || input.createdBy || null,
-    nextRunAt: now + input.intervalMs,
+    nextRunAt: (input.cron ? cronNext(String(input.cron).trim(), new Date(now)) : now + input.intervalMs),
     lastRunAt: null,
     runCount: 0,
     lastRunTaskIds: [],
@@ -105,17 +114,27 @@ function updateSchedule(id, patch, user) {
   guard(user, sched, 'task:create');
   patch = patch || {};
   if (patch.status !== undefined && !['ACTIVE', 'PAUSED'].includes(patch.status)) throw bad(400, '非法状态');
-  if (_UPDATABLE.some((k) => patch[k] !== undefined) || patch.intervalMs !== undefined) {
-    _validateTemplate(Object.assign({}, sched, patch, { intervalMs: patch.intervalMs !== undefined ? patch.intervalMs : sched.intervalMs }));
+  if (_UPDATABLE.some((k) => patch[k] !== undefined) || patch.intervalMs !== undefined || patch.cron !== undefined) {
+    _validateTemplate(Object.assign({}, sched, patch, {
+      intervalMs: patch.intervalMs !== undefined ? patch.intervalMs : sched.intervalMs,
+      cron: patch.cron !== undefined ? patch.cron : sched.cron,
+    }));
   }
   for (const k of _UPDATABLE) {
     if (patch[k] !== undefined) sched[k] = patch[k];
   }
   if (patch.status !== undefined) sched.status = patch.status;
-  if (patch.intervalMs !== undefined && patch.intervalMs !== sched.intervalMs) {
-    sched.intervalMs = patch.intervalMs;
-    // 周期变更 → 以最近一次运行为基准重算下一次（PAUSED 期间也成立）
-    sched.nextRunAt = (sched.lastRunAt || sched.createdAt) + sched.intervalMs;
+  if (patch.cron !== undefined) {
+    sched.cron = (patch.cron === null || patch.cron === '') ? null : String(patch.cron).trim();
+  }
+  const intervalChanged = patch.intervalMs !== undefined && patch.intervalMs !== sched.intervalMs;
+  if (intervalChanged) sched.intervalMs = patch.intervalMs;
+  // 周期/cron 任一变更 → 立即重算下一次（cron 模式从当下起算；interval 模式以最近一次运行为基准，PAUSED 期间也成立）
+  if (patch.cron !== undefined || intervalChanged) {
+    sched.nextRunAt = sched.cron
+      ? cronNext(sched.cron, new Date())
+      : (sched.lastRunAt || sched.createdAt) + (sched.intervalMs || 0);
+    if (!sched.cron && !Number.isInteger(sched.intervalMs)) sched.intervalMs = MIN_INTERVAL_MS;
   }
   sched.updatedAt = Date.now();
   store.upsert('aiSchedules', sched);
@@ -189,7 +208,7 @@ function triggerOnce(id, user, source) {
   const r = fireSchedule(sched, source || 'manual');
   sched.lastRunAt = Date.now();
   sched.runCount = (sched.runCount || 0) + 1;
-  sched.nextRunAt = Date.now() + sched.intervalMs; // 手动触发也顺延周期（避免手动+到期双拍）
+  sched.nextRunAt = sched.cron ? cronNext(sched.cron, new Date()) : Date.now() + (sched.intervalMs || 0); // 手动触发也顺延周期（避免手动+到期双拍）
   sched.lastRunTaskIds = r.taskIds;
   sched.lastRunErrors = r.errors;
   store.upsert('aiSchedules', sched);
@@ -211,7 +230,7 @@ function tickSchedules(now) {
         const r = fireSchedule(s, 'tick');
         s.lastRunAt = Date.now();
         s.runCount = (s.runCount || 0) + 1;
-        s.nextRunAt = Date.now() + s.intervalMs;
+        s.nextRunAt = s.cron ? cronNext(s.cron, new Date()) : Date.now() + (s.intervalMs || 0); // C21：cron 模式严格按表，不漂移
         s.lastRunTaskIds = r.taskIds;
         s.lastRunErrors = r.errors;
         store.upsert('aiSchedules', s);

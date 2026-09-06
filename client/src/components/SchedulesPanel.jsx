@@ -11,6 +11,7 @@ const EMPTY_FORM = {
   name: '', objective: '', targetUrl: '',
   profileIds: [], executionMode: 'ASSIST',
   intervalMin: 60, autoStart: true,
+  cronMode: false, cron: '', // C21：调度方式切换（固定间隔 / cron 表达式）
 };
 
 function fmtTs(ts) {
@@ -44,6 +45,7 @@ export default function SchedulesPanel({ profiles, notify, requestConfirm, onVie
 
   async function save() {
     if (!form.objective.trim() && !form.targetUrl.trim()) { notify('objective 或 targetUrl 至少填一项', false); return; }
+    if (form.cronMode && !form.cron.trim()) { notify('cron 模式需填写表达式（例：0 9 * * * = 每天 9 点）', false); return; }
     setSaving(true);
     try {
       await api.createSchedule({
@@ -52,7 +54,8 @@ export default function SchedulesPanel({ profiles, notify, requestConfirm, onVie
         targetUrl: form.targetUrl.trim(),
         profileIds: form.profileIds,
         executionMode: form.executionMode,
-        intervalMs: Math.max(1, Number(form.intervalMin) || 60) * 60000,
+        intervalMs: form.cronMode ? undefined : Math.max(1, Number(form.intervalMin) || 60) * 60000,
+        cron: form.cronMode ? form.cron.trim() : undefined,
         autoStart: form.autoStart,
       });
       notify('定时任务已创建（默认 ACTIVE，到期自动触发）');
@@ -124,8 +127,28 @@ export default function SchedulesPanel({ profiles, notify, requestConfirm, onVie
               <input className={inputCls} placeholder="例：每日签到巡检" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
             <div>
-              <label className="text-xs text-slate-400 block mb-1">执行间隔（分钟）</label>
-              <input className={inputCls} type="number" min="1" value={form.intervalMin} onChange={(e) => setForm({ ...form, intervalMin: e.target.value })} />
+              <label className="text-xs text-slate-400 block mb-1">调度方式</label>
+              <div className="flex gap-1 mb-1.5">
+                <button type="button" onClick={() => setForm({ ...form, cronMode: false })}
+                  className={`flex-1 px-2 py-1 rounded text-xs border ${!form.cronMode ? 'bg-sky-600 border-sky-500 text-white' : 'border-edge text-slate-400 hover:bg-edge'}`}>固定间隔</button>
+                <button type="button" onClick={() => setForm({ ...form, cronMode: true })}
+                  className={`flex-1 px-2 py-1 rounded text-xs border ${form.cronMode ? 'bg-sky-600 border-sky-500 text-white' : 'border-edge text-slate-400 hover:bg-edge'}`}>cron 表达式</button>
+              </div>
+              {form.cronMode ? (
+                <>
+                  <input className={inputCls} placeholder="例：0 9 * * *（每天 9 点）" value={form.cron} onChange={(e) => setForm({ ...form, cron: e.target.value })} />
+                  <select className={inputCls + ' mt-1.5'} value="" onChange={(e) => { if (e.target.value) setForm({ ...form, cron: e.target.value }); }}>
+                    <option value="">常用预设…</option>
+                    <option value="0 9 * * *">每天 09:00</option>
+                    <option value="0 9 * * 1">每周一 09:00</option>
+                    <option value="0 * * * *">每小时整点</option>
+                    <option value="*/15 * * * *">每 15 分钟</option>
+                    <option value="0 9 1 * *">每月 1 号 09:00</option>
+                  </select>
+                </>
+              ) : (
+                <input className={inputCls} type="number" min="1" value={form.intervalMin} onChange={(e) => setForm({ ...form, intervalMin: e.target.value })} />
+              )}
             </div>
           </div>
           <div>
@@ -176,7 +199,7 @@ export default function SchedulesPanel({ profiles, notify, requestConfirm, onVie
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm font-medium text-slate-200">{s.name}</span>
                   <span className={`px-2 py-0.5 rounded text-xs ${s.status === 'ACTIVE' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-slate-500/15 text-slate-400'}`}>{s.status}</span>
-                  <span className="text-xs text-slate-500">每 {fmtInterval(s.intervalMs)} · 已跑 {s.runCount || 0} 次 · {s.profileIds.length ? s.profileIds.length + ' 个 Profile' : '无 Profile'}</span>
+                  <span className="text-xs text-slate-500">{s.cron ? <span className="font-mono text-sky-400" title="cron 表达式（按表触发，不漂移）">{s.cron}</span> : <>每 {fmtInterval(s.intervalMs)}</>} · 已跑 {s.runCount || 0} 次 · {s.profileIds.length ? s.profileIds.length + ' 个 Profile' : '无 Profile'}</span>
                 </div>
                 {(s.objective || s.targetUrl) && <div className="text-xs text-slate-400 mt-1 truncate">{s.targetUrl ? s.targetUrl + ' · ' : ''}{s.objective}</div>}
                 <div className="text-xs text-slate-500 mt-1">下次触发: {fmtTs(s.nextRunAt)} · 上次: {fmtTs(s.lastRunAt)}</div>
