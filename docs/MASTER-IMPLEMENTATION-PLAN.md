@@ -7,6 +7,21 @@
 
 ---
 
+## ⚓ 当前状态锚点（2026-09-06，本节之后的历史章节保留原貌）
+
+> 本文件主体撰写于 2026-08-24/25（P0/P1 修复时代），以下进度章节为历史存档。
+> 项目现状以本节与 `.benchmark/` 终版报告为准。
+
+| 领域 | 状态 | 终版报告 |
+|------|------|----------|
+| 可靠性 | v2 池真实 deepseek **99% SUCCESS**（run3b→run6 递进），唯一非 SUCCESS 为可信人工升级 = 100% 可接受结局率；smoke6 锚点 5/5 | `.benchmark/phase12_tag_canonical240_run6_*.json` |
+| 16-B 指纹身份架构 | **全家族终版收口**：6 Native ACTIVE（webdriver/platform/platformVersion/hardwareConcurrency/deviceMemory/maxTouchPoints）+ languages CONFIG COMPLETE（C7）+ brands CLOSED（C9）+ screen CLOSED（C8）+ locale/Intl 一致性修复（C10） | `PHASE16B_ROI_GATE.md` + `PHASE16B_C7/C8/C9/C10_*.md` |
+| 交付收尾 | README 交付级重写 / .env.example 全变量对账 / vault fail-soft A 类修复 / locked UI / 启动冒烟守护 / git×4 推送 GitHub（Identra） | `PHASE_D_DELIVERY_REPORT.md` |
+| 守护体系 | 双回归护栏 **runRegression 115 项 + phase9 108 项**（含事件注册表对账、启动冒烟等自动发现守护测试） | `.benchmark/c11_*.log` |
+| 遗留非开发项 | native branded build（采用自编译二进制上生产的部署前提） | `PHASE16B_C9_BRANDS_ROI_REPORT.md` 边界① |
+
+---
+
 ## 进度追踪（实时更新）
 
 ### 已完成修复（2026-08-24）

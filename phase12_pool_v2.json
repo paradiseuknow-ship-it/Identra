@@ -1,7 +1,7 @@
 {
   "_meta": {
     "frozen": true,
-    "generatedAt": "2026-09-06T11:49:39.692Z",
+    "generatedAt": "2026-09-06T12:13:57.785Z",
     "generator": "genPhase12PoolV2.js",
     "provenance": "v2 fixture 对齐重生成（B3 池对齐契约落地）；v1 冻结池 phase12_pool.json 未改动，历史基线不可比",
     "alignmentLint": {

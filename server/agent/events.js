@@ -58,6 +58,20 @@ const EVENT_TYPES = [
   // CAP-M1（STEP 12）：定时触发 / 批量执行观测事件
   'schedule.created', 'schedule.updated', 'schedule.deleted',
   'schedule.triggered', 'schedule.fire_error', 'schedule.tick_error',
+  // C11（2026-09-06）事件注册表对账：以下 10 类生产在发但此前漏登记
+  //（smoke6 实证每次运行刷「非标准事件类型」警告）——补登记消除漂移。
+  // planner：Flow Memory 命中回放与融合规划
+  'task.plan_from_flow', 'agent.replan', 'agent.replan_fused',
+  // 验证窗口 / 决策 / 恢复（verification 族，与 persist_reload 同族）
+  'ai.verification.window', 'ai.verification.decision', 'ai.verification.recovered',
+  // 守护规则通过（policy guard）
+  'ai.guard.passed',
+  // policy 决策（守护层拦截/自动支付裁定，policy.js）
+  'ai.policy.autoPayment', 'ai.policy.blocked',
+  // 观测面（observability 模块）
+  'observability.metrics.tick', 'observability.trace.stage',
+  // scheduler 僵尸进程回收
+  'scheduler.reaped',
 ];
 
 // 内存客户端集合（SSE 连接）
