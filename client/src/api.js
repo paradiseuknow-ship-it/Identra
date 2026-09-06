@@ -47,6 +47,11 @@ export const api = {
   checkTemplate: (id) => req('GET', '/templates/' + id + '/check'),
   profileIntegrity: (id) => req('GET', '/profiles/' + id + '/integrity'),
 
+  // settings（C14 运行时设置中心）
+  getSettings: () => req('GET', '/settings'),
+  updateSettings: (b) => req('PUT', '/settings', b),
+  testLlm: (b) => req('POST', '/settings/test', b),
+
   // browser
   launch: (id) => req('POST', '/browser/' + id + '/launch'),
   stop: (id) => req('POST', '/browser/' + id + '/stop'),

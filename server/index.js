@@ -17,6 +17,8 @@ const path = require('path');
 const db = require('./db');
 const browserManager = require('./browserManager');
 const vault = require('./vault');
+const settings = require('./settings'); // C14：运行时设置中心（保存即改 process.env，无需重启）
+settings.applyToEnv(); // 启动时应用已保存的覆盖（settings 已设置的字段优先于 .env）
 const { generateFingerprint, seedFromProfile } = require('./fp/generate');
 const { runIntegrityCheck } = require('./integrity');
 const { runWorkflow } = require('./automation/engine');
@@ -813,6 +815,37 @@ vaultRouter.post('/vault/:id', (req, res) => {
   }
 });
 
+// ---------------- Settings (C14: 运行时设置中心) ----------------
+// GET = 掩码视图 + env 对账（任何已认证用户可读）；PUT/POST test = workspace:update（ADMIN/OWNER）。
+// apiKey 永不明文出站（settings.getMasked 只回 last4 掩码）；testLlm 结果也绝不含 key。
+const settingsRouter = express.Router();
+settingsRouter.get('/settings', (req, res) => {
+  try { res.json(settings.getMasked()); }
+  catch (e) { res.status(500).json({ error: String(e.message || e).slice(0, 300) }); }
+});
+settingsRouter.put('/settings', (req, res) => {
+  const u = req.identityUser;
+  try { identity.assertCan(u && u.id, u && u.currentWorkspaceId, 'workspace:update'); }
+  catch (e) { return res.status(e.status || 403).json({ ok: false, error: e.status === 401 ? 'UNAUTHORIZED' : String(e.message || e) }); }
+  try {
+    const masked = settings.updateSettings(req.body || {});
+    auditReq(req, 'settings.update', 'settings', 'runtime', { fields: Object.keys(req.body || {}) });
+    res.json({ ok: true, settings: masked });
+  } catch (e) {
+    // FPB_MASTER_KEY 缺失等加密拒绝 → JSON 错误而非裸 500
+    res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
+  }
+});
+settingsRouter.post('/settings/test', (req, res) => {
+  const u = req.identityUser;
+  try { identity.assertCan(u && u.id, u && u.currentWorkspaceId, 'workspace:update'); }
+  catch (e) { return res.status(e.status || 403).json({ ok: false, error: e.status === 401 ? 'UNAUTHORIZED' : String(e.message || e) }); }
+  settings.testLlm(req.body || {}).then((r) => {
+    auditReq(req, 'settings.test', 'settings', 'runtime', { ok: r.ok, error: r.error || null });
+    res.json(r);
+  }).catch((e) => res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }));
+});
+
 // ---------------- Tasks (工作流) ----------------
 // CAP-O2：workflow task 升级为 workspace-scoped 资源（task:manage = ADMIN/OWNER）
 const taskRouter = express.Router();
@@ -938,7 +971,7 @@ cookieRouter.post('/cookies/:id/import', async (req, res) => {
 // CAP-O1：身份路由（register/login 公开；me/workspaces 自管权限）挂机器级边界之前；
 //          identityResolver 先解析 req.identityUser，requireAuth 对已解析身份放行。
 app.use('/api/auth', identity.router);
-app.use('/api', identity.identityResolver, requireAuth, identity.enforceApiKeyWriteGuard, router, templateRouter, proxyRouter, browserRouter, vaultRouter, taskRouter, automationRouter, cookieRouter);
+app.use('/api', identity.identityResolver, requireAuth, identity.enforceApiKeyWriteGuard, router, templateRouter, proxyRouter, browserRouter, vaultRouter, settingsRouter, taskRouter, automationRouter, cookieRouter);
 
 // AI Browser Operator（Phase 1.1 基础设施）
 app.use('/api/ai', identity.identityResolver, requireAuth, identity.enforceApiKeyWriteGuard, require('./agent'));

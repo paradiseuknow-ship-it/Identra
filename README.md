@@ -70,10 +70,11 @@ data/                 # 运行时存储（gitignore）
 .benchmark/           # 取证与报告（gitignore）
 ```
 
-## 当前基线（2026-09-06）
+## 当前基线（2026-09-07）
 - **可靠性**：v2 池 100 任务 × 真实 deepseek：run3b→run6 = 95% → 97% → 98% → **99% SUCCESS**（唯一非 SUCCESS = CREDIBLE_BUSINESS 可信升级，按设计工作）
-- **回归护栏**：runRegression **112/0**（308s）+ phase9 **OK=105/BAD=0**（历史最佳）
+- **回归护栏**：runRegression **118/0**（295s）+ phase9 **OK=111/BAD=0**（C14 后历史最佳）
 - **身份架构**：16-B 全家族收口（6 Native ACTIVE + languages CONFIG + brands/screen CLOSED，详见 `.benchmark/PHASE16B_ROI_GATE.md`）
+- **交付**：C14 系统设置中心上线 —— API key / 模型配置 UI 化（密文落盘 + 保存即生效 + 连通测试 + env 对账）
 
 ## 合规与安全
 - 指纹伪装 + 自动化是**双用途**能力：适用于自测注册/支付流程、管理你拥有或获明确授权的账号、无障碍自动化等合法场景。
@@ -84,7 +85,7 @@ data/                 # 运行时存储（gitignore）
 ## 环境变量（.env）
 | 变量 | 必填 | 说明 |
 |------|------|------|
-| `DEEPSEEK_API_KEY` | AI 任务必填 | DeepSeek API key（缺省时 AI 任务 fail-fast，Profile 管理不受影响） |
+| `DEEPSEEK_API_KEY` | AI 任务必填 | DeepSeek API key（**推荐直接在 UI「系统设置」里配置**，密文落盘、保存即生效；缺省时 AI 任务 fail-fast，Profile 管理不受影响） |
 | `FPB_MASTER_KEY` | 建议 | 保险库主密钥（base64 32 字节）；不设则一次性内存密钥 |
 | `FPB_NATIVE_CHROME` | 可选 | 指向 native patched chrome.exe（启用 16-B Native 身份架构） |
 | `FPB_SCENARIO_DIR` / `FPB_POOL_FILE` | 可选 | 基准任务池覆盖（v2 池） |
