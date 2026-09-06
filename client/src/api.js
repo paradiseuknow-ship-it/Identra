@@ -73,6 +73,12 @@ export const api = {
   workerStop: (id) => req('POST', '/ai/execution/workers/' + id + '/stop', {}),
   schedulerCtl: (action) => req('POST', '/ai/execution/scheduler/' + action, {}),
 
+  // intelligence（C24 智能记忆：站点画像 / 流记忆 / 失败知识，只读出口）
+  intelSites: () => req('GET', '/ai/intelligence/sites'),
+  intelSiteDetail: (site) => req('GET', '/ai/intelligence/sites/' + encodeURIComponent(site)),
+  intelFlows: () => req('GET', '/ai/intelligence/flows'),
+  intelFailures: () => req('GET', '/ai/intelligence/failures'),
+
   // browser
   launch: (id) => req('POST', '/browser/' + id + '/launch'),
   stop: (id) => req('POST', '/browser/' + id + '/stop'),
