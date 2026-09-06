@@ -1,9 +1,25 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
+
+const HEALTH_STYLE = {
+  healthy: 'bg-emerald-600/30 text-emerald-300',
+  unchecked: 'bg-slate-700 text-slate-300',
+  degraded: 'bg-amber-600/30 text-amber-300',
+  dead: 'bg-rose-600/30 text-rose-300',
+};
+const HEALTH_LABEL = { healthy: '健康', unchecked: '未检', degraded: '降级', dead: '失效' };
 
 export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }) {
   const [form, setForm] = useState({ name: '', type: 'socks5', server: '', username: '', password: '', refreshUrl: '', ipLookupChannel: 'ipify' });
   const [checking, setChecking] = useState(null);
+  const [health, setHealth] = useState(null);
+
+  const loadHealth = useCallback(async () => {
+    try { setHealth(await api.proxyHealth()); } catch { /* 健康度加载失败不阻塞主列表 */ }
+  }, []);
+  useEffect(() => { loadHealth(); }, [loadHealth]);
+
+  const healthOf = (id) => health && health.items && health.items.find((x) => x.id === id);
 
   const add = async () => {
     if (!form.server) return notify('请填写 server', false);
@@ -17,7 +33,7 @@ export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }
     try {
       const r = await api.checkProxy(id);
       notify(r.ok ? `检测通过: ${r.ip} (${r.latencyMs}ms)` : `检测失败: ${r.error}`);
-      onChange();
+      onChange(); loadHealth();
     } catch (e) { notify(e.message, false); }
     finally { setChecking(null); }
   };
@@ -30,7 +46,21 @@ export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }
 
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-4">代理管理</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-semibold">代理管理</h2>
+        {health && (
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-500">池健康度 ({health.total}):</span>
+            {['healthy', 'unchecked', 'degraded', 'dead'].map((k) => (
+              health.summary[k] > 0 && (
+                <span key={k} className={`px-2 py-0.5 rounded ${HEALTH_STYLE[k]}`}>
+                  {HEALTH_LABEL[k]} {health.summary[k]}
+                </span>
+              )
+            ))}
+          </div>
+        )}
+      </div>
       <div className="rounded-lg border border-edge bg-panel p-4 mb-4">
         <div className="text-sm font-medium text-slate-300 mb-2">新增代理</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -62,6 +92,12 @@ export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }
               {p.lastCheck && (
                 <span className={`ml-2 ${p.lastCheck.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
                   {p.lastCheck.ok ? `✓ ${p.lastCheck.ip} ${p.lastCheck.latencyMs}ms` : `✗ ${p.lastCheck.error}`}
+                </span>
+              )}
+              {healthOf(p.id) && (
+                <span className={`ml-2 px-1.5 py-0.5 rounded text-xs ${HEALTH_STYLE[healthOf(p.id).status] || HEALTH_STYLE.unchecked}`}>
+                  {HEALTH_LABEL[healthOf(p.id).status] || '未检'}
+                  {healthOf(p.id).checked ? ` · ${healthOf(p.id).checked}次` : ''}
                 </span>
               )}
             </div>

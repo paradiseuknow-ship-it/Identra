@@ -82,8 +82,10 @@ function normalizeOverride(raw) {
 function validateTemplateInput(input) {
   const name = String((input && input.name) || '').trim();
   if (name.length < 1 || name.length > 60) throw err400('模板名必填（1-60 字符）');
-  if (input.os !== undefined && typeof input.os !== 'string') throw err400('os 必须是字符串');
-  if (input.browser !== undefined && typeof input.browser !== 'string') throw err400('browser 必须是字符串');
+  // null = 不约束（createTemplate 归一化产物；updateTemplate 合并 tpl 旧值时会带回 null，
+  // C13 修复：null 与 undefined 同为「未约束」语义，否则未约束模板的编辑永远 400）
+  if (input.os !== undefined && input.os !== null && typeof input.os !== 'string') throw err400('os 必须是字符串');
+  if (input.browser !== undefined && input.browser !== null && typeof input.browser !== 'string') throw err400('browser 必须是字符串');
   const o = normalizeOverride(input.fingerprintOverride);
   if (o.timezone !== undefined && !isTzValid(o.timezone)) throw err400('timezone 不是有效 IANA 时区: ' + o.timezone);
   if (o.timezoneOffset !== undefined && !Number.isInteger(o.timezoneOffset)) throw err400('timezoneOffset 必须是整数分钟');

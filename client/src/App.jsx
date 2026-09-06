@@ -6,6 +6,7 @@ import TaskPanel from './components/TaskPanel';
 import BrowserViewer from './components/BrowserViewer';
 import AiPanel from './components/AiPanel';
 import ObservabilityPanel from './components/ObservabilityPanel';
+import TemplatesPanel from './components/TemplatesPanel';
 import TaskDetail from './components/TaskDetail';
 
 export default function App() {
@@ -59,7 +60,77 @@ export default function App() {
     });
   };
 
+  const exportCookies = async (id) => {
+    try {
+      const cookies = await api.exportCookies(id);
+      const blob = new Blob([JSON.stringify(cookies, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `cookies-${id}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      notify(`已导出 ${cookies.length} 条 Cookie`);
+    } catch (e) { notify(e.message, false); }
+  };
+
+  const [batch, setBatch] = useState(null); // { count, namePrefix } | null
+  const [batching, setBatching] = useState(false);
+
+  const runBatch = async () => {
+    const count = Number(batch.count);
+    if (!Number.isInteger(count) || count < 1 || count > 50) return notify('count 必须是 1-50 的整数', false);
+    setBatching(true);
+    try {
+      const r = await api.batchCreateProfiles({ count, namePrefix: batch.namePrefix || '批量配置' });
+      notify(`批量建号完成: 成功 ${r.created ? r.created.length : 0} / 失败 ${r.errors ? r.errors.length : 0}`);
+      setBatch(null);
+      await loadProfiles();
+    } catch (e) { notify(e.message, false); }
+    finally { setBatching(false); }
+  };
+
   const addNew = () => setEditing({ name: '', group: 'default', headless: false, proxyMode: 'inline', proxyId: null, fingerprintOverride: {} });
+
+  const rotate = async (id) => {
+    try {
+      const r = await api.rotateProfileProxy(id);
+      if (r.rotated) notify(`已换线: ${r.from || '无'} → ${r.to && r.to.name}`);
+      else notify(`无需换线: ${r.reason || '当前代理健康'}`);
+      await loadProfiles();
+    } catch (e) { notify(e.message, false); }
+  };
+
+  const exportProfiles = async () => {
+    try {
+      const data = await api.exportProfiles();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `profiles-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      notify('已导出（凭据不在导出文件内）');
+    } catch (e) { notify(e.message, false); }
+  };
+
+  const importProfiles = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      try {
+        const parsed = JSON.parse(await file.text());
+        const items = Array.isArray(parsed) ? parsed : parsed.profiles;
+        if (!Array.isArray(items)) throw new Error('文件格式不正确（需要 profiles 数组）');
+        const r = await api.importProfiles({ profiles: items });
+        notify(`导入完成: 成功 ${r.imported ? r.imported.length : 0} / 失败 ${r.errors ? r.errors.length : 0}`);
+        await loadProfiles();
+      } catch (e) { notify(e.message, false); }
+    };
+    input.click();
+  };
 
   const onSaved = () => { setEditing(null); loadProfiles(); };
 
@@ -72,7 +143,7 @@ export default function App() {
 
       <div className="flex flex-1 min-h-0">
         <nav className="w-48 border-r border-edge bg-panel/60 p-3 space-y-1">
-          {[['profiles', '配置管理'], ['proxies', '代理管理'], ['tasks', '自动化任务'], ['ai', 'AI 操作员'], ['observability', 'Observability']].map(([k, label]) => (
+          {[['profiles', '配置管理'], ['templates', '指纹模板'], ['proxies', '代理管理'], ['tasks', '自动化任务'], ['ai', 'AI 操作员'], ['observability', 'Observability']].map(([k, label]) => (
             <button key={k}
               onClick={() => setTab(k)}
               className={`w-full text-left px-3 py-2 rounded ${tab === k ? 'bg-sky-600 text-white' : 'hover:bg-edge text-slate-300'}`}>
@@ -87,8 +158,11 @@ export default function App() {
               profiles={profiles} proxies={proxies}
               onAdd={addNew} onEdit={setEditing} onLaunch={launch} onStop={stop}
               onDuplicate={duplicate} onRemove={remove} onView={setViewingId}
+              onRotate={rotate} onExport={exportProfiles} onImport={importProfiles}
+              notify={notify} onBatch={() => setBatch({ count: 5, namePrefix: '批量配置' })}
             />
           )}
+          {tab === 'templates' && <TemplatesPanel notify={notify} requestConfirm={requestConfirm} />}
           {tab === 'proxies' && <ProxyPanel proxies={proxies} onChange={loadProxies} notify={notify} requestConfirm={requestConfirm} />}
           {tab === 'tasks' && <TaskPanel profiles={profiles} notify={notify} onLog={setRunLog} requestConfirm={requestConfirm} />}
           {tab === 'ai' && <AiPanel profiles={profiles} notify={notify} onViewDetail={setDetailId} />}
@@ -138,12 +212,29 @@ export default function App() {
   );
 }
 
-function ProfilesTab({ profiles, proxies, onAdd, onEdit, onLaunch, onStop, onDuplicate, onRemove, onView }) {
+function ProfilesTab({ profiles, proxies, onAdd, onEdit, onLaunch, onStop, onDuplicate, onRemove, onView, onRotate, onExport, onImport, onBatch, notify }) {
+  const [integrity, setIntegrity] = useState(null); // { id, report } | null
+  const [checkingId, setCheckingId] = useState(null);
+
+  const runIntegrity = async (p) => {
+    setCheckingId(p.id);
+    try {
+      const report = await api.profileIntegrity(p.id);
+      setIntegrity({ id: p.id, name: p.name, report });
+    } catch (e) { notify(e.message, false); }
+    finally { setCheckingId(null); }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold">配置（{profiles.length}）</h2>
-        <button onClick={onAdd} className="px-3 py-1.5 rounded bg-sky-600 text-white text-sm hover:bg-sky-500">+ 新建配置</button>
+        <div className="flex gap-2">
+          <button onClick={onImport} className="px-3 py-1.5 rounded bg-edge hover:bg-slate-700 text-slate-200 text-sm">导入</button>
+          <button onClick={onExport} className="px-3 py-1.5 rounded bg-edge hover:bg-slate-700 text-slate-200 text-sm">导出</button>
+          <button onClick={onBatch} className="px-3 py-1.5 rounded bg-edge hover:bg-slate-700 text-slate-200 text-sm" title="同模板基线 + 每号独立 seed（同形不同样）">批量</button>
+          <button onClick={onAdd} className="px-3 py-1.5 rounded bg-sky-600 text-white text-sm hover:bg-sky-500">+ 新建配置</button>
+        </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {profiles.map((p) => (
@@ -182,17 +273,78 @@ function ProfilesTab({ profiles, proxies, onAdd, onEdit, onLaunch, onStop, onDup
                 <>
                   <button onClick={() => onView(p.id)} className="px-2 py-1 rounded bg-sky-600/80 hover:bg-sky-600 text-white">查看</button>
                   <button onClick={() => onStop(p.id)} className="px-2 py-1 rounded bg-rose-600/80 hover:bg-rose-600 text-white">停止</button>
+                  <button onClick={() => exportCookies(p.id)} className="px-2 py-1 rounded bg-edge hover:bg-slate-700" title="导出运行中浏览器的全部 Cookie（JSON）">Cookie</button>
                 </>
               ) : (
                 <button onClick={() => onLaunch(p.id)} className="px-2 py-1 rounded bg-emerald-600/80 hover:bg-emerald-600 text-white">启动</button>
               )}
               <button onClick={() => onEdit(p)} className="px-2 py-1 rounded bg-edge hover:bg-slate-700">编辑</button>
               <button onClick={() => onDuplicate(p.id)} className="px-2 py-1 rounded bg-edge hover:bg-slate-700">复制</button>
+              {p.proxyId && (
+                <button onClick={() => onRotate(p.id)} className="px-2 py-1 rounded bg-edge hover:bg-slate-700" title="把保存代理换到同池健康替补">换线</button>
+              )}
+              <button onClick={() => runIntegrity(p)} disabled={checkingId === p.id}
+                className="px-2 py-1 rounded bg-edge hover:bg-slate-700 disabled:opacity-50"
+                title="指纹一致性体检（启动态镜像）">
+                {checkingId === p.id ? '体检中…' : '体检'}
+              </button>
               <button onClick={() => onRemove(p.id)} className="px-2 py-1 rounded bg-edge hover:bg-rose-700 text-rose-300">删除</button>
             </div>
           </div>
         ))}
       </div>
+
+      {batch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => !batching && setBatch(null)}>
+          <div className="w-96 rounded-lg border border-edge bg-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="font-medium mb-4">批量建号</div>
+            <div className="space-y-3 text-sm">
+              <label className="block">
+                <span className="text-slate-400 text-xs">数量（1-50）</span>
+                <input type="number" min="1" max="50" className="inp w-full mt-1" value={batch.count}
+                  onChange={(e) => setBatch({ ...batch, count: e.target.value })} />
+              </label>
+              <label className="block">
+                <span className="text-slate-400 text-xs">名称前缀</span>
+                <input className="inp w-full mt-1" value={batch.namePrefix}
+                  onChange={(e) => setBatch({ ...batch, namePrefix: e.target.value })} />
+              </label>
+              <div className="text-xs text-slate-500">稳定字段共享基线，噪声字段每号独立派生（「同形不同样」）。</div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setBatch(null)} disabled={batching} className="px-3 py-1.5 rounded bg-edge hover:bg-slate-700 text-slate-200 text-sm">取消</button>
+              <button onClick={runBatch} disabled={batching} className="px-3 py-1.5 rounded bg-sky-600 hover:bg-sky-500 text-white text-sm disabled:opacity-50">
+                {batching ? '创建中…' : '创建'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {integrity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setIntegrity(null)}>
+          <div className="w-[560px] max-h-[70vh] overflow-auto rounded-lg border border-edge bg-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-medium">
+                指纹体检 — {integrity.name}
+                <span className={`ml-2 px-2 py-0.5 rounded text-xs ${integrity.report.pass ? 'bg-emerald-600/30 text-emerald-300' : 'bg-amber-600/30 text-amber-300'}`}>
+                  {integrity.report.status}
+                </span>
+              </div>
+              <button onClick={() => setIntegrity(null)} className="text-slate-400 hover:text-slate-200">✕</button>
+            </div>
+            <div className="space-y-1 text-xs font-mono">
+              {(integrity.report.results || []).map((r, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <span className={r.ok ? 'text-emerald-400' : 'text-amber-400'}>{r.ok ? '✓' : '⚠'}</span>
+                  <span className="text-slate-500 w-20 shrink-0">{r.area}</span>
+                  <span className="text-slate-300">{r.msg}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

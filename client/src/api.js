@@ -31,6 +31,21 @@ export const api = {
   checkProxy: (id) => req('POST', '/proxies/' + id + '/check'),
   checkProxyGeo: (id) => req('POST', '/proxies/' + id + '/check-geo'),
   checkInlineProxy: (b) => req('POST', '/proxies/check-inline', b),
+  proxyHealth: () => req('GET', '/proxies/health'),
+  rotateProfileProxy: (profileId) => req('POST', '/proxies/rotate', { profileId }),
+
+  // profiles 迁移 / 体检（CAP-C1 / integrity）
+  exportProfiles: () => req('GET', '/profiles/export'),
+  importProfiles: (b) => req('POST', '/profiles/import', b),
+  batchCreateProfiles: (b) => req('POST', '/profiles/batch', b),
+
+  // templates（CAP-A1 指纹模板库）
+  listTemplates: () => req('GET', '/templates'),
+  createTemplate: (b) => req('POST', '/templates', b),
+  updateTemplate: (id, b) => req('PUT', '/templates/' + id, b),
+  deleteTemplate: (id) => req('DELETE', '/templates/' + id),
+  checkTemplate: (id) => req('GET', '/templates/' + id + '/check'),
+  profileIntegrity: (id) => req('GET', '/profiles/' + id + '/integrity'),
 
   // browser
   launch: (id) => req('POST', '/browser/' + id + '/launch'),

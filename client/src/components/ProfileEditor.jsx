@@ -62,6 +62,11 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [fpError, setFpError] = useState(null);
+  const [templates, setTemplates] = useState([]); // C13：新建时的可选模板基线
+
+  useEffect(() => {
+    if (isNew) api.listTemplates().then(setTemplates).catch(() => {});
+  }, [isNew]);
 
   const sectionRefs = {
     basic: useRef(null),
@@ -302,6 +307,14 @@ function BasicTab({ form, setField, setOv }) {
           <Field label="分组"><input className="inp" value={form.group} onChange={(e) => setField('group', e.target.value)} /></Field>
           <Field label="标签 (逗号分隔)"><input className="inp" value={form.tags} onChange={(e) => setField('tags', e.target.value)} placeholder="例如: 电商, 美国" /></Field>
           <Field label="指纹种子"><input className="inp" value={form.seed} onChange={(e) => setField('seed', e.target.value)} placeholder="留空自动生成" /></Field>
+          {isNew && (
+            <Field label="指纹模板 (可选基线)">
+              <select className="inp" value={form.templateId || ''} onChange={(e) => setField('templateId', e.target.value || undefined)}>
+                <option value="">不使用模板</option>
+                {(templates || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </Field>
+          )}
         </div>
         <div className="mt-3"><Field label="备注"><textarea className="inp w-full" rows={2} value={form.notes} onChange={(e) => setField('notes', e.target.value)} /></Field></div>
       </Section>
@@ -830,6 +843,7 @@ function buildPayload(form) {
     tags: parseTags(form.tags),
     notes: form.notes,
     seed: form.seed || undefined,
+    templateId: form.templateId || undefined,
     headless: form.headless,
     proxyMode: form.proxyMode,
     proxyId: form.proxyMode === 'saved' ? form.proxyId : null,

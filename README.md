@@ -27,7 +27,7 @@ npx playwright install chromium
 npm run dev     # 开发模式（后端 8787 + 前端 5173 热更新）
 npm start       # 仅后端（生产/长跑）
 npm run build   # 前端构建（client/dist）
-npm test        # 全量回归（runRegression.js 115 项 + phase9 108 项双护栏）
+npm test        # 全量回归（runRegression.js 116 项 + phase9 109 项双护栏）
 ```
 
 前端控制台：`http://localhost:5173`（开发）/ 后端 API：`http://localhost:8787`。
