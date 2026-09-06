@@ -52,6 +52,13 @@ export const api = {
   updateSettings: (b) => req('PUT', '/settings', b),
   testLlm: (b) => req('POST', '/settings/test', b),
 
+  // schedules（C17 定时调度，挂 /api/ai/schedules）
+  listSchedules: () => req('GET', '/ai/schedules'),
+  createSchedule: (b) => req('POST', '/ai/schedules', b),
+  updateSchedule: (id, b) => req('PUT', '/ai/schedules/' + id, b),
+  deleteSchedule: (id) => req('DELETE', '/ai/schedules/' + id),
+  triggerSchedule: (id) => req('POST', '/ai/schedules/' + id + '/trigger'),
+
   // browser
   launch: (id) => req('POST', '/browser/' + id + '/launch'),
   stop: (id) => req('POST', '/browser/' + id + '/stop'),

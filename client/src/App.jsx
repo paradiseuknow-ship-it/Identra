@@ -8,6 +8,7 @@ import AiPanel from './components/AiPanel';
 import ObservabilityPanel from './components/ObservabilityPanel';
 import TemplatesPanel from './components/TemplatesPanel';
 import SettingsPanel from './components/SettingsPanel';
+import SchedulesPanel from './components/SchedulesPanel';
 import TaskDetail from './components/TaskDetail';
 
 export default function App() {
@@ -144,7 +145,7 @@ export default function App() {
 
       <div className="flex flex-1 min-h-0">
         <nav className="w-48 border-r border-edge bg-panel/60 p-3 space-y-1">
-          {[['profiles', '配置管理'], ['templates', '指纹模板'], ['proxies', '代理管理'], ['tasks', '自动化任务'], ['ai', 'AI 操作员'], ['observability', 'Observability'], ['settings', '系统设置']].map(([k, label]) => (
+                    {[['profiles', '配置管理'], ['templates', '指纹模板'], ['proxies', '代理管理'], ['tasks', '自动化任务'], ['ai', 'AI 操作员'], ['schedules', '定时调度'], ['observability', 'Observability'], ['settings', '系统设置']].map(([k, label]) => (
             <button key={k}
               onClick={() => setTab(k)}
               className={`w-full text-left px-3 py-2 rounded ${tab === k ? 'bg-sky-600 text-white' : 'hover:bg-edge text-slate-300'}`}>
@@ -167,6 +168,7 @@ export default function App() {
           {tab === 'proxies' && <ProxyPanel proxies={proxies} onChange={loadProxies} notify={notify} requestConfirm={requestConfirm} />}
           {tab === 'tasks' && <TaskPanel profiles={profiles} notify={notify} onLog={setRunLog} requestConfirm={requestConfirm} />}
           {tab === 'ai' && <AiPanel profiles={profiles} notify={notify} onViewDetail={setDetailId} onGoToSettings={() => setTab('settings')} />}
+          {tab === 'schedules' && <SchedulesPanel profiles={profiles} notify={notify} requestConfirm={requestConfirm} />}
           {tab === 'observability' && <ObservabilityPanel onViewDetail={setDetailId} />}
         </main>
       </div>
