@@ -19,6 +19,7 @@ const path = require('path');
 const db = require('./db');
 const browserManager = require('./browserManager');
 const vault = require('./vault');
+const backup = require('./backup');
 const settings = require('./settings'); // C14：运行时设置中心（保存即改 process.env，无需重启）
 settings.applyToEnv(); // 启动时应用已保存的覆盖（settings 已设置的字段优先于 .env）
 const { generateFingerprint, seedFromProfile } = require('./fp/generate');
@@ -854,6 +855,34 @@ settingsRouter.post('/settings/test', (req, res) => {
     auditReq(req, 'settings.test', 'settings', 'runtime', { ok: r.ok, error: r.error || null });
     res.json(r);
   }).catch((e) => res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }));
+});
+
+// ---------------- Backup / Restore（C22 数据备份） ----------------
+settingsRouter.get('/backup/export', (req, res) => {
+  const u = req.identityUser;
+  try { identity.assertCan(u && u.id, u && u.currentWorkspaceId, 'workspace:update'); }
+  catch (e) { return res.status(e.status || 403).json({ ok: false, error: e.status === 401 ? 'UNAUTHORIZED' : String(e.message || e) }); }
+  try {
+    const snap = backup.collectSnapshot();
+    auditReq(req, 'backup.export', 'backup', 'data', { files: Object.keys(snap.files).length });
+    res.attachment('identra-backup-' + new Date(snap.createdAt).toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.json');
+    res.json(snap);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) });
+  }
+});
+
+settingsRouter.post('/backup/restore', (req, res) => {
+  const u = req.identityUser;
+  try { identity.assertCan(u && u.id, u && u.currentWorkspaceId, 'workspace:delete'); } // 恢复=全量覆盖 → 最严格档
+  catch (e) { return res.status(e.status || 403).json({ ok: false, error: e.status === 401 ? 'UNAUTHORIZED' : String(e.message || e) }); }
+  try {
+    const r = backup.restoreSnapshot(req.body || {});
+    auditReq(req, 'backup.restore', 'backup', 'data', { restored: r.restored.length, preRestoreDir: r.preRestoreDir });
+    res.json({ ok: true, restored: r.restored, preRestoreDir: r.preRestoreDir, note: '恢复前旧数据已快照到 pre-restore 目录；建议重启服务确保全部模块重新读盘' });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
+  }
 });
 
 // ---------------- Tasks (工作流) ----------------

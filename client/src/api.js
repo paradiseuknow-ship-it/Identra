@@ -53,6 +53,9 @@ export const api = {
   testLlm: (b) => req('POST', '/settings/test', b),
   // profiles 运行态快照（C20）
   profileRuntime: () => req('GET', '/profiles/runtime'),
+  // 数据备份（C22）
+  exportBackup: () => req('GET', '/backup/export'),
+  restoreBackup: (snapshot) => req('POST', '/backup/restore', snapshot),
 
   // schedules（C17 定时调度，挂 /api/ai/schedules）
   listSchedules: () => req('GET', '/ai/schedules'),
@@ -60,6 +63,15 @@ export const api = {
   updateSchedule: (id, b) => req('PUT', '/ai/schedules/' + id, b),
   deleteSchedule: (id) => req('DELETE', '/ai/schedules/' + id),
   triggerSchedule: (id) => req('POST', '/ai/schedules/' + id + '/trigger'),
+
+  // execution engine（C23 执行引擎：scheduler + worker 池 + 队列 + 资源池）
+  executionStatus: () => req('GET', '/ai/execution/scheduler/status'),
+  executionQueue: () => req('GET', '/ai/execution/queue'),
+  executionWorkers: () => req('GET', '/ai/execution/workers'),
+  executionResources: () => req('GET', '/ai/execution/resources'),
+  workerStart: (b) => req('POST', '/ai/execution/workers/start', b || {}),
+  workerStop: (id) => req('POST', '/ai/execution/workers/' + id + '/stop', {}),
+  schedulerCtl: (action) => req('POST', '/ai/execution/scheduler/' + action, {}),
 
   // browser
   launch: (id) => req('POST', '/browser/' + id + '/launch'),

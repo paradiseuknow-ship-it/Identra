@@ -55,6 +55,32 @@ export default function SettingsPanel({ notify }) {
     finally { setTesting(false); }
   }
 
+  async function exportBackup() {
+    try {
+      const snap = await api.exportBackup();
+      const blob = new Blob([JSON.stringify(snap, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'identra-backup-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.json';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      notify('备份已导出（' + Object.keys(snap.files || {}).length + ' 个文件）');
+    } catch (e) { notify('备份导出失败: ' + e.message, false); }
+  }
+
+  async function restoreBackup(ev) {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = ''; // 允许重复选择同一文件
+    if (!file) return;
+    if (!window.confirm('恢复将全量覆盖当前数据（Profile/代理/凭据/AI 记忆）。当前数据会自动快照到 pre-restore 目录。确定继续？')) return;
+    try {
+      const text = await file.text();
+      const snapshot = JSON.parse(text);
+      const r = await api.restoreBackup(snapshot);
+      notify('恢复完成（' + r.restored.length + ' 个文件）。建议重启服务确保全部模块重新读盘。');
+    } catch (e) { notify('恢复失败: ' + e.message, false); }
+  }
+
   if (!data) return <div className="text-slate-400 text-sm p-6">加载中…</div>;
 
   const llm = data.llm || {};
@@ -157,6 +183,20 @@ export default function SettingsPanel({ notify }) {
             </div>
           ))}
         </div>
+      </div>
+      {/* 数据备份 / 恢复（C22） */}
+      <div className="bg-panel/60 border border-edge rounded-lg p-4">
+        <div className="text-sm font-medium text-slate-200 mb-1">数据备份 / 恢复</div>
+        <div className="text-xs text-slate-500 mb-3">全量快照含 Profile、代理、加密凭据（密文）与 AI 记忆。备份文件请妥善保管——含加密凭据数据，丢失主密钥无法解密。</div>
+        <div className="flex gap-2">
+          <button onClick={exportBackup}
+            className="px-3 py-1.5 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs">导出备份（下载 JSON）</button>
+          <label className="px-3 py-1.5 rounded border border-rose-500/40 text-rose-400 hover:bg-rose-500/10 text-xs cursor-pointer">
+            恢复备份（全量覆盖）
+            <input type="file" accept=".json,application/json" className="hidden" onChange={restoreBackup} />
+          </label>
+        </div>
+        <div className="text-xs text-slate-600 mt-2">恢复前旧数据自动快照到 data/backups/pre-restore-*；恢复后建议重启服务。</div>
       </div>
     </div>
   );
