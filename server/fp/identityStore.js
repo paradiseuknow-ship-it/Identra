@@ -18,7 +18,11 @@ const path = require('path');
 const { assertSafeName, resolveWithin } = require('../security/safePath');
 const { assertValidIdentity, IdentityError, canonicalIdentityString } = require('./identitySchema');
 
-const PROFILES_ROOT = path.join(__dirname, '..', '..', 'data', 'profiles');
+// C46：补接 CAP-O1 FPB_DATA_DIR 隔离约定（与 browserManager.PROFILES_ROOT 同步解析），
+// 保证 identity.json 与 userDataDir 永远同根——测试环境两者随 FPB_DATA_DIR 一起落到 tmp。
+const PROFILES_ROOT = process.env.FPB_DATA_DIR
+  ? path.resolve(process.env.FPB_DATA_DIR, 'profiles')
+  : path.join(__dirname, '..', '..', 'data', 'profiles');
 
 function identityFilePath(profileId, rootOverride) {
   const root = rootOverride ? path.resolve(rootOverride) : PROFILES_ROOT;

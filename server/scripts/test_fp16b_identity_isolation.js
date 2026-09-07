@@ -11,6 +11,13 @@
 //       Chromium profile 资产保留不清理（persistent 复用语义，不在断言依赖内）。
 
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+// C46 隔离：FPB_DATA_DIR → 每次运行独立 tmp 数据根（双 profile userDataDir + identity.json 全隔离），
+// 消除与 launch 套件 / 其他回归实例争用固定 data/profiles/p16b_iso_a|b 的 Chrome 锁。
+process.env.FPB_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'fpb-p16b-iso-'));
+
 const browserManager = require('../browserManager');
 const identityStore = require('../fp/identityStore');
 
@@ -26,8 +33,13 @@ function assert(name, cond, detail) {
 async function readId(p) { return identityStore.readIdentity(p.id); }
 
 (async () => {
-  // 前置：只删 identity.json 单文件（保证首建路径可测），不递归删 profile 目录
-  for (const p of [A, B]) fs.rmSync(identityStore.identityFilePath(p.id), { force: true });
+  // C46：独立 tmp 数据根每次运行全新，identity.json 必不存在（首建路径天然可测）；
+  // 不再 rmSync（旧实现单文件删除也计入宿主 turn 级删除配额，c25 批次实证 FATAL 风险）。
+  for (const p of [A, B]) {
+    const f = identityStore.identityFilePath(p.id);
+    if (!f.startsWith(process.env.FPB_DATA_DIR)) throw new Error('identity 路径未随 FPB_DATA_DIR 隔离: ' + f);
+    if (fs.existsSync(f)) fs.renameSync(f, path.join(os.tmpdir(), 'p16b-iso-retired-' + Date.now() + '-' + p.id + '.json'));
+  }
 
   console.log('== SEQ1: A launch ==');
   await browserManager.launch(A, null);

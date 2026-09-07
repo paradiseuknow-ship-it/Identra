@@ -9,6 +9,13 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+
+// C46 隔离：FPB_DATA_DIR → 每次运行独立 tmp 数据根（userDataDir + identity.json 全隔离）。
+// 根因：此前固定写 data/profiles/p16b_identity_smoke，跨回归实例 / 相邻套件争用同一
+// Chrome profile 目录锁 → 偶发 launch 崩溃 FATAL「无统计行」（2026-09-07 C44/C45 实证）。
+process.env.FPB_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'fpb-p16b-launch-'));
+
 const browserManager = require('../browserManager');
 const identityStore = require('../fp/identityStore');
 const { validateIdentity } = require('../fp/identitySchema');
@@ -22,15 +29,10 @@ function assert(name, cond, detail) {
 }
 
 (async () => {
-  // 前置清理：只移除 identity.json 单文件（保证首建路径可测）。
-  // 纪律：禁止递归删除 profile 目录——目录内含完整 Chromium profile（180+ 文件），
-  // 递归 rmSync 会触发宿主 safe-delete bulk 守卫（SAFE_DELETE_BULK_CONFIRM_REQUIRED，
-  // threshold=50 files/turn）导致 runRegression 内 FATAL（2026-09-05 实证）。
-  // Chromium profile 文件（Default/ 等）属 persistent 复用资产、不在断言依赖内，保留不清理。
-  // 2026-09-07 补强：单文件 rmSync 也计入宿主 turn 级删除配额——phase9 批量运行时
-  // 前序套件可能已耗尽 50 配额 → 单文件删除同样 FATAL（c25 批次实证）。
-  // 改为 rename 到 os.tmpdir：原路径文件消失（首建语义保持），且不计入删除配额。
+  // C46：独立 tmp 数据根每次运行全新，identity.json 必不存在（首建路径天然可测）；
+  // 下方守卫仅在极端 pid 复用撞目录时触发（rename 不计宿主删除配额）。
   const file = identityStore.identityFilePath(PROFILE_ID);
+  if (!file.startsWith(process.env.FPB_DATA_DIR)) throw new Error('identity 路径未随 FPB_DATA_DIR 隔离: ' + file);
   try {
     if (fs.existsSync(file)) {
       fs.mkdirSync(os.tmpdir(), { recursive: true });

@@ -66,7 +66,14 @@ const SYSTEM_CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 
 const { assertSafeName, resolveWithin } = require('./security/safePath');
 
-const PROFILES_ROOT = path.join(__dirname, '..', 'data', 'profiles');
+// C46 真实缺陷（B 类基建）：PROFILES_ROOT 此前硬编码 data/profiles，漏接 CAP-O1 FPB_DATA_DIR
+// 隔离约定（db.js / agent/storage / backup.js / identity.js 均已支持）→ fp16b 真实 launch 测试
+// 与所有 launch 路径固定写 data/profiles/<id>，跨回归实例/相邻套件争用同一 Chrome profile
+// 目录（SingletonLock）→ 偶发 launch 崩溃 FATAL「无统计行」（2026-09-07 C44/C45 两轮实证）。
+// 补齐约定：FPB_DATA_DIR 设置时 profile 目录随数据根隔离；默认路径零变化。
+const PROFILES_ROOT = process.env.FPB_DATA_DIR
+  ? path.resolve(process.env.FPB_DATA_DIR, 'profiles')
+  : path.join(__dirname, '..', 'data', 'profiles');
 
 // STEP 0.5 §2.2：profileId 参与文件系统路径拼接，必须过段名白名单 + 根内解析。
 // 合法 id 形如 p_lz3k9x（字母数字 + 下划线），白名单不会误伤。
@@ -1467,7 +1474,7 @@ function findChromePidsForDir(dir) {
 // 只做一次进程枚举 + Node 侧路径匹配；沙箱/无 powershell 环境 fail-open（枚举为空 → 不杀）。
 function killOrphanChromium() {
   try {
-    const profilesDir = path.join(__dirname, '..', 'data', 'profiles');
+    const profilesDir = PROFILES_ROOT; // C46：随 FPB_DATA_DIR 隔离，不再重复硬编码
     if (!fs.existsSync(profilesDir)) return;
     let dirs = [];
     try { dirs = fs.readdirSync(profilesDir).filter((d) => { try { return fs.statSync(path.join(profilesDir, d)).isDirectory(); } catch (e) { return false; } }); } catch (e) {}
@@ -1513,4 +1520,5 @@ module.exports = {
   humanMove, humanClick, humanType, humanScroll,
   getChromeVersion, captureNativeUaBrands, applyHeadlessBrandContract,
   getPages, switchToPage, openPage, closePage, acceptDialog, dismissDialog,
+  PROFILES_ROOT, // C46：暴露根路径供守护测试断言 FPB_DATA_DIR 隔离解析
 };
