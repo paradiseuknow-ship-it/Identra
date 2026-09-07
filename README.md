@@ -101,7 +101,8 @@ data/                 # 运行时存储（gitignore）
 
 ## 当前基线（2026-09-07）
 - **可靠性**：v2 池 100 任务 × 真实 deepseek：run3b→run6 = 95% → 97% → 98% → **99% SUCCESS**（唯一非 SUCCESS = CREDIBLE_BUSINESS 可信升级，按设计工作）
-- **回归护栏**：runRegression **153/0** + phase9 **OK=146/BAD=0**（C49 后历史最佳；fp16b launch 套件 profile 目录已随 FPB_DATA_DIR tmp 隔离，消除跨实例 Chrome 锁争用 flaky）
+- **回归护栏**：runRegression **154/0** + phase9 **OK=147/BAD=0**（C50 后历史最佳；fp16b launch 套件 profile 目录已随 FPB_DATA_DIR tmp 隔离，消除跨实例 Chrome 锁争用 flaky）
+- **交付 C50 — N-XCONS 双层一致性守护**：native identity.json 驱动下 JS↔HTTP Client Hints 全链实测（test_fp16b_nxcons.js，stock 4/0 + patched 9/0 + 1 边界留痕）——platformVersion 双层承诺实证成立（C2 头层真实跟随）；UA/platform/brands 未驱动面原生同源无断裂；边界 W1（navigator.platform JS 层 vs sec-ch-ua-platform 头 OS 面）显式留痕为 POC #3 冻结单面设计，OS 面联动列为后续扩展。Chrome 151→152 漂移实锤：getHighEntropyValue 单数 API 已移除（存量资产零击穿，全部已用复数）。详见 `.benchmark/C50_NXCONS_CROSS_CONSISTENCY.md`
 - **端点×UI 对账主线完案（C22–C36）**：server 路由与 client 消费差全部闭合或判定不做；遗留端点（/ai/queue、/ai/events、/ai/observability/metrics）已带 RFC 8594 deprecation 标记；/auth/register+login 评估结论 = local 自动身份 + 治理中心建号已闭环 readiness auth 项，不新增登录页
 - **身份架构**：16-B 全家族收口（6 Native ACTIVE + languages CONFIG + brands/screen CLOSED，详见 `.benchmark/PHASE16B_ROI_GATE.md`）
 - **交付**：C35 凭据引用治理 UI（credentialRef 注册/删除/脱敏视图，明文闭环走 Profile 编辑器 vault）+ 任务详情手动恢复按钮；A 类缺陷修复：maskedView 的 available 改为 vault 只读现算（修复「先注册后补录明文 → 列表与 Planner 永远显示不可用」）
