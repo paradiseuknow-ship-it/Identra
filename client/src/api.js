@@ -72,6 +72,13 @@ export const api = {
   workerStart: (b) => req('POST', '/ai/execution/workers/start', b || {}),
   workerStop: (id) => req('POST', '/ai/execution/workers/' + id + '/stop', {}),
   schedulerCtl: (action) => req('POST', '/ai/execution/scheduler/' + action, {}),
+  // C29：执行引擎补齐（提交执行 / 崩溃恢复 / 资源池获取释放）+ 动作契约与策略调试
+  executionSubmit: (b) => req('POST', '/ai/execution/submit', b),
+  executionRecovery: (b) => req('POST', '/ai/execution/recovery', b || {}),
+  resourceAcquire: (b) => req('POST', '/ai/execution/resources/acquire', b),
+  resourceRelease: (b) => req('POST', '/ai/execution/resources/release', b),
+  schemaValidate: (b) => req('POST', '/ai/schema/validate', b),
+  policyDecide: (b) => req('POST', '/ai/policy/decide', b),
 
   // intelligence（C24 智能记忆：站点画像 / 流记忆 / 失败知识，只读出口）
   intelSites: () => req('GET', '/ai/intelligence/sites'),

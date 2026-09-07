@@ -31,6 +31,7 @@ npx playwright install chromium
 npm run dev     # 开发模式（后端 8787 + 前端 5173 热更新）
 npm start       # 仅后端（生产/长跑；自动服务 client/dist 静态前端）
 npm run build   # 前端构建（client/dist）
+FPB_NO_EMPTY_OUT_DIR=1 npm run build   # 零删除构建（dist 累积后清空动作会被 safe-delete 守卫拦截时用）
 npm test        # 全量回归（runRegression.js 132 项 + phase9 125 项双护栏）
 ```
 
@@ -45,7 +46,7 @@ npm test        # 全量回归（runRegression.js 132 项 + phase9 125 项双护
 | 加密保险库 | 邮箱/密码/卡号/CVV 加密存储；LLM 永不见明文 CVV/卡号（credentialRef + masked） |
 | AI 自动化引擎 | Planner→Runtime→Verification→Repair→Escalation 全链：业务状态核验、失败诊断、churn 熔断、replan 契约、凭据启动预检、可信升级（CREDIBLE_BUSINESS） |
 | 调度与并发 | 定时触发（固定间隔 + cron 表达式按表不漂移）、批量执行、Worker 池、容量管理、断点续跑、崩溃恢复 |
-| 可观测性与控制面 | AI Operator Console：任务时间线、VIL/ESCALATION 节点、指标面板、事件取证；执行引擎面板（调度器控制/Worker 池/队列/资源池）；数据备份一键导出与全量恢复 |
+| 可观测性与控制面 | AI Operator Console：任务时间线、VIL/ESCALATION 节点、指标面板、事件取证；执行引擎面板（调度器控制 / Worker 池 / 队列 / 资源池获取释放 / 提交执行 / 崩溃恢复扫描 / 动作契约与策略只读调试）；数据备份一键导出与全量恢复 |
 | 智能记忆 | 站点画像 / 元素记忆 / 流记忆 / 失败知识只读面板 + 经验包导出导入（跨环境迁移）+ Router 决策试算 / 环境推荐 / 经验健康看板（准确率、LLM 节省、Memory ROI、站点×环境矩阵） |
 | 治理与合规 | API Keys 自管（明文仅创建时出现一次、只读标记、撤销即失效）、安全审计日志（只写不可篡改 + 过滤查询 + JSON 导出）、工作空间与成员 RBAC |
 | 任务取证 | 单任务详情：结构化诊断（根因/置信/重试策略/证据/失败快照）、修复尝试与策略成功率、执行记录、动作链重放 |
@@ -85,8 +86,9 @@ data/                 # 运行时存储（gitignore）
 
 ## 当前基线（2026-09-07）
 - **可靠性**：v2 池 100 任务 × 真实 deepseek：run3b→run6 = 95% → 97% → 98% → **99% SUCCESS**（唯一非 SUCCESS = CREDIBLE_BUSINESS 可信升级，按设计工作）
-- **回归护栏**：runRegression **132/0** + phase9 **OK=125/BAD=0**（C28 后历史最佳）
+- **回归护栏**：runRegression **132/0** + phase9 **OK=125/BAD=0**（C28 后历史最佳；C29 为 client 侧改动 + 新增守护测试 11/0，双回归因宿主 safe-delete 守卫误伤 fp16b 浏览器测试待复跑确认）
 - **身份架构**：16-B 全家族收口（6 Native ACTIVE + languages CONFIG + brands/screen CLOSED，详见 `.benchmark/PHASE16B_ROI_GATE.md`）
+- **交付**：C29 执行引擎补齐（提交执行 / 崩溃恢复 / 资源池获取释放 / 动作契约与策略只读调试）
 - **交付**：C28 Intelligence 决策试算 + 经验健康看板上线；C27 任务取证四件套（诊断/修复/执行/重放）上线
 - **交付**：C26 治理中心上线 —— API Key 自管 / 安全审计日志 / 工作空间与成员 RBAC（C25 经验包导出导入、C24 智能记忆面板、C23 执行引擎面板、C22 数据备份恢复 均已上线）
 - **交付**：C14 系统设置中心上线 —— API key / 模型配置 UI 化（密文落盘 + 保存即生效 + 连通测试 + env 对账）
