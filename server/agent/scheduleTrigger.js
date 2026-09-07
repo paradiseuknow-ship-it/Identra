@@ -41,6 +41,23 @@ function guard(user, resource, permission) {
   return identity.assertCanAccessResource(user, resource, permission);
 }
 
+// C56：周期推进永不抛错（防重复触发风暴）。
+// cronNext 无匹配（视界 366 天，如闰日 cron 触发当日之后）或表达式损坏时，旧实现在
+// fireSchedule 之后抛错 → nextRunAt 不推进不落盘 → 下一 tick（1s）重新到期 → 每秒重复触发风暴。
+// 修复：先推进（纯计算、绝不抛）再触发；cron 失败退避而非中断；interval 非法落 MIN 下限而非 ||0（+0 = 每秒到期）。
+const CRON_FAILURE_BACKOFF_MS = 60000;
+function _advanceNextRun(sched, fromMs) {
+  if (sched.cron) {
+    try {
+      const nx = cronNext(sched.cron, new Date(fromMs));
+      if (Number.isFinite(nx)) return nx;
+    } catch (e) { /* 视界内无匹配 / 表达式损坏 → 退避 */ }
+    return fromMs + CRON_FAILURE_BACKOFF_MS;
+  }
+  const iv = Number(sched.intervalMs);
+  return fromMs + (Number.isInteger(iv) && iv >= MIN_INTERVAL_MS ? iv : MIN_INTERVAL_MS);
+}
+
 // ---- 校验 ----
 // C21 起支持双周期模式：cron（可选字段，优先）或 intervalMs（缺省路径，向后兼容）。
 // cron 提供时 intervalMs 可省略；两者都缺 → 400。
@@ -131,10 +148,11 @@ function updateSchedule(id, patch, user) {
   if (intervalChanged) sched.intervalMs = patch.intervalMs;
   // 周期/cron 任一变更 → 立即重算下一次（cron 模式从当下起算；interval 模式以最近一次运行为基准，PAUSED 期间也成立）
   if (patch.cron !== undefined || intervalChanged) {
-    sched.nextRunAt = sched.cron
-      ? cronNext(sched.cron, new Date())
-      : (sched.lastRunAt || sched.createdAt) + (sched.intervalMs || 0);
+    // C56：先落下限再计算（旧顺序 intervalMs||0 先算，+0 = 立即既往到期）；cron 侧推进绝不抛错
     if (!sched.cron && !Number.isInteger(sched.intervalMs)) sched.intervalMs = MIN_INTERVAL_MS;
+    sched.nextRunAt = sched.cron
+      ? _advanceNextRun(sched, Date.now())
+      : (sched.lastRunAt || sched.createdAt) + (sched.intervalMs || MIN_INTERVAL_MS);
   }
   sched.updatedAt = Date.now();
   store.upsert('aiSchedules', sched);
@@ -205,13 +223,17 @@ function triggerOnce(id, user, source) {
   if (!sched) throw bad(404, 'schedule 不存在');
   guard(user, sched, 'task:create');
   if (sched.status !== 'ACTIVE') throw bad(400, 'schedule 已暂停（PAUSED），请先恢复');
-  const r = fireSchedule(sched, source || 'manual');
+  // C56：先推进周期并落盘，再触发 —— 即使触发过程或记录落盘抛错，nextRunAt 已推进，绝不重复触发
   sched.lastRunAt = Date.now();
   sched.runCount = (sched.runCount || 0) + 1;
-  sched.nextRunAt = sched.cron ? cronNext(sched.cron, new Date()) : Date.now() + (sched.intervalMs || 0); // 手动触发也顺延周期（避免手动+到期双拍）
+  sched.nextRunAt = _advanceNextRun(sched, Date.now()); // 手动触发也顺延周期（避免手动+到期双拍）
+  store.upsert('aiSchedules', sched);
+  let r;
+  try { r = fireSchedule(sched, source || 'manual'); }
+  catch (e) { r = { taskIds: [], errors: [String(e.message || e).slice(0, 160)] }; }
   sched.lastRunTaskIds = r.taskIds;
   sched.lastRunErrors = r.errors;
-  store.upsert('aiSchedules', sched);
+  try { store.upsert('aiSchedules', sched); } catch (e) { /* 记录型落盘失败不影响防风暴（周期已落盘） */ }
   return Object.assign({ ok: true, scheduleId: sched.id, runCount: sched.runCount }, r);
 }
 
@@ -227,13 +249,17 @@ function tickSchedules(now) {
       try {
         if (s.status !== 'ACTIVE') continue;
         if (!(Number(s.nextRunAt) <= due)) continue;
-        const r = fireSchedule(s, 'tick');
+        // C56：先推进周期并落盘，再触发 —— 即使触发或记录落盘抛错，nextRunAt 已推进，绝不重复触发风暴
         s.lastRunAt = Date.now();
         s.runCount = (s.runCount || 0) + 1;
-        s.nextRunAt = s.cron ? cronNext(s.cron, new Date()) : Date.now() + (s.intervalMs || 0); // C21：cron 模式严格按表，不漂移
+        s.nextRunAt = _advanceNextRun(s, due); // C21：cron 模式严格按表，不漂移；失败退避
+        store.upsert('aiSchedules', s);
+        let r;
+        try { r = fireSchedule(s, 'tick'); }
+        catch (e) { r = { taskIds: [], errors: [String(e.message || e).slice(0, 160)] }; }
         s.lastRunTaskIds = r.taskIds;
         s.lastRunErrors = r.errors;
-        store.upsert('aiSchedules', s);
+        try { store.upsert('aiSchedules', s); } catch (e) { /* 记录型落盘失败不影响防风暴 */ }
         fired.push(s.id);
       } catch (e) {
         // fail-open：单 schedule 失败不影响其余，schedule 本体不损坏
@@ -294,6 +320,6 @@ router.post('/:id/trigger', (req, res) => {
 module.exports = {
   createSchedule, getSchedule, listSchedules, updateSchedule, deleteSchedule,
   triggerOnce, fireSchedule, tickSchedules, startTriggerLoop, stopTriggerLoop,
-  MIN_INTERVAL_MS, MAX_PROFILES_PER_SCHEDULE,
+  MIN_INTERVAL_MS, MAX_PROFILES_PER_SCHEDULE, CRON_FAILURE_BACKOFF_MS,
   router,
 };
