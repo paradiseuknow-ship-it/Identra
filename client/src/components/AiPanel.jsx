@@ -63,17 +63,22 @@ export default function AiPanel({ profiles, notify, onViewDetail, onGoToSettings
   // SSE + 轮询任务详情/快照
   useEffect(() => {
     if (!selectedTask) { setTimeline([]); setSnapshots([]); setTaskDetail(null); return; }
+    // C37：切换任务后丢弃旧任务飞行中的响应（否则旧任务数据落到新任务面板）
+    let active = true;
     const es = new EventSource('/api/ai/tasks/' + selectedTask + '/events');
     es.onmessage = (ev) => { try { setTimeline((p) => [...p.slice(-100), JSON.parse(ev.data)]); } catch (e) {} };
     const poll = setInterval(async () => {
+      if (!active) return;
       try { setTaskDetail(await api.aiGetTask(selectedTask)); } catch (e) {}
+      if (!active) return;
       try { setSnapshots(await api.aiSnapshots(selectedTask)); } catch (e) {}
+      if (!active) return;
       load();
     }, 2500);
-    api.aiTaskEvents(selectedTask).then(setTimeline).catch(() => {});
-    api.aiGetTask(selectedTask).then(setTaskDetail).catch(() => {});
-    api.aiSnapshots(selectedTask).then(setSnapshots).catch(() => {});
-    return () => { es.close(); clearInterval(poll); };
+    api.aiTaskEvents(selectedTask).then((v) => { if (active) setTimeline(v); }).catch(() => {});
+    api.aiGetTask(selectedTask).then((v) => { if (active) setTaskDetail(v); }).catch(() => {});
+    api.aiSnapshots(selectedTask).then((v) => { if (active) setSnapshots(v); }).catch(() => {});
+    return () => { active = false; es.close(); clearInterval(poll); };
   }, [selectedTask]);
 
   // Chat 发送：创建 Session + Task + Plan Preview
@@ -95,6 +100,7 @@ export default function AiPanel({ profiles, notify, onViewDetail, onGoToSettings
   const pauseTask = async (id) => { try { await api.aiPauseTask(id); notify('已暂停'); load(); } catch (e) { notify(e.message, false); } };
   const cancelTask = async (id) => { try { await api.aiCancelTask(id); notify('已取消'); load(); } catch (e) { notify(e.message, false); } };
   const retryTask = async (id) => { try { await api.aiRetryTask(id); notify('已重试'); load(); } catch (e) { notify(e.message, false); } };
+  const resumeTask = async (id) => { try { await api.aiResumeTask(id); notify('已从暂停点恢复'); load(); } catch (e) { notify(e.message, false); } }; // C37
   const approveTask = async (id) => { try { await api.aiApprove(id); notify('已批准执行'); load(); } catch (e) { notify(e.message, false); } };
   const rejectTask = async (id) => { try { await api.aiReject(id); notify('已拒绝'); load(); } catch (e) { notify(e.message, false); } };
   const modifyTask = async (id) => { try { await api.aiModify(id, { policy: { riskFloor: 'HIGH' } }); notify('已放宽风险级并恢复'); load(); } catch (e) { notify(e.message, false); } };
@@ -201,7 +207,8 @@ export default function AiPanel({ profiles, notify, onViewDetail, onGoToSettings
                 <div className="flex gap-2 mt-1.5">
                   {(t.status === 'PENDING' || t.status === 'PLANNING' || t.status === 'FAILED') && <button onClick={() => startTask(t.id)} className="px-2 py-0.5 rounded bg-emerald-600/80 text-white text-xs">Start</button>}
                   {t.status === 'RUNNING' && <button onClick={() => pauseTask(t.id)} className="px-2 py-0.5 rounded bg-amber-600/80 hover:bg-amber-500 text-white text-xs">Pause</button>}
-                  {t.status === 'PAUSED_FOR_HUMAN' && <button onClick={() => retryTask(t.id)} className="px-2 py-0.5 rounded bg-sky-600/80 text-white text-xs">Retry</button>}
+                  {t.status === 'PAUSED_FOR_HUMAN' && <button onClick={() => resumeTask(t.id)} className="px-2 py-0.5 rounded bg-emerald-600/80 hover:bg-emerald-500 text-white text-xs" title="从暂停点继续执行（不重新规划）">Resume</button>}
+                  {t.status === 'PAUSED_FOR_HUMAN' && <button onClick={() => retryTask(t.id)} className="px-2 py-0.5 rounded bg-sky-600/80 text-white text-xs" title="放弃当前进度重新规划执行">Retry</button>}
                   {['PENDING', 'PLANNING', 'RUNNING', 'PREPARING', 'PAUSED_FOR_HUMAN'].includes(t.status) && <button onClick={() => cancelTask(t.id)} className="px-2 py-0.5 rounded bg-rose-600/70 text-white text-xs">Cancel</button>}
                   {onViewDetail && <button onClick={() => onViewDetail(t.id)} className="px-2 py-0.5 rounded bg-edge hover:bg-slate-700 text-slate-200 text-xs">详情</button>}
                 </div>

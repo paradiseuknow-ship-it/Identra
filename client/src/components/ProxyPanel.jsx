@@ -10,8 +10,11 @@ const HEALTH_STYLE = {
 const HEALTH_LABEL = { healthy: '健康', unchecked: '未检', degraded: '降级', dead: '失效' };
 
 export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }) {
-  const [form, setForm] = useState({ name: '', type: 'socks5', server: '', username: '', password: '', refreshUrl: '', ipLookupChannel: 'ipify' });
+  const emptyForm = { name: '', type: 'socks5', server: '', username: '', password: '', refreshUrl: '', ipLookupChannel: 'ipify' };
+  const [form, setForm] = useState(emptyForm);
+  const [editing, setEditing] = useState(null); // C37: 正在编辑的代理 id（null = 新增模式）
   const [checking, setChecking] = useState(null);
+  const [geoChecking, setGeoChecking] = useState(null);
   const [health, setHealth] = useState(null);
 
   const loadHealth = useCallback(async () => {
@@ -24,8 +27,48 @@ export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }
   const add = async () => {
     if (!form.server) return notify('请填写 server', false);
     await api.createProxy(form);
-    setForm({ name: '', type: 'socks5', server: '', username: '', password: '', refreshUrl: '', ipLookupChannel: 'ipify' });
+    setForm(emptyForm);
     onChange(); notify('已添加代理');
+  };
+
+  // C37: 编辑代理（PUT /proxies/:id；id/归属/健康字段由服务端剥离）
+  const saveEdit = async () => {
+    if (!form.server) return notify('请填写 server', false);
+    try {
+      await api.updateProxy(editing, {
+        name: form.name, type: form.type, server: form.server, username: form.username,
+        password: form.password, refreshUrl: form.refreshUrl, ipLookupChannel: form.ipLookupChannel,
+      });
+      setEditing(null); setForm(emptyForm);
+      onChange(); notify('代理已更新');
+    } catch (e) { notify('更新失败: ' + e.message, false); }
+  };
+
+  const startEdit = (p) => {
+    setEditing(p.id);
+    setForm({
+      name: p.name || '', type: p.type || 'socks5', server: p.server || '',
+      username: p.username || '', password: p.password || '',
+      refreshUrl: p.refreshUrl || '', ipLookupChannel: p.ipLookupChannel || 'ipify',
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const cancelEdit = () => { setEditing(null); setForm(emptyForm); };
+
+  // C37: 代理出口地理位置检测（POST /proxies/:id/check-geo → {ok, ip, geo:{country,city,...}}）
+  const checkGeo = async (id) => {
+    setGeoChecking(id);
+    try {
+      const r = await api.checkProxyGeo(id);
+      if (r.ok) {
+        const g = r.geo || {};
+        notify(`出口 Geo: ${r.ip} · ${g.country || '?'}${g.city ? ' ' + g.city : ''}${r.detectedType ? ' (实际协议 ' + r.detectedType + ')' : ''} ${r.latencyMs}ms`);
+      } else {
+        notify('Geo 检测失败: ' + (r.error || 'unknown'), false);
+      }
+    } catch (e) { notify(e.message, false); }
+    finally { setGeoChecking(null); }
   };
 
   const check = async (id) => {
@@ -62,7 +105,7 @@ export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }
         )}
       </div>
       <div className="rounded-lg border border-edge bg-panel p-4 mb-4">
-        <div className="text-sm font-medium text-slate-300 mb-2">新增代理</div>
+        <div className="text-sm font-medium text-slate-300 mb-2">{editing ? '编辑代理（保存后生效）' : '新增代理'}</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           <input className="inp" placeholder="名称" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           <select className="inp" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
@@ -80,7 +123,14 @@ export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }
           <input className="inp" placeholder="用户名(可选)" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
           <input className="inp" placeholder="密码(可选)" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
         </div>
-        <button onClick={add} className="mt-3 px-3 py-1.5 rounded bg-sky-600 text-white text-sm hover:bg-sky-500">添加</button>
+        {editing ? (
+          <div className="mt-3 flex gap-2">
+            <button onClick={saveEdit} className="px-3 py-1.5 rounded bg-emerald-600 text-white text-sm hover:bg-emerald-500">保存修改</button>
+            <button onClick={cancelEdit} className="px-3 py-1.5 rounded border border-edge text-slate-300 text-sm hover:bg-edge">取消</button>
+          </div>
+        ) : (
+          <button onClick={add} className="mt-3 px-3 py-1.5 rounded bg-sky-600 text-white text-sm hover:bg-sky-500">添加</button>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -102,10 +152,16 @@ export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }
               )}
             </div>
             <div className="flex gap-2">
+              <button onClick={() => checkGeo(p.id)} disabled={geoChecking === p.id}
+                className="px-2 py-1 rounded bg-edge hover:bg-slate-700 disabled:opacity-50" title="检测出口 IP 地理位置（IP/国家/城市）">
+                {geoChecking === p.id ? 'Geo…' : 'Geo'}
+              </button>
               <button onClick={() => check(p.id)} disabled={checking === p.id}
                 className="px-2 py-1 rounded bg-edge hover:bg-slate-700 disabled:opacity-50">
                 {checking === p.id ? '检测中…' : '检测'}
               </button>
+              <button onClick={() => startEdit(p)} disabled={editing === p.id}
+                className="px-2 py-1 rounded bg-edge hover:bg-slate-700 disabled:opacity-50" title="编辑该代理">编辑</button>
               <button onClick={() => remove(p.id)} className="px-2 py-1 rounded bg-edge hover:bg-rose-700 text-rose-300">删除</button>
             </div>
           </div>

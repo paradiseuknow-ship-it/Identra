@@ -15,7 +15,6 @@ async function req(method, url, body) {
 export const api = {
   // profiles
   listProfiles: () => req('GET', '/profiles'),
-  getProfile: (id) => req('GET', '/profiles/' + id),
   createProfile: (b) => req('POST', '/profiles', b),
   updateProfile: (id, b) => req('PUT', '/profiles/' + id, b),
   regenerateSeed: (id) => req('PUT', '/profiles/' + id, { regenerateSeed: true }),
@@ -114,10 +113,8 @@ export const api = {
   // browser
   launch: (id) => req('POST', '/browser/' + id + '/launch'),
   stop: (id) => req('POST', '/browser/' + id + '/stop'),
-  status: () => req('GET', '/browser/status'),
 
   // vault
-  getVault: (id) => req('GET', '/vault/' + id),
   setVault: (id, b) => req('POST', '/vault/' + id, b),
 
   // tasks
@@ -132,10 +129,8 @@ export const api = {
 
   // cookies
   exportCookies: (id) => req('GET', '/cookies/' + id + '/export'),
-  importCookies: (id, cookies) => req('POST', '/cookies/' + id + '/import', { cookies }),
 
   // AI Browser Operator
-  aiCreateTask: (b) => req('POST', '/ai/tasks', b),
   aiListTasks: () => req('GET', '/ai/tasks'),
   aiGetTask: (id) => req('GET', '/ai/tasks/' + id),
   aiStartTask: (id) => req('POST', '/ai/tasks/' + id + '/start'),
