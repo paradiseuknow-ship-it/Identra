@@ -78,6 +78,13 @@ export const api = {
   intelSiteDetail: (site) => req('GET', '/ai/intelligence/sites/' + encodeURIComponent(site)),
   intelFlows: () => req('GET', '/ai/intelligence/flows'),
   intelFailures: () => req('GET', '/ai/intelligence/failures'),
+  // C28 决策与评估：Router 决策试算 / 环境推荐 / 环境评分 / 经验健康看板 / 站点×环境矩阵
+  intelDecision: (b) => req('POST', '/ai/intelligence/decision', b),
+  intelRecommend: (b) => req('POST', '/ai/intelligence/profile-recommend', b),
+  intelProfiles: () => req('GET', '/ai/intelligence/profiles'),
+  intelRecordOutcome: (id, b) => req('POST', '/ai/intelligence/profiles/' + id + '/record', b),
+  intelEvaluation: (site) => req('GET', '/ai/intelligence/evaluation/report' + (site ? '?site=' + encodeURIComponent(site) : '')),
+  intelMatrix: (sites) => req('GET', '/ai/intelligence/site-profile-matrix' + (sites ? '?sites=' + encodeURIComponent(sites) : '')),
   intelExportPack: (b) => req('POST', '/ai/intelligence/export', b),
   intelImportPack: (b) => req('POST', '/ai/intelligence/import', b),
 
@@ -140,6 +147,10 @@ export const api = {
   aiDashboard: () => req('GET', '/ai/observability/dashboard'),
   aiTrace: (taskId) => req('GET', '/ai/observability/trace/' + taskId),
   aiReplay: (taskId) => req('GET', '/ai/tasks/' + taskId + '/replay'),
+  // C27 任务取证：结构化诊断 / 修复尝试 / 执行详情
+  aiDiagnosis: (id) => req('GET', '/ai/tasks/' + id + '/diagnosis'),
+  aiRepairs: (id) => req('GET', '/ai/tasks/' + id + '/repairs'),
+  aiExecutionDetail: (id) => req('GET', '/ai/tasks/' + id + '/execution'),
 };
 
 export default api;
