@@ -377,12 +377,20 @@ router.post('/execution/resources/recover', (req, res) => {
 
 // Observability（Phase 4.6）：运营数据层。所有指标从既有持久化集合聚合。
 const observability = require('./observability');
+const deprecationMetrics = require('./observability/deprecationMetrics');
 // C36：遗留端点 deprecation 标记（RFC 8594 风格）。行为不变，仅声明替代路径：
 //  - /ai/observability/metrics 与 Dashboard/Observability 面板同源 → 冗余
 //  - /ai/queue、/ai/events 为 Phase1 遗留，被 execution/queue 与 tasks/:id/events 取代
 function markDeprecated(res, successor) {
   res.set('Deprecation', 'true');
   if (successor) res.set('Link', '<' + successor + '>; rel="successor-version"');
+  // C44：遗留端点命中计数（可观测"还在被谁调用"，为安全下线提供依据）
+  try {
+    const req = res.req || (res.locals && res.locals.req) || null;
+    deprecationMetrics.hit(req && ((req.route && req.route.path) || req.originalUrl) || 'unknown', {
+      user: req && req.identityUser, successor,
+    });
+  } catch { /* 计数失败不影响响应头 */ }
 }
 router.get('/observability/metrics', (req, res) => {
   try {
@@ -399,6 +407,14 @@ router.get('/observability/trace/:taskId', (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
 router.get('/observability/dashboard', (req, res) => {
+  try { res.json({ ok: true, dashboard: observability.dashboard() }); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
+});
+
+// C44 修复（A 类）：C36 给 legacy 端点的 successor Link 头指向 '/ai/dashboard'，
+// 但该路由从未存在（正式路径为 /ai/observability/dashboard）——按提示迁移会 404。
+// 补齐正式 successor 路由，使 Deprecation 迁移链路真实可用。
+router.get('/dashboard', (req, res) => {
   try { res.json({ ok: true, dashboard: observability.dashboard() }); }
   catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });

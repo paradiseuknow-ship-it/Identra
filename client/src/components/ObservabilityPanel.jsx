@@ -63,6 +63,7 @@ function TaskDashboard({ dash, tasks, onSelect, onViewDetail }) {
       {approxVerification && (
         <div className="text-[11px] text-gray-400">* 验证率为基于成功率的客户端估算值（后端未直接提供 verificationRate）。</div>
       )}
+      <DeprecationView dash={dash} />
       <div className="bg-white dark:bg-gray-800 rounded shadow">
         <div className="px-4 py-2 border-b font-medium">任务列表</div>
         <table className="w-full text-sm">
@@ -145,6 +146,51 @@ function ExecutionTimeline({ trace }) {
   return (
     <div className="space-y-1 bg-white dark:bg-gray-800 rounded shadow p-3 max-h-[480px] overflow-auto">
       {tl.map((n, i) => <TimelineNode key={i} n={n} />)}
+    </div>
+  );
+}
+
+// C44：遗留端点命中视图（RFC 8594 deprecation 可观测性）——
+// 长期 0 命中的 legacy 路由可安全下线；命中上升则提示迁移未完成。
+function DeprecationView({ dash }) {
+  const dep = dash && dash.deprecation;
+  if (!dep) return null;
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded shadow">
+      <div className="px-4 py-2 border-b font-medium flex justify-between items-center">
+        <span>遗留端点命中（Deprecation）</span>
+        <span className="text-xs text-gray-400">总命中 {dep.total || 0}</span>
+      </div>
+      {(!dep.routes || !dep.routes.length) ? (
+        <div className="px-4 py-3 text-gray-400 text-sm">无遗留端点调用记录 —— 所有流量已走正式路由。</div>
+      ) : (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-gray-500">
+              <th className="px-4 py-2">路由</th>
+              <th className="px-4 py-2">命中</th>
+              <th className="px-4 py-2">最近调用</th>
+              <th className="px-4 py-2">调用者</th>
+              <th className="px-4 py-2">建议替代</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dep.routes.map((r) => (
+              <tr key={r.route} className="border-t">
+                <td className="px-4 py-2 font-mono text-xs">{r.route}</td>
+                <td className="px-4 py-2">
+                  <span className={'px-2 py-0.5 rounded text-xs text-white ' + (r.count > 0 ? 'bg-amber-500' : 'bg-gray-400')}>
+                    {r.count}
+                  </span>
+                </td>
+                <td className="px-4 py-2 text-xs">{fmtTs(r.lastAt)}</td>
+                <td className="px-4 py-2 text-xs font-mono">{r.lastUser || '-'}</td>
+                <td className="px-4 py-2 text-xs text-emerald-600">{r.successor || '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

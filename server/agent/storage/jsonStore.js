@@ -36,6 +36,7 @@ const FILES = {
   aiProfileBindings: 'aiProfileBindings.json',
   aiPlannerEvidence: 'aiPlannerEvidence.json',
   aiSchedules: 'aiSchedules.json', // CAP-M1：定时触发 / 批量执行计划
+  deprecationHits: 'deprecationHits.json', // C44：遗留端点（RFC 8594）命中计数
 };
 
 const EVENT_MAX = 500;

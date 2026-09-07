@@ -34,7 +34,7 @@ npm run dev     # 开发模式（后端 8787 + 前端 5173 热更新）
 npm start       # 仅后端（生产/长跑；自动服务 client/dist 静态前端）
 npm run build   # 前端构建（client/dist）
 FPB_NO_EMPTY_OUT_DIR=1 npm run build   # 零删除构建（dist 累积后清空动作会被 safe-delete 守卫拦截时用）
-npm test        # 全量回归（runRegression.js 146 项 + phase9 139 项双护栏）
+npm test        # 全量回归（runRegression.js 147 项 + phase9 141 项双护栏）
 ```
 
 **一键启动（Windows，推荐）**：双击仓库根 `start.bat` —— 自动完成 Node 检查 → 服务端依赖 → 客户端依赖 → 前端构建 → 生成并写入 `FPB_MASTER_KEY` → 起服务并打开 `http://127.0.0.1:8787`。发布包解压后同样是双击 `start.bat`。

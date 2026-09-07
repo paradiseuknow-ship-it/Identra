@@ -10,6 +10,7 @@ const resourceMetrics = require('./resourceMetrics');
 const aiMetrics = require('./aiMetrics');
 const recoveryMetrics = require('./recoveryMetrics');
 const traceCollector = require('./traceCollector');
+const deprecationMetrics = require('./deprecationMetrics');
 
 function dashboard() {
   return {
@@ -20,6 +21,7 @@ function dashboard() {
     resource: resourceMetrics.compute(),
     ai: aiMetrics.compute(),
     recovery: recoveryMetrics.compute(),
+    deprecation: deprecationMetrics.snapshot(), // C44：遗留端点命中
   };
 }
 
