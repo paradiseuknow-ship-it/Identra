@@ -18,6 +18,7 @@ const path = require('path');
 
 const db = require('./db');
 const browserManager = require('./browserManager');
+const screencastManager = require('./screencastManager');
 const vault = require('./vault');
 const backup = require('./backup');
 const settings = require('./settings'); // C14：运行时设置中心（保存即改 process.env，无需重启）
@@ -686,6 +687,42 @@ browserRouter.get('/browser/:id/screenshot', async (req, res) => {
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e) });
   }
+});
+// C42 网页"云直播"：CDP screencast 帧流（SSE）。页面不动不出帧（零带宽）；
+// 帧率上限 ≈8fps（FrameHub 节流），无观众自动 stop 释放 CDP session。
+browserRouter.get('/browser/:id/stream', (req, res) => {
+  const p = db.getProfile(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  if (!guardProfile(res, req.identityUser, p, 'profile:use')) return;
+  if (!browserManager.isRunning(p.id)) return res.status(400).json({ ok: false, error: '浏览器未运行' });
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write('retry: 2000\n\n');
+  let unsubscribe = null;
+  let heartbeat = null;
+  try {
+    const hub = screencastManager.getHub(browserManager, p.id);
+    unsubscribe = hub.subscribe((frame) => {
+      try { res.write(`event: frame\ndata: ${JSON.stringify(frame)}\n\n`); } catch { /* 连接已断 */ }
+    });
+    res.write(`data: ${JSON.stringify({ ok: true, mode: 'screencast' })}\n\n`);
+  } catch (e) {
+    res.write(`data: ${JSON.stringify({ ok: false, error: String(e.message || e) })}\n\n`);
+  }
+  heartbeat = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch { /* 忽略 */ }
+  }, 15000);
+  const cleanup = () => {
+    if (heartbeat) clearInterval(heartbeat);
+    if (unsubscribe) unsubscribe(); // 最后一个订阅者离开 → hub 自动 stop + 释放 CDP
+    try { res.end(); } catch { /* 已结束 */ }
+  };
+  res.on('close', cleanup);
+  res.on('error', cleanup);
 });
 // 网页"云查看"：导航到指定网址
 browserRouter.post('/browser/:id/navigate', async (req, res) => {
