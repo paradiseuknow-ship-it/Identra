@@ -128,6 +128,36 @@ const PATCHES = [
     status: 'ACTIVE',
   },
   {
+    // C57 实证真值（0011 patch）：CDP override platform 投降 fallback（双半边 +
+    // 传播）。考古实证：userAgentMetadata.platform 是协议必填 plain-String binding
+    // （「省略」不可表达，真实投降场景 = 显式空串）；content 半边（emulation_handler）
+    // 空 platform 回落 browser 级 identity 值驱动头层，blink 半边
+    // （inspector_emulation_agent，renderer 独立解析协议消息）空 platform /
+    // platformVersion 回落 --fp-platform / --fp-platform-version 开关值驱动 JS 层
+    // （ASCII guard 同 C2/C53）；render_process_host_impl 传播 allowlist 补
+    // fp-platform-version。消除 CDP override 后 C53 三层同源断裂 + C2 双层承诺断裂。
+    // 外部显式非空 platform 永远获胜。已知边界（C 类记录不修）：mobile plain-Bool
+    // binding（省略 vs false 不可区分）；无 metadata override 分支 stock 同样 wipe。
+    patchId: 'cdp-platform-surrender-fallback',
+    surface: 'userAgentMetadata.platform+platformVersion (CDP override path)',
+    chromiumVersion: '152',
+    sourceFiles: [
+      'content/browser/devtools/protocol/emulation_handler.cc',
+      'third_party/blink/renderer/core/inspector/inspector_emulation_agent.cc',
+      'content/browser/renderer_host/render_process_host_impl.cc',
+    ],
+    sourceSymbols: [
+      'EmulationHandler::SetUserAgentOverride',
+      'InspectorEmulationAgent::setUserAgentOverride',
+      'RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer',
+    ],
+    dependencies: ['ua-metadata-platform-identity', 'platformversion-identity'],
+    riskLevel: 'MEDIUM',
+    testSuite: ['N-XC-P8a', 'N-XC-P8b'],
+    enabled: true,
+    status: 'ACTIVE',
+  },
+  {
     // C4 实证真值（16-A 规划确认）：navigator.hardwareConcurrency 唯一 virtual
     // 生产点 = NavigatorBase::hardwareConcurrency()（navigator_base.h:57 override；
     // WorkerNavigator 无独立覆写，window/Worker 单点同源）。stock 基值 =

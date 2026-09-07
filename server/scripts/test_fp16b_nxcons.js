@@ -25,6 +25,10 @@
 //           消费同一 --fp-platform 开关，OS 面联动落地后必须三层一致）。
 //   N-XC-P7 patched（C55/0010 起）：identity os=Android → sec-ch-ua-mobile 头 ?1 === JS mobile true
 //           + maxTouchPoints=5 配对（C6 派生与 mobile bit 不再自相矛盾）。
+//   N-XC-P8 patched（C57/0011 起）：CDP setUserAgentOverride 省略 platform（plain-String
+//           binding 投降为空串）→ JS userAgentData.platform 与 sec-ch-ua-platform 头
+//           回落 browser-level identity 值（C53 三层同源在 CDP override 后仍保持）。
+//           mobile plain-Bool binding 限制（省略 vs false 不可区分）为已知 C 类边界。
 //
 // 关键纪律：platform-version 是高熵 hint，须 Accept-CH + Critical-CH 首导航授权后二次导航捕获；
 // userAgentData 仅 http(s) origin、deviceMemory secure-context-only → 探针走 127.0.0.1 真实 origin。
@@ -100,7 +104,7 @@ const JS_PROBE = () => new Promise((resolve) => {
   }
 });
 
-async function runCase({ identityObj, extraArgs }) {
+async function runCase({ identityObj, extraArgs, cdpSetup }) {
   const { srv, seen } = makeCaptureServer();
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const origin = 'http://127.0.0.1:' + srv.address().port + '/';
@@ -118,6 +122,7 @@ async function runCase({ identityObj, extraArgs }) {
       ctx = await browser.newContext();
     }
     const page = await ctx.newPage();
+    if (cdpSetup) await cdpSetup(ctx, page);
     await page.goto(origin); // 首导航：接受 Accept-CH（Critical-CH 可能自动重导航）
     await page.goto(origin); // 二次导航：携带高熵 hint
     const mark = seen.length; // 此后的导航头为授权后样本
@@ -195,6 +200,51 @@ async function main() {
     assert('N-XC-P7 identity os=Android → mobile 双层一致（头 ?1 === JS true）+ touch=5 配对',
       hdrMobile && a.js.uadMobile === true && a.js.maxTouchPoints === 5,
       { header: a.hdr['sec-ch-ua-mobile'], js_mobile: a.js.uadMobile, touch: a.js.maxTouchPoints });
+
+    // N-XC-P8（C57/patch 0011 起）：CDP setUserAgentOverride platform 投降 fallback。
+    // platform 是 plain-String CDP binding（无 Has 访问器），客户端省略时 arrive as
+    // 空串 → stock 行为会把整份 override 的 platform wipe 成 ''，与 C53 三层同源断裂。
+    // 0011 在 fp-platform 开关在场时回落到 browser-level metadata（= identity 值）。
+    // 已知边界（C 类，记录不修）：mobile 是 plain-Bool binding，省略与显式 false
+    // 不可区分，无 fallback 可能（会破坏合法 mobile=false 覆盖语义）。
+    const ovSrv = makeCaptureServer();
+    await new Promise((r) => ovSrv.srv.listen(0, '127.0.0.1', r));
+    const ovOrigin = 'http://127.0.0.1:' + ovSrv.srv.address().port + '/';
+    let ovCtx = null;
+    try {
+      const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'nxcons-'));
+      fs.writeFileSync(path.join(dir2, 'identity.json'), JSON.stringify(idDesktop));
+      ovCtx = await chromium.launchPersistentContext(dir2, { executablePath: BIN, headless: true, args: ['--no-first-run', '--no-default-browser-check'] });
+      const page2 = await ovCtx.newPage();
+      const client = await ovCtx.newCDPSession(page2);
+      // 显式给出 userAgentMetadata，但 platform 为空串（= 投降语义）。
+      // 协议 schema 中 platform 是必填 String（「省略」在协议层不可表达），真实场景
+      // 是老客户端/规范化层把缺失 normalize 成 ""。stock 行为：整份 override platform
+      // wipe 为空（JS 层 + 头层）；0011 fallback：fp-platform 在场时回落 identity 值。
+      // 注意：必须传 userAgentMetadata —— 顶层 brands/platform 是 152 已不消费的
+      // legacy 参数；完全不传 metadata 则走「无 metadata override」分支（stock 同样
+      // wipe，超出 0011 记录边界范围，不在此测）。
+      await client.send('Emulation.setUserAgentOverride', {
+        userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
+        userAgentMetadata: {
+          brands: [{ brand: 'Not A;Brand', version: '9' }, { brand: 'Chromium', version: '152' }, { brand: 'Google Chrome', version: '152' }],
+          platform: '', platformVersion: '15.0.0', architecture: 'x86', model: '', mobile: false, bitness: '64',
+        },
+      });
+      const mark2 = ovSrv.seen.length;
+      await page2.goto(ovOrigin); await page2.goto(ovOrigin);
+      await page2.waitForTimeout(200);
+      const js2 = await page2.evaluate(JS_PROBE);
+      const ovHdr = (ovSrv.seen.slice(mark2).find((s) => s.headers['sec-ch-ua-platform']) || ovSrv.seen[ovSrv.seen.length - 1]).headers;
+      assert('N-XC-P8a CDP override 省略 platform → JS userAgentData.platform 回落 identity 值（不被 wipe 为空串）',
+        js2.uadPlatform === 'MacIntel', { uad_platform: js2.uadPlatform });
+      assert('N-XC-P8b CDP override 省略 platform → sec-ch-ua-platform 头同步回落（头层 === JS 层）',
+        stripSF(ovHdr['sec-ch-ua-platform']) === js2.uadPlatform,
+        { hdr: ovHdr['sec-ch-ua-platform'], js: js2.uadPlatform });
+    } finally {
+      try { await ovCtx.close(); } catch (e) { /* noop */ }
+      ovSrv.srv.close();
+    }
   } else {
     console.log('  SKIP-PATCHED patched 矩阵（未设置 FPB_NATIVE_CHROME）');
   }

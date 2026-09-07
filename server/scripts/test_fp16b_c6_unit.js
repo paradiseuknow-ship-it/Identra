@@ -49,7 +49,7 @@ if (c6) {
   assert('M8 C5 deviceMemory-identity 状态不受影响（enabled=true/ACTIVE）',
     c5 && c5.enabled === true && c5.status === 'ACTIVE');
   // 2026-09-08 C55 演进：+ua-metadata-mobile-identity（0010）→ 9 条目全 ACTIVE
-  assert('M8b manifest 总条目 = 9（C55 起 9 patch 全 ACTIVE）', manifest.PATCHES.length === 9, manifest.PATCHES.length);
+  assert('M8b manifest 总条目 = 10（C57 起 10 patch 全 ACTIVE）', manifest.PATCHES.length === 10, manifest.PATCHES.length);
 }
 
 // ---- P 区：patch 工件 ----
