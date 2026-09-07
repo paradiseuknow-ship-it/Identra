@@ -12,9 +12,12 @@
 const fs = require('fs');
 const path = require('path');
 const { generateFingerprint, seedFromProfile } = require('./fp/generate');
+const { dataRoot } = require('./dataRoot');
 
+// C59：跟随数据根（FPB_DATA_DIR 隔离测试下与 browserManager 的 profiles 根对齐；
+// 原实现硬编码 ../data/profiles，隔离模式下检查错目录——C47 同类边界）
 function profileDataDir(profileId) {
-  return path.join(__dirname, '..', 'data', 'profiles', profileId);
+  return path.join(dataRoot(), 'profiles', profileId);
 }
 
 // 提取 UA 里的 Chrome 大版本（如 151.0.7922.138 -> 151）
@@ -187,4 +190,4 @@ function logIntegrity(profileId, report) {
   }
 }
 
-module.exports = { runIntegrityCheck, logIntegrity };
+module.exports = { runIntegrityCheck, logIntegrity, profileDataDir };

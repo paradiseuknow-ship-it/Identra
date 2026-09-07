@@ -20,10 +20,14 @@ const express = require('express');
 const auth = require('./auth');
 const audit = require('./audit'); // CAP-O2：安全审计流（与运行时事件总线分离）
 
-// 数据目录：默认 server/data；FPB_DATA_DIR 供测试/部署隔离（db.js 与 agent/storage 同步支持）
-const DATA_DIR = process.env.FPB_DATA_DIR
-  ? path.resolve(process.env.FPB_DATA_DIR)
-  : path.join(__dirname, 'data');
+// 数据目录：C59 起统一走 dataRoot（canonical <repo>/data；FPB_DATA_DIR 供测试/
+// 部署隔离）。历史默认曾是 server/data——与 db.js 等多数模块分裂导致 identity
+// 全套数据不在 backup.js 覆盖范围内；加载时做一次性 legacy 迁移（见 dataRoot.js）。
+const { dataRoot, migrateLegacyFile } = require('./dataRoot');
+const DATA_DIR = dataRoot();
+for (const f of ['identity_users.json', 'identity_workspaces.json', 'identity_memberships.json', 'identity_sessions.json', 'identity_apikeys.json']) {
+  migrateLegacyFile(f); // 仅默认分支生效；FPB_DATA_DIR 隔离模式下自动跳过
+}
 
 const FILES = {
   users: path.join(DATA_DIR, 'identity_users.json'),
@@ -538,4 +542,6 @@ module.exports = {
   // CAP-O2
   createApiKey, apiKeyByToken, revokeApiKey, listApiKeys, getApiKeys, API_KEY_PREFIX,
   enforceNoApiKeyWriteGuard,
+  // C59 数据根（测试断言用）
+  DATA_DIR,
 };

@@ -17,9 +17,10 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = process.env.FPB_DATA_DIR
-  ? path.resolve(process.env.FPB_DATA_DIR)
-  : path.join(__dirname, 'data');
+// 数据目录：C59 起统一走 dataRoot（与 identity.js 同批；一次性 legacy 迁移见 dataRoot.js）
+const { dataRoot, migrateLegacyFile } = require('./dataRoot');
+const DATA_DIR = dataRoot();
+migrateLegacyFile('fp_templates.json');
 const TPL_FILE = path.join(DATA_DIR, 'fp_templates.json');
 
 // fingerprintOverride 键白名单（与 server/fp/generate.js 实际消费的键集对齐）
