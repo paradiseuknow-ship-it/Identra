@@ -143,9 +143,11 @@ const read = (p) => fs.readFileSync(p, 'utf8');
     delete require.cache[require.resolve(manPath)];
     own = require(ownPath);
     const man3 = require(manPath);
-    assert('O4 env 清理后恢复（C4 flip 后 owner 保持 NATIVE_OWNED、PLANNED patch 回到 inactive）',
+    // 2026-09-07 POC #7 收口演进：identity-config-plumbing 已 ACTIVE（N-IDP 14/0），
+    // FORCE 清理后保持真 ACTIVE（不再是「PLANNED→force→回 inactive」语义）。
+    assert('O4 env 清理后恢复（C4 flip 后 owner 保持 NATIVE_OWNED、FORCE 目标=真 ACTIVE 不回落）',
       own.getOwner('navigator.hardwareConcurrency') === 'NATIVE_OWNED'
-      && man3.isPatchActive('identity-config-plumbing') === false,
+      && man3.isPatchActive('identity-config-plumbing') === true,
       own.getOwner('navigator.hardwareConcurrency') + '/' + man3.isPatchActive('identity-config-plumbing'));
   }
 

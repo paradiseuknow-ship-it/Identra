@@ -128,9 +128,9 @@ const read = (p) => fs.readFileSync(p, 'utf8');
     delete require.cache[require.resolve(manPath)];
     own = require(ownPath);
     const man3 = require(manPath);
-    assert('O4 env 清理后恢复（navigator.platform 保持 NATIVE_OWNED、PLANNED patch 回到 inactive）',
+    assert('O4 env 清理后恢复（navigator.platform 保持 NATIVE_OWNED、FORCE 目标=真 ACTIVE 不回落（POC #7 收口演进））',
       own.getOwner('navigator.platform') === 'NATIVE_OWNED'
-      && man3.isPatchActive('identity-config-plumbing') === false,
+      && man3.isPatchActive('identity-config-plumbing') === true, // POC #7 收口演进（2026-09-07）：已 ACTIVE 不回落
       own.getOwner('navigator.platform') + '/' + man3.isPatchActive('identity-config-plumbing'));
   }
 

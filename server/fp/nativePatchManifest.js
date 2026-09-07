@@ -22,8 +22,13 @@ const PATCHES = [
     dependencies: [],
     riskLevel: 'LOW',
     testSuite: ['N-IDP-01', 'N-IDP-02', 'N-IDP-03'],
-    enabled: false,
-    status: 'PLANNED',
+    // 2026-09-07 POC #7 全链完成（source→0008 patch→build→runtime→N-IDP patched 14/0
+    // →六项验证 6/6→N-AUTO 5/0 零退化）后 enable。C8 实证真值：identity.json 在
+    // <user-data-dir> 根（Option B 同根），PostEarlyInitialization 派生 fp-* 开关
+    // （append-if-absent，外部显式开关永远获胜），全部既有消费点（0002 传播 +
+    // 0003-0007 renderer/browser 消费）零改动点亮。
+    enabled: true,
+    status: 'ACTIVE',
   },
   {
     // 2026-09-06 POC #1 全链完成（source→patch→build→runtime→N-AUTO 5/0→stock 等价）后 enable。

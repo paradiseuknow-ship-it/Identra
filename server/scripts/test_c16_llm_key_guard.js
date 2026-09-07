@@ -41,6 +41,10 @@ function startServer(extraEnv) {
       FPB_DATA_DIR: dataDir,
       FPB_VAULT_FILE: path.join(dataDir, 'vault.json'),
       FPB_SETTINGS_FILE: path.join(dataDir, 'runtime_settings.json'),
+      FPB_ENV_FILE: path.join(dataDir, 'empty.env'), // 隔离根 .env（DEEPSEEK_* 泄漏 → provider=deepseek 误判）
+      // 宿主可能向工具进程注入 AI_PROVIDER（2026-09-07 实证）→ 显式钉住 auto，
+      // 场景级 extraEnv（如 G2 的 mock）仍可覆盖（extraEnv 在后面 spread）。
+      AI_PROVIDER: 'auto',
       FPB_MASTER_KEY: Buffer.alloc(32, 3).toString('base64'),
       // 守护前置：剥掉宿主可能带有的 LLM key，保证「无 key」前提真实成立
       DEEPSEEK_API_KEY: '',
@@ -147,6 +151,6 @@ function chk(name, ok, detail) {
   } finally { s.child.kill(); }
 
   console.log(`\nRESULT: PASS=${pass} FAIL=${fail}`);
-  if (fail.length) { console.error('FAILED:', failures.join(' | ')); process.exit(1); }
+  if (fail) { console.error('FAILED:', failures.join(' | ')); process.exit(1); } // fix: fail 是数字计数器（.length 恒 undefined → 失败曾静默 exit 0）
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

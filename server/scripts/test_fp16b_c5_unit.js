@@ -174,10 +174,12 @@ const read = (p) => fs.readFileSync(p, 'utf8');
     delete require.cache[require.resolve(manPath)];
     own = require(ownPath);
     const man3 = require(manPath);
-    assert('O5 env 清理后恢复（C5 flip 后 owner 保持 NATIVE_OWNED、FORCE 目标回 inactive、C4 flip 状态不受污染）',
+    // 2026-09-07 POC #7 收口演进：identity-config-plumbing 已 ACTIVE（N-IDP 14/0），
+    // FORCE 清理后保持真 ACTIVE（不再是「PLANNED→force→回 inactive」语义）。
+    assert('O5 env 清理后恢复（C5 flip 后 owner 保持 NATIVE_OWNED、FORCE 目标=真 ACTIVE 不回落、C4 flip 状态不受污染）',
       own.getOwner('navigator.deviceMemory') === 'NATIVE_OWNED'
       && own.getOwner('navigator.hardwareConcurrency') === 'NATIVE_OWNED'
-      && man3.isPatchActive('identity-config-plumbing') === false,
+      && man3.isPatchActive('identity-config-plumbing') === true,
       own.getOwner('navigator.deviceMemory') + '/' + own.getOwner('navigator.hardwareConcurrency'));
   }
 

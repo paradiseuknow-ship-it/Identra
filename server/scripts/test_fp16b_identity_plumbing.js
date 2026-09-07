@@ -133,7 +133,9 @@ function baseIdentity(over = {}) {
   // 2026-09-06 C2 不变量演进：enabled ⊆ 已完成全链 POC 集合。C3/C4/C5 同款演进：
   // navigator-identity（0004）、hardwareConcurrency-identity（0005，N-HC PATCHED
   // 17/17）、deviceMemory-identity（0006，N-DM PATCHED 21/0 + STOCK 2/2）均已完成全链。
-  const POC_COMPLETED = ['automation-native-webdriver', 'platformversion-identity', 'navigator-identity', 'hardwareConcurrency-identity', 'deviceMemory-identity', 'maxTouchPoints-identity'];
+  // 2026-09-07 POC #7 收口演进：identity-config-plumbing（0008，N-IDP PATCHED 14/0
+  // + 六项验证 6/6 + N-AUTO 5/0 零退化）完成全链 → 16-B 全部 7 patch ACTIVE。
+  const POC_COMPLETED = ['identity-config-plumbing', 'automation-native-webdriver', 'platformversion-identity', 'navigator-identity', 'hardwareConcurrency-identity', 'deviceMemory-identity', 'maxTouchPoints-identity'];
   assert('PM2 七个 16-B patch 已登记；enabled ⊆ 已完成全链 POC 集合', manifest.PATCHES.length === 7
     && manifest.PATCHES.every((p) => p.enabled === POC_COMPLETED.includes(p.patchId)), manifest.PATCHES.map((p) => p.patchId + ':' + (p.enabled ? 'on' : 'off')));
   assert('PM3 必备字段逐项齐备', manifest.PATCHES.every((p) => manifest.REQUIRED_FIELDS.every((f) => f in p)), null);
