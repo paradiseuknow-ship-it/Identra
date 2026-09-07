@@ -44,6 +44,21 @@ function refreshAvailability(rec) {
 }
 
 // AI 可见的脱敏视图（绝不含明文）
+// C35 缺陷修复（A 类）：available 此前只在 createSecret/getByRef 时 refreshAvailability，
+// 「先注册引用、后补录明文」的时序下列表与 Planner prompt 永远显示 available=false，
+// 误导用户 + 模型在 prompt 层看到凭据不可用而放弃规划。此处改为每次从 vault 只读现算
+//（不写库；写语义仍归 refreshAvailability，由 getByRef/createSecret 驱动）。
+function computeAvailable(rec) {
+  try {
+    const s = vault.getProfileSecrets(rec.profileId);
+    if (rec.type === 'email_password') return !!(s && (s.email || s.password));
+    if (rec.type === 'payment') return !!(s && s.card && s.card.number);
+    return !!s;
+  } catch (e) {
+    return false;
+  }
+}
+
 function maskedView(rec) {
   if (!rec) return null;
   let maskedEmail = null;
@@ -58,7 +73,7 @@ function maskedView(rec) {
     type: rec.type,
     site: rec.site,
     label: rec.label,
-    available: rec.available,
+    available: computeAvailable(rec),
     workspaceId: rec.workspaceId || null,
     maskedEmail,
     maskedCard,

@@ -61,6 +61,8 @@ export default function TaskDetail({ taskId, onClose }) {
   const [events, setEvents] = useState([]);
   const [forensics, setForensics] = useState({ diagnosis: null, repairs: null, execution: null, replay: null });
   const [err, setErr] = useState('');
+  const [recovering, setRecovering] = useState(false);
+  const [recoverMsg, setRecoverMsg] = useState('');
   const eventsRef = useRef([]);
 
   useEffect(() => {
@@ -123,6 +125,19 @@ export default function TaskDetail({ taskId, onClose }) {
 
   const browserUrl = checkpoint?.url || task?.targetUrl || '-';
 
+  // C35：崩溃/进程重启后手动恢复（仅 RUNNING/HEALING/RECOVERING；从 checkpoint 重建，跳过已成功步骤）
+  const canRecover = ['RUNNING', 'HEALING', 'RECOVERING'].includes(task?.status);
+  const recoverTask = async () => {
+    setRecovering(true);
+    setRecoverMsg('');
+    try {
+      await api.aiRecoverTask(taskId);
+      setRecoverMsg('已发出恢复指令（从 checkpoint 重建）');
+    } catch (e) {
+      setRecoverMsg('恢复失败：' + String(e.message || e).slice(0, 160));
+    } finally { setRecovering(false); }
+  };
+
   const vilText = vil
     ? `VIL 建议 ${vil.decision || '-'}${vil.failureType ? `（${vil.failureType}）` : ''}：${vil.why || VIL_WHY[vil.decision] || '—'}`
     : null;
@@ -132,7 +147,16 @@ export default function TaskDetail({ taskId, onClose }) {
       <div className="w-full max-w-4xl bg-panel border border-edge rounded-lg overflow-hidden flex flex-col" style={{ height: '90vh' }}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-edge bg-panel/80 shrink-0">
           <div className="text-sm font-semibold text-slate-200">📝 任务详情 · <span className="font-mono text-slate-400">{taskId}</span></div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white">✕</button>
+          <div className="flex items-center gap-2">
+            {recoverMsg && <span className="text-xs text-amber-300">{recoverMsg}</span>}
+            {canRecover && (
+              <button disabled={recovering} onClick={recoverTask}
+                className="text-xs px-2 py-1 rounded border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 disabled:opacity-40">
+                {recovering ? '恢复中…' : '↻ 恢复任务'}
+              </button>
+            )}
+            <button onClick={onClose} className="text-slate-400 hover:text-white">✕</button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-auto p-4 space-y-3">

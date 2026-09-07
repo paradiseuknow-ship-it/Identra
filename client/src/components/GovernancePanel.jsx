@@ -10,6 +10,7 @@ import api from '../api';
 //   - 成员角色 OWNER 授予需 workspace:update，服务端会 403，UI 仅提示不做本地绕过判断。
 
 const ROLES = ['MEMBER', 'ADMIN', 'OWNER'];
+const SECRET_TYPES = ['email_password', 'api_key', 'payment', 'oauth_token', 'cookie', 'license', 'ssh_key', 'other'];
 
 function download(name, text) {
   const blob = new Blob([text], { type: 'application/json' });
@@ -37,6 +38,11 @@ export default function GovernancePanel({ notify, requestConfirm }) {
   const [members, setMembers] = useState([]);
   const [wsName, setWsName] = useState('');
   const [memberForm, setMemberForm] = useState({ username: '', role: 'MEMBER' });
+
+  // C35 凭据引用（credentialRef）：引用注册表，明文只在 Profile 编辑器 Account 页签维护
+  const [secrets, setSecrets] = useState([]);
+  const [profiles, setProfiles] = useState([]);
+  const [secretForm, setSecretForm] = useState({ profileId: '', type: 'email_password', site: '', label: '' });
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -71,7 +77,18 @@ export default function GovernancePanel({ notify, requestConfirm }) {
     catch (e) { setErr(String(e.message || e)); }
   }, [wsId]);
 
-  useEffect(() => { loadKeys(); loadWs(); }, [loadKeys, loadWs]);
+  // C35 凭据引用加载（列表为脱敏视图，永远不含明文）+ Profile 下拉数据
+  const loadSecrets = useCallback(async () => {
+    try {
+      const r = await api.listSecrets();
+      setSecrets(Array.isArray(r) ? r : (r.secrets || []));
+    } catch (e) { setErr(String(e.message || e)); }
+  }, []);
+  const loadProfilesLite = useCallback(async () => {
+    try { setProfiles(await api.listProfiles()); } catch (e) { /* 下拉置空不影响面板 */ }
+  }, []);
+
+  useEffect(() => { loadKeys(); loadWs(); loadSecrets(); loadProfilesLite(); }, [loadKeys, loadWs, loadSecrets, loadProfilesLite]);
   useEffect(() => { loadAudit(); }, [loadAudit]);
   useEffect(() => { loadMembers(); }, [loadMembers]);
 
@@ -130,6 +147,32 @@ export default function GovernancePanel({ notify, requestConfirm }) {
       notify('成员已添加');
       await loadMembers();
     } catch (e) { notify(e.message, false); }
+    finally { setBusy(false); }
+  };
+
+  // C35：注册凭据引用（只登记 profileId+type+site+label，绝不经过明文）
+  const createSecretRef = async () => {
+    if (!secretForm.profileId) return notify('请选择 Profile', false);
+    setBusy(true);
+    try {
+      await api.createSecret({
+        profileId: secretForm.profileId,
+        type: secretForm.type,
+        site: secretForm.site.trim() || undefined,
+        label: secretForm.label.trim() || undefined,
+      });
+      setSecretForm({ profileId: '', type: secretForm.type, site: '', label: '' });
+      notify('凭据引用已注册');
+      await loadSecrets();
+    } catch (e) { notify(e.message, false); }
+    finally { setBusy(false); }
+  };
+  const removeSecretRef = async (s) => {
+    const yes = await confirmIt('删除凭据引用 ' + (s.id || '') + '？（只删除引用，不影响 Profile 内已存的明文）');
+    if (!yes) return;
+    setBusy(true);
+    try { await api.deleteSecret(s.id); notify('已删除'); await loadSecrets(); }
+    catch (e) { notify(e.message, false); }
     finally { setBusy(false); }
   };
 
@@ -263,6 +306,60 @@ export default function GovernancePanel({ notify, requestConfirm }) {
             </div>
           ))}
           {!members.length && <div className="text-slate-500 text-xs">该工作空间暂无其他成员记录。</div>}
+        </div>
+      </div>
+
+      {/* C35 凭据引用（credentialRef）：AI 任务敏感字段只经引用解析，LLM 永不见明文 */}
+      <div className="bg-panel/60 border border-edge rounded-lg p-4">
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <span className="text-sm font-semibold text-slate-200">凭据引用（{secrets.length}）</span>
+          <div className="flex items-center gap-2 text-xs flex-wrap">
+            <select className="px-2 py-1 rounded bg-black/30 border border-edge text-slate-200 max-w-44"
+              value={secretForm.profileId}
+              onChange={(e) => setSecretForm({ ...secretForm, profileId: e.target.value })}>
+              <option value="">选择 Profile…</option>
+              {profiles.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
+            </select>
+            <select className="px-2 py-1 rounded bg-black/30 border border-edge text-slate-200"
+              value={secretForm.type}
+              onChange={(e) => setSecretForm({ ...secretForm, type: e.target.value })}>
+              {SECRET_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <input className="px-2 py-1 rounded bg-black/30 border border-edge text-slate-200 w-28"
+              placeholder="site（可选）" value={secretForm.site}
+              onChange={(e) => setSecretForm({ ...secretForm, site: e.target.value })} />
+            <input className="px-2 py-1 rounded bg-black/30 border border-edge text-slate-200 w-28"
+              placeholder="备注（可选）" value={secretForm.label}
+              onChange={(e) => setSecretForm({ ...secretForm, label: e.target.value })} />
+            <button disabled={busy || !secretForm.profileId} onClick={createSecretRef}
+              className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white">注册引用</button>
+          </div>
+        </div>
+
+        <div className="space-y-1 max-h-44 overflow-auto">
+          {secrets.map((s) => (
+            <div key={s.id} className="flex items-center justify-between rounded border border-edge px-3 py-1.5 text-xs">
+              <div className="min-w-0 flex flex-wrap items-center gap-2">
+                <span className="font-mono text-sky-300">{s.id}</span>
+                <span className="px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-400">{s.type}</span>
+                {s.site && <span className="text-slate-400">@{s.site}</span>}
+                {s.label && <span className="text-slate-500">「{s.label}」</span>}
+                <span className={s.available ? 'text-emerald-400' : 'text-rose-400'}>
+                  {s.available ? '● 明文就绪' : '○ 明文未录'}
+                </span>
+                {s.maskedEmail && <span className="font-mono text-slate-500">{s.maskedEmail}</span>}
+                {s.maskedCard && <span className="font-mono text-slate-500">{s.maskedCard}</span>}
+              </div>
+              <button disabled={busy} onClick={() => removeSecretRef(s)}
+                className="px-2 py-0.5 rounded border border-rose-500/40 text-rose-400 hover:bg-rose-500/10 disabled:opacity-40">删除</button>
+            </div>
+          ))}
+          {!secrets.length && <div className="text-slate-500 text-xs">暂无凭据引用。</div>}
+        </div>
+
+        <div className="text-[11px] text-slate-500 mt-2">
+          引用只是「指针」：明文在对应 Profile 编辑器的 Account 页签维护（vault 加密落盘）。
+          在 AI 对话中写 <span className="font-mono text-slate-400">cred_xxx</span> 即可让任务使用该凭据——模型全程只见脱敏视图，填表时明文才在执行层解密。
         </div>
       </div>
     </div>

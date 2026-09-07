@@ -162,6 +162,12 @@ export const api = {
   aiDiagnosis: (id) => req('GET', '/ai/tasks/' + id + '/diagnosis'),
   aiRepairs: (id) => req('GET', '/ai/tasks/' + id + '/repairs'),
   aiExecutionDetail: (id) => req('GET', '/ai/tasks/' + id + '/execution'),
+  // C35：凭据引用（credentialRef）治理 —— 引用注册表，明文只在 Profile 编辑器 vault 维护
+  listSecrets: () => req('GET', '/ai/secrets'),
+  createSecret: (b) => req('POST', '/ai/secrets', b),
+  deleteSecret: (id) => req('DELETE', '/ai/secrets/' + id),
+  // C35：崩溃/重启后手动恢复单个 AI 任务（RUNNING/HEALING/RECOVERING 状态可用）
+  aiRecoverTask: (id) => req('POST', '/ai/tasks/' + id + '/recover', {}),
 };
 
 export default api;
