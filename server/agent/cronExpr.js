@@ -58,12 +58,14 @@ function _parseField(raw, idx) {
         if (slash >= 0 && body === '*') { lo = min; hi = max; }
         else if (slash < 0) hi = lo;
       }
-      if (idx === 4 && lo === 7) lo = 0; // dow 7 = 0（周日）
-      if (idx === 4 && hi === 7) hi = 6;
     }
     if (!Number.isInteger(lo) || !Number.isInteger(hi)) throw new Error('cron 域值非法: ' + part);
-    if (lo < min || hi > max || lo > hi) throw new Error('cron 域越界: ' + part + '（域 ' + min + '-' + max + '）');
-    for (let v = lo; v <= hi; v += step) set.add(v);
+    // C52 缺陷修复：dow 允许 7（=0 周日，惯例兼容），但必须在【值级】映射——
+    // 旧实现在 lo/hi 级改写（lo 7→0、hi 7→6），把单值 7 展开成整周 0-6，
+    // "0 0 * * 7"（仅周日）变成每天触发（A 类调度缺陷）。5-7 标准语义 {5,6,0} 同步修正。
+    const hiCap = (idx === 4 && hi === 7) ? 7 : max;
+    if (lo < min || hi > hiCap || lo > hi) throw new Error('cron 域越界: ' + part + '（域 ' + min + '-' + max + (idx === 4 ? '，周域另支持 7=周日' : '') + '）');
+    for (let v = lo; v <= hi; v += step) set.add(idx === 4 && v === 7 ? 0 : v);
   }
   if (!set.size) throw new Error('cron 域为空: ' + raw);
   return set;
