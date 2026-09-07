@@ -15,6 +15,7 @@ export default function SettingsPanel({ notify }) {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [pendingRestore, setPendingRestore] = useState(null); // C47：两步恢复确认
 
   const load = useCallback(async () => {
     try {
@@ -90,6 +91,7 @@ export default function SettingsPanel({ notify }) {
 
   return (
     <div className="max-w-4xl mx-auto space-y-4 p-4">
+      <StorageView notify={notify} />
       <div>
         <h2 className="text-lg font-semibold text-slate-100">系统设置</h2>
         <p className="text-xs text-slate-500 mt-1">保存后立即生效（无需重启）。API key 仅以密文落盘，界面只显示掩码。</p>
@@ -196,8 +198,81 @@ export default function SettingsPanel({ notify }) {
             <input type="file" accept=".json,application/json" className="hidden" onChange={restoreBackup} />
           </label>
         </div>
+        {pendingRestore && (
+          <div className="mt-2 flex items-center gap-2 text-xs bg-rose-500/10 border border-rose-500/40 rounded px-2 py-1.5">
+            <span className="text-rose-300">待恢复：{pendingRestore.name}（全量覆盖当前数据，旧数据自动快照）</span>
+            <button onClick={confirmRestore} className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white">确认恢复</button>
+            <button onClick={() => setPendingRestore(null)} className="px-2 py-0.5 rounded border border-edge text-slate-400">取消</button>
+          </div>
+        )}
         <div className="text-xs text-slate-600 mt-2">恢复前旧数据自动快照到 data/backups/pre-restore-*；恢复后建议重启服务。</div>
       </div>
+    </div>
+  );
+}
+
+
+// C47：存储使用与清理（白名单 + dry-run 预览 + 显式确认才真正删除）
+const fmtBytes = (n) => {
+  if (n == null) return '-';
+  if (n >= 1024 ** 3) return (n / 1024 ** 3).toFixed(2) + ' GB';
+  if (n >= 1024 ** 2) return (n / 1024 ** 2).toFixed(1) + ' MB';
+  if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+  return n + ' B';
+};
+function StorageView({ notify }) {
+  const [items, setItems] = useState(null);
+  const [plan, setPlan] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = React.useCallback(async () => {
+    try { setItems((await api.storageStats()).items); } catch (e) { notify('加载存储统计失败: ' + e.message, false); }
+  }, [notify]);
+  React.useEffect(() => { load(); }, [load]);
+  const preview = async () => {
+    setBusy(true);
+    try {
+      const r = await api.storageCleanup({ targets: ['benchmarkLogs', 'browserProfiles'], olderThanDays: 7, dryRun: true });
+      setPlan(r);
+      notify(r.count ? ('可清理 ' + r.count + ' 项，约 ' + fmtBytes(r.freed)) : '没有可清理项');
+    } catch (e) { notify('清理预览失败: ' + e.message, false); }
+    setBusy(false);
+  };
+  const execute = async () => {
+    setBusy(true);
+    try {
+      const r = await api.storageCleanup({ targets: ['benchmarkLogs', 'browserProfiles'], olderThanDays: 7, dryRun: false });
+      notify('已清理 ' + r.count + ' 项，释放约 ' + fmtBytes(r.freed));
+      setPlan(null); load();
+    } catch (e) { notify('清理失败: ' + e.message, false); }
+    setBusy(false);
+  };
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded shadow p-4">
+      <div className="font-medium mb-2 flex justify-between items-center">
+        <span>存储使用</span>
+        <span>
+          <button disabled={busy} onClick={preview} className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded mr-2 disabled:opacity-50">清理预览</button>
+          {plan && plan.count > 0 && (
+            <button disabled={busy} onClick={execute} className="text-xs px-2 py-1 bg-rose-600 text-white rounded disabled:opacity-50">确认清理（{plan.count} 项 / {fmtBytes(plan.freed)}）</button>
+          )}
+        </span>
+      </div>
+      {!items && <div className="text-gray-400 text-sm">统计中…（大目录首次统计可能需要数十秒）</div>}
+      {items && (
+        <table className="w-full text-sm">
+          <thead><tr className="text-left text-gray-500"><th className="py-1">目录</th><th>体积</th><th>文件数</th></tr></thead>
+          <tbody>
+            {items.map((it) => (
+              <tr key={it.key} className="border-t">
+                <td className="py-1.5">{it.label}</td>
+                <td className="font-mono text-xs">{it.exists ? fmtBytes(it.bytes) : '不存在'}{it.truncated ? '（截断统计）' : ''}</td>
+                <td className="text-xs text-gray-500">{it.files}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div className="text-[11px] text-gray-400 mt-2">清理范围白名单：回归日志（保留最近 3 个）与未运行 profile 的浏览器数据；业务数据集合不参与清理。预览（dry-run）不会删除任何文件。</div>
     </div>
   );
 }

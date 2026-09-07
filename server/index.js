@@ -873,6 +873,29 @@ vaultRouter.post('/vault/:id', (req, res) => {
 // ---------------- Settings (C14: 运行时设置中心) ----------------
 // GET = 掩码视图 + env 对账（任何已认证用户可读）；PUT/POST test = workspace:update（ADMIN/OWNER）。
 // apiKey 永不明文出站（settings.getMasked 只回 last4 掩码）；testLlm 结果也绝不含 key。
+// C47：存储使用与清理治理（白名单 + dryRun 默认 + 防路径逃逸）
+const systemStorage = require('./systemStorage');
+const storageRouter = express.Router();
+storageRouter.get('/system/storage', async (req, res) => {
+  try { res.json({ ok: true, items: await systemStorage.collectStats(), root: undefined }); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
+});
+storageRouter.post('/system/storage/cleanup', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const r = await systemStorage.cleanup({
+      targets: Array.isArray(body.targets) ? body.targets : [],
+      olderThanDays: Number(body.olderThanDays) || 7,
+      keepRecent: Number(body.keepRecent) || 3,
+      dryRun: body.dryRun !== false, // 默认 dry-run：不显式传 false 不删任何东西
+      isRunning: (id) => browserManager.isRunning(id),
+    });
+    if (!r.ok) return res.status(400).json(r);
+    auditReq(req, body.dryRun === false ? 'storage.cleanup' : 'storage.cleanup.dryrun', 'system', 'storage', { freed: r.freed, count: r.count });
+    res.json(r);
+  } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
+});
+
 const settingsRouter = express.Router();
 settingsRouter.get('/settings', (req, res) => {
   try { res.json(settings.getMasked()); }
@@ -1104,7 +1127,7 @@ cookieRouter.post('/cookies/:id/import', async (req, res) => {
 // CAP-O1：身份路由（register/login 公开；me/workspaces 自管权限）挂机器级边界之前；
 //          identityResolver 先解析 req.identityUser，requireAuth 对已解析身份放行。
 app.use('/api/auth', identity.router);
-app.use('/api', identity.identityResolver, requireAuth, identity.enforceApiKeyWriteGuard, router, templateRouter, proxyRouter, browserRouter, vaultRouter, settingsRouter, taskRouter, automationRouter, cookieRouter);
+app.use('/api', identity.identityResolver, requireAuth, identity.enforceApiKeyWriteGuard, router, templateRouter, proxyRouter, browserRouter, vaultRouter, storageRouter, settingsRouter, taskRouter, automationRouter, cookieRouter);
 
 // AI Browser Operator（Phase 1.1 基础设施）
 app.use('/api/ai', identity.identityResolver, requireAuth, identity.enforceApiKeyWriteGuard, require('./agent'));

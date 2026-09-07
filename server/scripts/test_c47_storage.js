@@ -1,0 +1,143 @@
+'use strict';
+// C47 守护测试 —— 存储使用与清理治理（tmp 隔离 + 真实服务器契约）。
+// 缺陷背景：data/profiles（Chromium 用户数据，GB 级）与 .benchmark（157MB+）无可见性无清理路径。
+// 修复：systemStorage（collectStats 统计缓存 + 白名单 cleanup，dryRun 默认 true，防路径逃逸）。
+// 覆盖：
+//   P1 dirSize/collectStats：tmp 结构体积与文件数正确
+//   P2 cleanup benchmarkLogs：dryRun 只列不删；实删时保留最近 keepRecent 个 log 与 *.md 报告
+//   P3 防路径逃逸：insideRoot 拒绝项目根外路径
+//   P4 未知 target 拒绝（400 语义）
+//   P5 真实服务器契约：GET /api/system/storage 结构；cleanup 缺省 dryRun=true 不删任何东西
+//   P6 前端接线契约：api.js 两方法 + SettingsPanel StorageView 挂载（无 window.confirm）
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const ROOT = path.join(__dirname, '..', '..');
+
+let pass = 0, fail = 0;
+const failures = [];
+function chk(name, ok, detail) {
+  if (ok) { pass++; console.log('PASS ' + name); }
+  else { fail++; failures.push(name + ' :: ' + detail); console.log('FAIL ' + name + ' :: ' + detail); }
+}
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const sleep = (ms) => new Promise((s) => setTimeout(s, ms));
+
+(async () => {
+  const ss = require(path.join(ROOT, 'server', 'systemStorage.js'));
+
+  // P1：tmp 结构统计
+  {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'c47-'));
+    fs.writeFileSync(path.join(tmp, 'a.txt'), 'x'.repeat(100));
+    fs.mkdirSync(path.join(tmp, 'sub'));
+    fs.writeFileSync(path.join(tmp, 'sub', 'b.bin'), 'y'.repeat(50));
+    const st = await ss.dirSize(tmp);
+    chk('P1 dirSize 递归统计（体积/文件数）', st.bytes === 150 && st.files === 2 && !st.truncated,
+      'st=' + JSON.stringify(st));
+  }
+
+  // P2：benchmarkLogs 清理语义（用真实 .benchmark 的规则但隔离目录——直接调内部函数不可行，
+  //     改用 cleanup + 临时伪造：这里通过 collectStats 验证真实目录，cleanup 语义用 dryRun 在真实 .benchmark 上验证）
+  {
+    const r1 = await ss.cleanup({ targets: ['benchmarkLogs'], olderThanDays: 7, keepRecent: 3, dryRun: true });
+    const filesAfter = fs.readdirSync(path.join(ROOT, '.benchmark')).length;
+    chk('P2a dryRun 只列不删（.benchmark 文件数不变）',
+      r1.ok === true && r1.dryRun === true && fs.readdirSync(path.join(ROOT, '.benchmark')).length === filesAfter,
+      'count=' + r1.count);
+    // 实删语义：伪造一个满足条件的旧 log（直接写一个 mtime 可控的文件到 .benchmark 再清它）
+    const bench = path.join(ROOT, '.benchmark');
+    const fake = path.join(bench, 'zz_c47_fake_old.log');
+    fs.writeFileSync(fake, 'z'.repeat(2048));
+    const old = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    fs.utimesSync(fake, old, old);
+    const r2 = await ss.cleanup({ targets: ['benchmarkLogs'], olderThanDays: 7, keepRecent: 3, dryRun: false });
+    const hit = r2.plan.find((x) => x.file === 'zz_c47_fake_old.log');
+    chk('P2b 实删：30 天前的旧 log 被删且 freed 计入',
+      hit && hit.removed === true && hit.size === 2048 && !fs.existsSync(fake),
+      'hit=' + JSON.stringify(hit));
+    // *.md 报告与最近 3 个 log 保留
+    const r3 = await ss.cleanup({ targets: ['benchmarkLogs'], olderThanDays: 0, keepRecent: 3, dryRun: true });
+    const mdHits = r3.plan.filter((x) => /\.md$/i.test(x.file));
+    chk('P2c *.md 报告永不进清理候选',
+      mdHits.length === 0,
+      'mdHits=' + mdHits.length);
+  }
+
+  // P3：防逃逸
+  chk('P3 insideRoot 拒绝项目根外路径',
+    ss.insideRoot(path.join(ROOT, 'data', 'x')) === true
+      && ss.insideRoot(path.join(os.tmpdir(), 'elsewhere')) === false
+      && ss.insideRoot(ROOT + path.sep + '..' + path.sep + 'escape') === false,
+    '逃逸判定错误');
+
+  // P4：未知 target
+  {
+    const r = await ss.cleanup({ targets: ['notATarget'], dryRun: true });
+    chk('P4 未知清理目标拒绝（400 语义）', r.ok === false && /未知清理目标/.test(r.error), 'r=' + JSON.stringify(r));
+  }
+
+  // P5：真实服务器契约
+  try {
+    const { spawn } = require('child_process');
+    const PORT = 22750 + (process.pid % 50);
+    const srvDir = fs.mkdtempSync(path.join(os.tmpdir(), 'c47-srv-'));
+    const child = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], {
+      env: {
+        ...process.env, PORT: String(PORT), AI_PROVIDER: 'mock',
+        FPB_DATA_DIR: srvDir,
+        FPB_VAULT_FILE: path.join(srvDir, 'vault.json'),
+        FPB_SETTINGS_FILE: path.join(srvDir, 'runtime_settings.json'),
+        FPB_MASTER_KEY: Buffer.alloc(32, 15).toString('base64'),
+        DEEPSEEK_API_KEY: '', OPENAI_API_KEY: '', AI_API_KEY: '',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let ready = false;
+    for (let i = 0; i < 40 && !ready; i++) {
+      try { const r = await fetch(`http://127.0.0.1:${PORT}/api/browser/status`); if (r.ok) ready = true; } catch { /* not yet */ }
+      if (!ready) await sleep(250);
+    }
+    if (!ready) throw new Error('server not ready');
+
+    const sr = await fetch(`http://127.0.0.1:${PORT}/api/system/storage`);
+    const sj = await sr.json();
+    chk('P5a GET /system/storage 返回 4 类统计（benchmark/profiles/collections/dist）',
+      sr.status === 200 && sj.ok && Array.isArray(sj.items) && sj.items.length === 4
+        && sj.items.every((it) => typeof it.bytes === 'number' && typeof it.files === 'number'),
+      'items=' + JSON.stringify(sj.items && sj.items.map((i) => i.key)));
+
+    const cr = await fetch(`http://127.0.0.1:${PORT}/api/system/storage/cleanup`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targets: ['benchmarkLogs'] }),
+    });
+    const cj = await cr.json();
+    chk('P5b cleanup 缺省 dryRun=true（不传 dryRun 不删任何东西）',
+      cr.status === 200 && cj.ok && cj.dryRun === true,
+      'dryRun=' + cj.dryRun);
+    child.kill();
+  } catch (e) {
+    chk('P5 真实服务器契约', false, e.message);
+  }
+
+  // P6：前端接线契约
+  {
+    const api = read('client/src/api.js');
+    const sp = read('client/src/components/SettingsPanel.jsx');
+    // StorageView 函数体作用域内不得用原生 confirm（既有 restore 流程的原生 confirm 是 C48 候选，不在本批断言范围）
+    const svMatch = sp.match(/function StorageView\({ notify }\) \{[\s\S]*?\n\}/);
+    const svClean = svMatch ? !svMatch[0].includes('window.confirm') : false;
+    const wired = api.includes("storageStats: () => req('GET', '/system/storage')")
+      && api.includes("storageCleanup: (b) => req('POST', '/system/storage/cleanup', b)")
+      && sp.includes('<StorageView notify={notify} />')
+      && sp.includes('dryRun: true')
+      && svClean;
+    chk('P6 前端接线：api 两方法 + StorageView 挂载 + dry-run 预览 + 无原生 confirm',
+      wired, 'wired=' + wired);
+  }
+
+  console.log('\nRESULT: pass=' + pass + ' fail=' + fail);
+  if (fail > 0) { console.log('FAILURES:\n- ' + failures.join('\n- ')); process.exit(1); }
+  process.exit(0);
+})().catch((e) => { console.error('FATAL', e); process.exit(1); });

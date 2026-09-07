@@ -55,6 +55,8 @@ export const api = {
   // 数据备份（C22）
   // C30 系统就绪度自检（只读）
   systemReadiness: () => req('GET', '/settings/readiness'),
+  storageStats: () => req('GET', '/system/storage'),
+  storageCleanup: (b) => req('POST', '/system/storage/cleanup', b),
   exportBackup: () => req('GET', '/backup/export'),
   restoreBackup: (snapshot) => req('POST', '/backup/restore', snapshot),
 
