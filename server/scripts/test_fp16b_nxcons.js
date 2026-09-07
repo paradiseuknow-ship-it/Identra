@@ -20,8 +20,9 @@
 //   N-XC-P3 patched：sec-ch-ua-platform 头 === JS userAgentData.platform（platform 面不被 identity 覆盖 → 同源）
 //   N-XC-P4 patched：sec-ch-ua brands 头 === JS userAgentData.brands（逐项，含 GREASE 顺序）
 //   N-XC-P5 patched：JS navigator.platform === identity.platform（JS 面驱动重申，cross 比对基准）
-//   N-XC-W1 边界记录（WARN 非 FAIL）：navigator.platform(identity JS 层) vs sec-ch-ua-platform 头(原生 HTTP 层)
-//           ——16-B POC #3 冻结范围为 navigator.platform 单面，头层 OS 面联动属后续扩展；现状必须显式留痕。
+//   N-XC-P6 patched（C53/0009 起）：navigator.platform === userAgentData.platform === sec-ch-ua-platform 头
+//           三层同源强断言（取代 C50 版本的 W1 边界留痕：C3 renderer + C53 metadata 生产层
+//           消费同一 --fp-platform 开关，OS 面联动落地后必须三层一致）。
 //
 // 关键纪律：platform-version 是高熵 hint，须 Accept-CH + Critical-CH 首导航授权后二次导航捕获；
 // userAgentData 仅 http(s) origin、deviceMemory secure-context-only → 探针走 127.0.0.1 真实 origin。
@@ -170,12 +171,13 @@ async function main() {
     assert('N-XC-P5 JS navigator.platform === identity.platform（C3 JS 面驱动重申）',
       p.js.platform === 'MacIntel', p.js.platform);
 
-    // N-XC-W1：显式边界留痕（非 FAIL）——identity platform 面冻结为 navigator.platform 单面
+    // N-XC-P6（C53/patch 0009 起）：OS 面三层同源 —— navigator.platform(C3 renderer)
+    // === userAgentData.platform(C53 metadata 生产层) === sec-ch-ua-platform 头(network)。
+    // 取代 C50 版本的 W1 边界留痕：0009 落地后三层必须一致（强断言）。
     const jsPlat = p.js.platform; const hdrPlat = stripSF(p.hdr['sec-ch-ua-platform']);
-    if (jsPlat !== hdrPlat) {
-      boundary('N-XC-W1 navigator.platform(identity JS 层) != sec-ch-ua-platform 头(原生 HTTP 层)',
-        'identity.platform=' + jsPlat + ' vs header=' + hdrPlat + ' — 16-B POC #3 冻结单面设计，OS 面头层联动为后续扩展项');
-    }
+    assert('N-XC-P6 三层同源：navigator.platform === userAgentData.platform === sec-ch-ua-platform 头',
+      jsPlat === p.js.uadPlatform && jsPlat === hdrPlat,
+      { navigator_platform: jsPlat, uad_platform: p.js.uadPlatform, header: hdrPlat });
   } else {
     console.log('  SKIP-PATCHED patched 矩阵（未设置 FPB_NATIVE_CHROME）');
   }

@@ -88,6 +88,25 @@ const PATCHES = [
     status: 'ACTIVE',
   },
   {
+    // C53 实证真值（0009 patch）：metadata 生产层 platform 覆盖 —— 与 0003（C2
+    // platformVersion）同函数同语义（value_or + ASCII guard fail-open），消费同一
+    // --fp-platform 开关（identity.json cpuProfile.platform 派生）。单点驱动
+    // sec-ch-ua-platform 头 + JS userAgentData.platform（两者均消费
+    // blink::UserAgentMetadata），与 0004 navigator.platform 形成三层同源，
+    // 关闭 C50 N-XC-W1 边界。CDP override 显式传值仍获胜；空串 wipe 边界与 C2
+    // 同类（browser 级 metadata 保持一致，见 patchspec）。
+    patchId: 'ua-metadata-platform-identity',
+    surface: 'userAgentMetadata.platform',
+    chromiumVersion: '152',
+    sourceFiles: ['components/embedder_support/user_agent_utils.cc'],
+    sourceSymbols: ['embedder_support::GetUserAgentMetadata'],
+    dependencies: ['identity-config-plumbing'],
+    riskLevel: 'MEDIUM',
+    testSuite: ['N-XC-S1', 'N-XC-S4', 'N-XC-P1', 'N-XC-P3', 'N-XC-P5', 'N-XC-P6'],
+    enabled: true,
+    status: 'ACTIVE',
+  },
+  {
     // C4 实证真值（16-A 规划确认）：navigator.hardwareConcurrency 唯一 virtual
     // 生产点 = NavigatorBase::hardwareConcurrency()（navigator_base.h:57 override；
     // WorkerNavigator 无独立覆写，window/Worker 单点同源）。stock 基值 =

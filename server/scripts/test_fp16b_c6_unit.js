@@ -48,7 +48,8 @@ if (c6) {
     c6.dependencies.includes('identity-config-plumbing') && c6.dependencies.includes('navigator-identity'));
   assert('M8 C5 deviceMemory-identity 状态不受影响（enabled=true/ACTIVE）',
     c5 && c5.enabled === true && c5.status === 'ACTIVE');
-  assert('M8b manifest 总条目 = 7（六 flip + C6 PLANNED）', manifest.PATCHES.length === 7, manifest.PATCHES.length);
+  // 2026-09-08 C53 演进：+ua-metadata-platform-identity（0009）→ 8 条目全 ACTIVE
+  assert('M8b manifest 总条目 = 8（C53 起 8 patch 全 ACTIVE）', manifest.PATCHES.length === 8, manifest.PATCHES.length);
 }
 
 // ---- P 区：patch 工件 ----
