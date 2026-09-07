@@ -1,14 +1,33 @@
 const BASE = '/api';
+// C49：多用户模式（FPB_API_TOKEN 部署）Web 会话凭据。本地单机模式（loopback 自动挂
+// local 用户）永远没有 token，附加一个无效 Bearer 也会被服务端回落到 local 身份，无副作用。
+const TOKEN_KEY = 'fpb_session_token';
+
+export function getAuthToken() {
+  try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; }
+}
+export function setAuthToken(t) {
+  try {
+    if (t) localStorage.setItem(TOKEN_KEY, t);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch (e) { /* localStorage 不可用时静默（会话退化为单次内存态） */ }
+}
 
 async function req(method, url, body) {
   const opts = { method, headers: {} };
+  const token = getAuthToken();
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(BASE + url, opts);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) {
+    const err = new Error(data.error || res.statusText);
+    err.status = res.status; // C49：401（未登录/会话过期）等状态码透传给调用方做登录门控
+    throw err;
+  }
   return data;
 }
 
@@ -101,6 +120,10 @@ export const api = {
   intelImportPack: (b) => req('POST', '/ai/intelligence/import', b),
 
   // 治理中心（C26）：API Key / 审计日志 / 工作空间与成员（/api/auth 挂载点）
+  // C49：会话身份（register/login 公开端点；logout 自管）。多用户模式下 AuthGate 消费。
+  login: (b) => req('POST', '/auth/login', b),
+  register: (b) => req('POST', '/auth/register', b),
+  logout: () => req('POST', '/auth/logout', {}),
   me: () => req('GET', '/auth/me'),
   apiKeys: () => req('GET', '/auth/api-keys'),
   createApiKey: (b) => req('POST', '/auth/api-keys', b),

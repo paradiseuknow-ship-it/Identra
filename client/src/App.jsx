@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import api from './api';
+import api, { getAuthToken, setAuthToken } from './api';
 import { toastBus } from './lib/toastBus.mjs';
 import { useEscapeClose } from './lib/useEscapeClose.mjs';
 import ProfileEditor from './components/ProfileEditor';
@@ -17,6 +17,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import ToastHost from './components/ToastHost';
 import GovernancePanel from './components/GovernancePanel';
 import ReadinessPanel from './components/ReadinessPanel';
+import AuthGate from './components/AuthGate';
 import TaskDetail from './components/TaskDetail';
 
 export default function App() {
@@ -29,6 +30,9 @@ export default function App() {
   const [detailId, setDetailId] = useState(null);
   const [confirmState, setConfirmState] = useState(null); // { message, onConfirm, ok }
   const [readiness, setReadiness] = useState(null); // C30 就绪度快照（header 徽标用）
+  const [needAuth, setNeedAuth] = useState(false); // C49：多用户模式 401 → 全屏登录门控
+  const [hasSession, setHasSession] = useState(!!getAuthToken()); // C49：header 退出登录按钮显隐
+  const [authTick, setAuthTick] = useState(0); // C49：登录成功后重跑启动探测（readiness + 列表）
 
   // 应用内确认弹窗，替代原生 window.confirm（原生框在某些环境下会被静默拦截导致“点击无反应”）
   const requestConfirm = (message, onConfirm) => setConfirmState({ message, onConfirm });
@@ -54,6 +58,7 @@ export default function App() {
   useEffect(() => { loadProfiles(); loadProxies(); }, [loadProfiles, loadProxies]);
 
   // C30：启动即跑就绪度自检——必需项缺失时自动落到引导页（不再让用户自己猜缺什么）
+  // C49：探测 401（多用户模式未登录/会话过期）→ 全屏登录门控；本地单机模式永远 200 不触发。
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -62,10 +67,30 @@ export default function App() {
         if (!alive) return;
         setReadiness(r);
         if (r && r.stage === 'SETUP_REQUIRED') setTab('readiness');
-      } catch (e) { /* 自检失败不阻断主流程 */ }
+      } catch (e) {
+        if (alive && e && e.status === 401) setNeedAuth(true);
+        /* 其余自检失败不阻断主流程 */
+      }
     })();
     return () => { alive = false; };
-  }, []);
+  }, [authTick]);
+
+  // C49：登录/注册成功回调——交还控制权并重跑启动加载链
+  const handleAuthed = useCallback(() => {
+    setNeedAuth(false);
+    setHasSession(true);
+    setAuthTick((t) => t + 1);
+    loadProfiles();
+    loadProxies();
+  }, [loadProfiles, loadProxies]);
+
+  // C49：退出登录（仅会话模式可见；本地单机无 token 不渲染）
+  const doLogout = async () => {
+    try { await api.logout(); } catch (e) { /* 会话已失效也照常清本地凭据 */ }
+    setAuthToken('');
+    setHasSession(false);
+    setNeedAuth(true);
+  };
 
   // C20：运行态快照轮询（仅 profiles tab 活跃时，5s 一拍；失败静默——运行态是增强不是关键路径）
   const [runtime, setRuntime] = useState({});
@@ -177,6 +202,9 @@ export default function App() {
 
   const onSaved = () => { setEditing(null); loadProfiles(); };
 
+  // C49：多用户模式登录门控全屏接管（放在所有 hook 之后，条件返回合法）
+  if (needAuth) return <AuthGate onAuthed={handleAuthed} />;
+
   return (
     <div className="min-h-screen flex flex-col">
       <header className="flex items-center gap-3 px-5 py-3 border-b border-edge bg-panel">
@@ -189,6 +217,12 @@ export default function App() {
               ? 'border-emerald-700/60 text-emerald-300 bg-emerald-600/10'
               : 'border-amber-700/60 text-amber-300 bg-amber-600/10'}`}>
             {readiness.ok ? '● 就绪' : '● 待引导'}
+          </button>
+        )}
+        {hasSession && (
+          <button onClick={doLogout} title="结束当前会话并返回登录页（C49）"
+            className={`text-xs px-2 py-0.5 rounded border border-edge text-slate-400 hover:text-slate-200 ${readiness ? '' : 'ml-auto'}`}>
+            退出登录
           </button>
         )}
       </header>
