@@ -67,29 +67,44 @@ async function tlsOver(socket, servername) {
   });
 }
 
+function destroyQuietly(sock) {
+  try { if (sock) sock.destroy(); } catch (e) { /* 已销毁/非法态忽略 */ }
+}
+
 async function getIpInfo(upstream, hop) {
-  const socket = await openSocks5Chain({ host: 'ipinfo.io', port: 443 }, upstream, hop, 20000);
-  const tlsSock = await tlsOver(socket, 'ipinfo.io');
-  const { body } = await httpGet(tlsSock, 'ipinfo.io', '/json', 12000);
+  let socket = null, tlsSock = null;
   try {
-    const j = JSON.parse(body);
-    const asn = (j.org && j.org.match(/AS\d+/) || [null])[0];
-    return { ip: j.ip || null, country: j.country || null, org: j.org || null, asn, city: j.city || null };
+    socket = await openSocks5Chain({ host: 'ipinfo.io', port: 443 }, upstream, hop, 20000);
+    tlsSock = await tlsOver(socket, 'ipinfo.io');
+    const { body } = await httpGet(tlsSock, 'ipinfo.io', '/json', 12000);
+    try {
+      const j = JSON.parse(body);
+      const asn = (j.org && j.org.match(/AS\d+/) || [null])[0];
+      return { ip: j.ip || null, country: j.country || null, org: j.org || null, asn, city: j.city || null };
+    } catch (e) {
+      return null;
+    }
   } catch (e) {
-    return null;
+    // C58：失败路径销毁链路 socket（旧实现悬挂泄漏），错误上抛由 precheckProxy 兜底
+    destroyQuietly(tlsSock);
+    destroyQuietly(socket);
+    throw e;
   }
 }
 
 async function testGoogle(upstream, hop) {
+  let socket = null, tlsSock = null;
   try {
-    const socket = await openSocks5Chain({ host: 'www.google.com', port: 443 }, upstream, hop, 20000);
-    const tlsSock = await tlsOver(socket, 'www.google.com');
+    socket = await openSocks5Chain({ host: 'www.google.com', port: 443 }, upstream, hop, 20000);
+    tlsSock = await tlsOver(socket, 'www.google.com');
     const { status, body } = await httpGet(tlsSock, 'www.google.com', '/', 12000);
     const isHome = /<title>Google<\/title>/.test(body);
     const blocked = /unusual traffic|our systems have detected|captcha|recaptcha/i.test(body);
     return { reachable: true, status, isHome, blocked };
   } catch (e) {
     // ERR_SSL_BAD_RECORD_TYPE 在 Node 侧多表现为 ERR_SSL 系列错误
+    destroyQuietly(tlsSock);
+    destroyQuietly(socket);
     return { reachable: false, error: e.code || e.message };
   }
 }
@@ -102,7 +117,14 @@ async function testGoogle(upstream, hop) {
  */
 async function precheckProxy(upstream, hop) {
   const result = { ok: false, ip: null, country: null, asn: null, org: null, type: 'unknown', google: null };
-  const info = await getIpInfo(upstream, hop);
+  // C58：best-effort 契约 —— getIpInfo 失败（上游连不上/TLS 失败）只降级 ip 字段，
+  // 不得中断整次预检（旧实现异常直接穿透，Google 可达性检查被整体跳过）
+  let info = null;
+  try {
+    info = await getIpInfo(upstream, hop);
+  } catch (e) {
+    info = null;
+  }
   if (info) {
     result.ip = info.ip;
     result.country = info.country;

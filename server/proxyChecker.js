@@ -15,46 +15,35 @@ function proxyToParts(proxy) {
   return { type, host, port: Number(port), username: proxy.username || '', password: proxy.password || '' };
 }
 
-// 在已建立的 TCP socket 上发一次 HTTP GET 并取回响应体
-function httpGetOverSocket(socket, host, path, timeoutMs = 15000) {
-  return new Promise((resolve, reject) => {
-    let buf = '';
-    let done = false;
-    const timer = setTimeout(() => {
-      if (!done) { done = true; reject(new Error('http timeout')); }
-    }, timeoutMs);
-    const onData = (d) => {
-      if (done) return;
-      buf += d.toString();
-      const sep = buf.indexOf('\r\n\r\n');
-      if (sep >= 0) {
-        done = true;
-        clearTimeout(timer);
-        const head = buf.slice(0, sep);
-        const body = buf.slice(sep + 4);
-        const m = head.match(/HTTP\/1\.[01] (\d+)/);
-        if (m && m[1] !== '200') return reject(new Error('HTTP ' + m[1]));
-        socket.removeListener('data', onData);
-        resolve(body.trim());
-      }
-    };
-    socket.on('data', onData);
-    socket.on('error', (e) => { if (!done) { done = true; clearTimeout(timer); reject(e); } });
-    socket.write(`GET ${path} HTTP/1.1\r\nHost: ${host}\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n`);
-  });
+// C58：失败路径统一静默销毁 socket —— 旧实现只放弃 Promise 不销毁连接，
+// 对死代理每次检测（getEgressIp 2 协议×2 重试 + detectProxyProtocol 复检）可悬挂泄漏最多 8 个 fd。
+function destroyQuietly(sock) {
+  try { if (sock) sock.destroy(); } catch (e) { /* 已销毁/非法态忽略 */ }
 }
 
+// 在已建立的 TCP socket 上发一次 HTTP CONNECT 等待网关应答。
+// C58：非 200 判定必须等完整三位状态码 —— 旧负向前瞻 /HTTP\/1\.[01] (?!200)/ 在
+// TCP 分包（先到 "HTTP/1.1 2"）时把合法 200 误判为拒绝。
 function waitForConnect(socket, pattern, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     let buf = '';
-    const timer = setTimeout(() => reject(new Error('proxy connect timeout')), timeoutMs);
+    const timer = setTimeout(() => {
+      socket.removeListener('data', onData);
+      reject(new Error('proxy connect timeout'));
+    }, timeoutMs);
     const onData = (d) => {
       buf += d.toString();
       if (pattern.test(buf)) { clearTimeout(timer); socket.removeListener('data', onData); resolve(); }
-      else if (/HTTP\/1\.[01] (?!200)/.test(buf)) { clearTimeout(timer); socket.removeListener('data', onData); reject(new Error('proxy CONNECT rejected')); }
+      else {
+        const m = buf.match(/HTTP\/1\.[01] (\d{3})/); // 仅完整三位状态码参与失败判定
+        if (m && m[1] !== '200') {
+          clearTimeout(timer); socket.removeListener('data', onData);
+          reject(new Error('proxy CONNECT rejected (' + m[1] + ')'));
+        }
+      }
     };
     socket.on('data', onData);
-    socket.on('error', (e) => { clearTimeout(timer); reject(e); });
+    socket.on('error', (e) => { clearTimeout(timer); socket.removeListener('data', onData); reject(e); });
   });
 }
 
@@ -87,14 +76,15 @@ function httpGetOverSocket(socket, host, path, timeoutMs = 15000) {
   });
 }
 
-// 建立到目标主机的 TLS 隧道（在已有 socket 上）
+// 建立到目标主机的 TLS 隧道（在已有 socket 上）。
+// C58：握手失败时同时销毁底层 socket，避免半开连接悬挂泄漏。
 function tlsOver(socket, servername) {
   return new Promise((resolve, reject) => {
     const tlsSock = tls.connect({ socket, servername }, () => {
       tlsSock.removeListener('error', reject);
       resolve(tlsSock);
     });
-    tlsSock.once('error', reject);
+    tlsSock.once('error', (e) => { destroyQuietly(socket); reject(e); });
   });
 }
 
@@ -118,6 +108,10 @@ async function fetchEgressIpViaProxy(proxy) {
   ];
   let lastErr;
   for (const s of strategies) {
+    // C58：本策略内创建的所有 socket 记账，失败路径统一销毁（旧实现从不销毁 → 悬挂泄漏）
+    let conn = null;
+    let socksSock = null;
+    let tlsSock = null;
     try {
       if (parts.type === 'socks5') {
         const info = await SocksClient.createConnection({
@@ -126,19 +120,24 @@ async function fetchEgressIpViaProxy(proxy) {
           destination: { host: IPIFY.host, port: s.port },
           timeout: 15000,
         });
-        const sock = s.useTls ? await tlsOver(info.socket, IPIFY.host) : info.socket;
-        return httpGetOverSocket(sock, IPIFY.host, IPIFY.path);
+        socksSock = info.socket;
+        tlsSock = s.useTls ? await tlsOver(info.socket, IPIFY.host) : null;
+        const sock = tlsSock || info.socket;
+        return await httpGetOverSocket(sock, IPIFY.host, IPIFY.path);
       }
 
       // HTTP / HTTPS 代理：CONNECT 隧道，再（可选）TLS + GET
-      const conn = net.connect(parts.port, parts.host);
+      conn = net.connect(parts.port, parts.host);
       await new Promise((res, rej) => { conn.once('connect', res); conn.once('error', rej); });
       conn.write(`CONNECT ${IPIFY.host}:${s.port} HTTP/1.1\r\nHost: ${IPIFY.host}\r\n${authHeader}\r\n`);
       await waitForConnect(conn, /HTTP\/1\.[01] 200/);
-      const sock = s.useTls ? await tlsOver(conn, IPIFY.host) : conn;
-      return httpGetOverSocket(sock, IPIFY.host, IPIFY.path);
+      tlsSock = s.useTls ? await tlsOver(conn, IPIFY.host) : null;
+      return await httpGetOverSocket(tlsSock || conn, IPIFY.host, IPIFY.path);
     } catch (e) {
       lastErr = e;
+      destroyQuietly(tlsSock);
+      destroyQuietly(conn);
+      destroyQuietly(socksSock);
     }
   }
   throw lastErr || new Error('proxy egress failed');
@@ -284,22 +283,27 @@ async function quickEgress(parts, type) {
       destination: { host: IPIFY.host, port: IPIFY.port },
       timeout: TIMEOUT,
     });
-    const sock = await tlsOver(info.socket, IPIFY.host);
+    try {
+      const sock = await tlsOver(info.socket, IPIFY.host);
+      const body = await httpGetOverSocket(sock, IPIFY.host, IPIFY.path, TIMEOUT);
+      return JSON.parse(body).ip;
+    } catch (e) { destroyQuietly(info.socket); throw e; }
+  }
+  // C58：失败路径销毁 conn（旧实现从不销毁 → 启动预检对死代理悬挂泄漏）
+  const conn = net.connect(parts.port, parts.host);
+  try {
+    await new Promise((res, rej) => { conn.once('connect', res); conn.once('error', rej); });
+    let auth = '';
+    if (parts.username) {
+      const a = Buffer.from(parts.username + ':' + parts.password).toString('base64');
+      auth = `Proxy-Authorization: Basic ${a}\r\n`;
+    }
+    conn.write(`CONNECT ${IPIFY.host}:${IPIFY.port} HTTP/1.1\r\nHost: ${IPIFY.host}\r\n${auth}\r\n`);
+    await waitForConnect(conn, /HTTP\/1\.[01] 200/, TIMEOUT);
+    const sock = await tlsOver(conn, IPIFY.host);
     const body = await httpGetOverSocket(sock, IPIFY.host, IPIFY.path, TIMEOUT);
     return JSON.parse(body).ip;
-  }
-  const conn = net.connect(parts.port, parts.host);
-  await new Promise((res, rej) => { conn.once('connect', res); conn.once('error', rej); });
-  let auth = '';
-  if (parts.username) {
-    const a = Buffer.from(parts.username + ':' + parts.password).toString('base64');
-    auth = `Proxy-Authorization: Basic ${a}\r\n`;
-  }
-  conn.write(`CONNECT ${IPIFY.host}:${IPIFY.port} HTTP/1.1\r\nHost: ${IPIFY.host}\r\n${auth}\r\n`);
-  await waitForConnect(conn, /HTTP\/1\.[01] 200/, TIMEOUT);
-  const sock = await tlsOver(conn, IPIFY.host);
-  const body = await httpGetOverSocket(sock, IPIFY.host, IPIFY.path, TIMEOUT);
-  return JSON.parse(body).ip;
+  } catch (e) { destroyQuietly(conn); throw e; }
 }
 
 async function resolveProxyType(proxy) {
@@ -316,4 +320,4 @@ async function resolveProxyType(proxy) {
   return preferred; // 都连不通则沿用用户所选
 }
 
-module.exports = { checkProxy, checkProxyGeo, getEgressIp, getProxyEgressGeo, resolveProxyType };
+module.exports = { checkProxy, checkProxyGeo, getEgressIp, getProxyEgressGeo, resolveProxyType, waitForConnect };
