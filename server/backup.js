@@ -52,17 +52,35 @@ function restoreSnapshot(snapshot) {
   const dir = dataDir();
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
+  // C54 / D1：两遍式——先全量校验文件名与内容可序列化，再写盘。
+  // 原实现把非法文件名校验混在写入循环里，「fail-fast 一个坏名整体拒绝」是假契约：
+  // 坏名之前的文件已被覆写（部分恢复），且拒绝路径残留 pre-restore 防呆目录。
+  // 现在任一非法 → 未落任何盘即拒绝，也不创建防呆目录（拒绝的恢复不留垃圾）。
+  for (const [name, content] of Object.entries(snapshot.files)) {
+    if (!FILE_RE.test(name)) throw new Error('备份含非法文件名: ' + name);
+    if (content === undefined) throw new Error('备份文件内容非法（undefined 不可序列化）: ' + name);
+  }
+
+  const vaultFile = process.env.FPB_VAULT_FILE ? path.resolve(process.env.FPB_VAULT_FILE) : path.join(dir, 'vault.json');
+
   // 防呆：恢复前把当前 data 全量快照到 backups/pre-restore-<ts>/
   const preDir = path.join(dir, 'backups', 'pre-restore-' + Date.now());
   fs.mkdirSync(preDir, { recursive: true });
   for (const f of fs.readdirSync(dir).filter((f) => FILE_RE.test(f))) {
     fs.copyFileSync(path.join(dir, f), path.join(preDir, f));
   }
-  const vaultFile = process.env.FPB_VAULT_FILE ? path.resolve(process.env.FPB_VAULT_FILE) : path.join(dir, 'vault.json');
+  // C54 / D2：外部 vault（FPB_VAULT_FILE 指向 data 目录外）也必须进防呆快照——
+  // 恢复会覆写它，原实现只快照 data 目录内的 *.json，外部 vault 被覆写后旧密文无法回滚。
+  {
+    const rel = path.relative(dir, vaultFile);
+    const outside = rel !== '' && (rel.startsWith('..') || path.isAbsolute(rel));
+    if (outside && fs.existsSync(vaultFile)) {
+      fs.copyFileSync(vaultFile, path.join(preDir, 'vault.json'));
+    }
+  }
 
   const restored = [];
   for (const [name, content] of Object.entries(snapshot.files)) {
-    if (!FILE_RE.test(name)) throw new Error('备份含非法文件名: ' + name); // fail-fast：一个坏名整体拒绝
     const target = name === 'vault.json' ? vaultFile : path.join(dir, name);
     fs.writeFileSync(target, JSON.stringify(content, null, 2));
     restored.push(name);
