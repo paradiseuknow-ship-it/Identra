@@ -377,8 +377,18 @@ router.post('/execution/resources/recover', (req, res) => {
 
 // Observability（Phase 4.6）：运营数据层。所有指标从既有持久化集合聚合。
 const observability = require('./observability');
+// C36：遗留端点 deprecation 标记（RFC 8594 风格）。行为不变，仅声明替代路径：
+//  - /ai/observability/metrics 与 Dashboard/Observability 面板同源 → 冗余
+//  - /ai/queue、/ai/events 为 Phase1 遗留，被 execution/queue 与 tasks/:id/events 取代
+function markDeprecated(res, successor) {
+  res.set('Deprecation', 'true');
+  if (successor) res.set('Link', '<' + successor + '>; rel="successor-version"');
+}
 router.get('/observability/metrics', (req, res) => {
-  try { res.json({ ok: true, dashboard: observability.dashboard() }); }
+  try {
+    markDeprecated(res, '/ai/dashboard');
+    res.json({ ok: true, deprecated: { successor: '/ai/dashboard（同一数据源，Observability 面板）', note: 'legacy endpoint, kept for compatibility' }, dashboard: observability.dashboard() });
+  }
   catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
 router.get('/observability/trace/:taskId', (req, res) => {
@@ -593,6 +603,8 @@ function siteOfUrl(url) {
 }
 
 router.get('/events', (req, res) => {
+  // C36：legacy SSE（Phase1 全局流）→ 已被 /ai/tasks/:id/events（任务级取证）取代，仅标记不阻断
+  markDeprecated(res, '/ai/tasks/{id}/events');
   handleSse(req, res, {});
 });
 
@@ -672,7 +684,11 @@ router.delete('/secrets/:id', (req, res) => {
 });
 
 // ---------------- 队列 / 站点 / 健康 ----------------
-router.get('/queue', (req, res) => res.json(queue.list()));
+router.get('/queue', (req, res) => {
+  // C36：legacy 队列快照 → 已被 /ai/execution/queue（ExecutionPanel 队列视图）取代，仅标记不阻断
+  markDeprecated(res, '/ai/execution/queue');
+  res.json(queue.list());
+});
 
 router.get('/sites', (req, res) => res.json(sites.list()));
 
