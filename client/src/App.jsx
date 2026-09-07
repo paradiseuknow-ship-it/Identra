@@ -11,6 +11,7 @@ import SettingsPanel from './components/SettingsPanel';
 import SchedulesPanel from './components/SchedulesPanel';
 import ExecutionPanel from './components/ExecutionPanel';
 import IntelligencePanel from './components/IntelligencePanel';
+import ErrorBoundary from './components/ErrorBoundary';
 import GovernancePanel from './components/GovernancePanel';
 import ReadinessPanel from './components/ReadinessPanel';
 import TaskDetail from './components/TaskDetail';
@@ -202,6 +203,8 @@ export default function App() {
         </nav>
 
         <main className="flex-1 overflow-auto p-5">
+          {/* C40：面板级错误边界——任一面板渲染崩溃只显示本面板错误卡（可重试/刷新），不再拖垮整树白屏；key=tab 保证切回时重置 */}
+          <ErrorBoundary key={tab} name={tab}>
           {tab === 'profiles' && (
             <ProfilesTab
               profiles={profiles} proxies={proxies} runtime={runtime}
@@ -221,6 +224,7 @@ export default function App() {
           {tab === 'readiness' && <ReadinessPanel notify={notify} onNavigate={setTab} onRefresh={setReadiness} />}
           {tab === 'governance' && <GovernancePanel notify={notify} requestConfirm={requestConfirm} />}
           {tab === 'observability' && <ObservabilityPanel onViewDetail={setDetailId} />}
+          </ErrorBoundary>
         </main>
       </div>
 
