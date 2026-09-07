@@ -42,6 +42,13 @@ function insideRoot(p) {
   return r === ROOT || r.startsWith(ROOT + path.sep);
 }
 
+// insideBoundary：防逃逸边界跟随注入的清理根（测试注入 tmp 时边界=tmp，默认=项目根内标准目录）
+function insideBoundary(p, boundary) {
+  const b = path.resolve(boundary || ROOT);
+  const r = path.resolve(p);
+  return r === b || r.startsWith(b + path.sep);
+}
+
 // 收集存储统计（带缓存）
 async function collectStats({ force = false } = {}) {
   if (!force && statsCache && Date.now() - statsCache.at < CACHE_TTL_MS) return statsCache.items;
@@ -65,8 +72,8 @@ async function collectStats({ force = false } = {}) {
 
 // ---- cleanup ----
 // benchmarkLogs：.benchmark 下 *.log 与 phase9_regression_*.txt；保留最近 keepRecent 个 log + 全部 *.md 报告
-async function cleanupBenchmarkLogs({ olderThanDays = 7, keepRecent = 3 } = {}) {
-  const dir = path.join(ROOT, '.benchmark');
+async function cleanupBenchmarkLogs({ olderThanDays = 7, keepRecent = 3, benchDir } = {}) {
+  const dir = benchDir || path.join(ROOT, '.benchmark'); // benchDir 可注入（守护测试 tmp 隔离，不消耗宿主删除配额）
   if (!fs.existsSync(dir)) return { candidates: [], kept: [] };
   const cut = Date.now() - olderThanDays * 24 * 3600 * 1000;
   const entries = (await fsp.readdir(dir)).filter((f) => /\.log$/i.test(f) || /^phase9_regression_.*\.txt$/i.test(f));
@@ -84,8 +91,8 @@ async function cleanupBenchmarkLogs({ olderThanDays = 7, keepRecent = 3 } = {}) 
 }
 
 // browserProfiles：未被运行会话持有的 profile 目录（isRunning 由调用方注入）
-async function cleanupBrowserProfiles({ isRunning }) {
-  const dir = path.join(ROOT, 'data', 'profiles');
+async function cleanupBrowserProfiles({ isRunning, profilesDir } = {}) {
+  const dir = profilesDir || path.join(ROOT, 'data', 'profiles'); // profilesDir 可注入（同上）
   if (!fs.existsSync(dir)) return { candidates: [], kept: [] };
   const candidates = [], kept = [];
   for (const name of await fsp.readdir(dir)) {
@@ -106,15 +113,18 @@ const CLEANUP_TARGETS = {
 };
 
 // 执行清理；dryRun 默认 true（只统计不删除）
-async function cleanup({ targets = [], olderThanDays = 7, keepRecent = 3, dryRun = true, isRunning } = {}) {
+async function cleanup({ targets = [], olderThanDays = 7, keepRecent = 3, dryRun = true, isRunning, benchDir, profilesDir } = {}) {
   const plan = [];
   let freed = 0;
   for (const t of targets) {
     const def = CLEANUP_TARGETS[t];
     if (!def) return { ok: false, error: '未知清理目标: ' + t + '（允许: ' + Object.keys(CLEANUP_TARGETS).join(', ') + '）' };
-    const { candidates, kept } = await def.run({ olderThanDays, keepRecent, isRunning });
+    const { candidates, kept } = await def.run({ olderThanDays, keepRecent, isRunning, benchDir, profilesDir });
+    const boundary = t === 'benchmarkLogs' ? (benchDir || path.join(ROOT, '.benchmark'))
+      : t === 'browserProfiles' ? (profilesDir || path.join(ROOT, 'data', 'profiles'))
+      : ROOT;
     for (const c of candidates) {
-      if (!insideRoot(c.path)) continue; // 防逃逸：越界路径直接跳过
+      if (!insideBoundary(c.path, boundary)) continue; // 防逃逸：越界路径直接跳过
       freed += c.size || 0;
       if (!dryRun) {
         await fsp.rm(c.path, { recursive: true, force: true });
@@ -128,4 +138,4 @@ async function cleanup({ targets = [], olderThanDays = 7, keepRecent = 3, dryRun
 
 function resetCacheForTests() { statsCache = null; }
 
-module.exports = { collectStats, cleanup, CLEANUP_TARGETS, insideRoot, dirSize, resetCacheForTests };
+module.exports = { collectStats, cleanup, CLEANUP_TARGETS, insideRoot, insideBoundary, dirSize, resetCacheForTests };

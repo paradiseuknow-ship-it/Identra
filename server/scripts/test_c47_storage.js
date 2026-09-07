@@ -38,31 +38,57 @@ const sleep = (ms) => new Promise((s) => setTimeout(s, ms));
       'st=' + JSON.stringify(st));
   }
 
-  // P2：benchmarkLogs 清理语义（用真实 .benchmark 的规则但隔离目录——直接调内部函数不可行，
-  //     改用 cleanup + 临时伪造：这里通过 collectStats 验证真实目录，cleanup 语义用 dryRun 在真实 .benchmark 上验证）
+  // P2：benchmarkLogs 清理语义 —— 全部在 tmp 隔离目录验证（不消耗宿主 safe-delete 50/turn 配额；
+  //     在真实 .benchmark 上实删会撞 SAFE_DELETE_BULK_CONFIRM_REQUIRED，回归环境已实证 FATAL）
   {
-    const r1 = await ss.cleanup({ targets: ['benchmarkLogs'], olderThanDays: 7, keepRecent: 3, dryRun: true });
-    const filesAfter = fs.readdirSync(path.join(ROOT, '.benchmark')).length;
-    chk('P2a dryRun 只列不删（.benchmark 文件数不变）',
-      r1.ok === true && r1.dryRun === true && fs.readdirSync(path.join(ROOT, '.benchmark')).length === filesAfter,
-      'count=' + r1.count);
-    // 实删语义：伪造一个满足条件的旧 log（直接写一个 mtime 可控的文件到 .benchmark 再清它）
-    const bench = path.join(ROOT, '.benchmark');
-    const fake = path.join(bench, 'zz_c47_fake_old.log');
-    fs.writeFileSync(fake, 'z'.repeat(2048));
-    const old = new Date(Date.now() - 30 * 24 * 3600 * 1000);
-    fs.utimesSync(fake, old, old);
-    const r2 = await ss.cleanup({ targets: ['benchmarkLogs'], olderThanDays: 7, keepRecent: 3, dryRun: false });
-    const hit = r2.plan.find((x) => x.file === 'zz_c47_fake_old.log');
-    chk('P2b 实删：30 天前的旧 log 被删且 freed 计入',
-      hit && hit.removed === true && hit.size === 2048 && !fs.existsSync(fake),
-      'hit=' + JSON.stringify(hit));
-    // *.md 报告与最近 3 个 log 保留
-    const r3 = await ss.cleanup({ targets: ['benchmarkLogs'], olderThanDays: 0, keepRecent: 3, dryRun: true });
-    const mdHits = r3.plan.filter((x) => /\.md$/i.test(x.file));
-    chk('P2c *.md 报告永不进清理候选',
-      mdHits.length === 0,
-      'mdHits=' + mdHits.length);
+    const bench = fs.mkdtempSync(path.join(os.tmpdir(), 'c47-bench-'));
+    // 布景：3 个新 log（保留）+ 2 个 30 天前旧 log（应删）+ 1 个旧 md 报告（永不删）
+    const mk = (name, size, ageDays) => {
+      const f = path.join(bench, name);
+      fs.writeFileSync(f, 'x'.repeat(size));
+      if (ageDays != null) {
+        const t = new Date(Date.now() - ageDays * 24 * 3600 * 1000);
+        fs.utimesSync(f, t, t);
+      }
+      return f;
+    };
+    mk('phase9_regression_new1.txt', 100);
+    mk('run_new2.log', 100);
+    mk('run_new3.log', 100);
+    mk('run_old4.log', 2048, 30);
+    mk('phase9_regression_old5.txt', 2048, 30);
+    const md = mk('C47_REPORT.md', 100, 30); // 旧 md：规则上永不删
+
+    // dryRun：列出候选但不删
+    const r1 = await ss.cleanup({ targets: ['benchmarkLogs'], olderThanDays: 7, keepRecent: 3, dryRun: true, benchDir: bench });
+    chk('P2a dryRun 列出 2 个旧 log 且不删除（freed 预估 4096）',
+      r1.ok && r1.dryRun === true && r1.count === 2 && r1.freed === 4096
+        && fs.existsSync(path.join(bench, 'run_old4.log')),
+      'r1=' + JSON.stringify({ count: r1.count, freed: r1.freed }));
+
+    // 实删：旧 log 删除；最近 3 个 log 与 *.md 保留
+    const r2 = await ss.cleanup({ targets: ['benchmarkLogs'], olderThanDays: 7, keepRecent: 3, dryRun: false, benchDir: bench });
+    chk('P2b 实删：旧 log 删除、最近 3 log 保留、*.md 永不删',
+      r2.count === 2 && r2.freed === 4096
+        && !fs.existsSync(path.join(bench, 'run_old4.log'))
+        && !fs.existsSync(path.join(bench, 'phase9_regression_old5.txt'))
+        && fs.existsSync(md)
+        && fs.existsSync(path.join(bench, 'phase9_regression_new1.txt'))
+        && fs.existsSync(path.join(bench, 'run_new2.log'))
+        && fs.existsSync(path.join(bench, 'run_new3.log')),
+      'r2=' + JSON.stringify({ count: r2.count, freed: r2.freed }));
+
+    // browserProfiles：注入目录 + isRunning 排除运行中
+    const prof = fs.mkdtempSync(path.join(os.tmpdir(), 'c47-prof-'));
+    fs.mkdirSync(path.join(prof, 'p_stopped')); fs.writeFileSync(path.join(prof, 'p_stopped', 'Cookies'), 'c'.repeat(500));
+    fs.mkdirSync(path.join(prof, 'p_running')); fs.writeFileSync(path.join(prof, 'p_running', 'Cookies'), 'c'.repeat(500));
+    const r3 = await ss.cleanup({
+      targets: ['browserProfiles'], dryRun: false, profilesDir: prof,
+      isRunning: (id) => id === 'p_running',
+    });
+    chk('P2d browserProfiles：未运行 profile 删除、运行中保留',
+      r3.count === 1 && !fs.existsSync(path.join(prof, 'p_stopped')) && fs.existsSync(path.join(prof, 'p_running')),
+      'r3=' + JSON.stringify({ count: r3.count }));
   }
 
   // P3：防逃逸
