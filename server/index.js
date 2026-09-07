@@ -714,9 +714,16 @@ browserRouter.get('/browser/:id/stream', (req, res) => {
     res.write(`data: ${JSON.stringify({ ok: false, error: String(e.message || e) })}\n\n`);
   }
   heartbeat = setInterval(() => {
+    // C45 缺陷修复（B 类）：浏览器会话停止后旧实现心跳只写 ping → 僵流保活、
+    // hub 订阅永不释放、客户端永远显示"实时流已连接"的冻结画面。
+    // 修复：心跳时检查浏览器存活，已停止则主动断流（客户端 onerror → 自动降级低速）。
+    if (!browserManager.isRunning(p.id)) { cleanup(); return; }
     try { res.write(': ping\n\n'); } catch { /* 忽略 */ }
   }, 15000);
+  let cleaned = false;
   const cleanup = () => {
+    if (cleaned) return; // C45：幂等守卫（心跳断流 + res close 双路径只清理一次）
+    cleaned = true;
     if (heartbeat) clearInterval(heartbeat);
     if (unsubscribe) unsubscribe(); // 最后一个订阅者离开 → hub 自动 stop + 释放 CDP
     try { res.end(); } catch { /* 已结束 */ }

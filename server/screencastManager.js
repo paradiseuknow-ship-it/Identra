@@ -37,6 +37,8 @@ function createFrameHub({ minFrameIntervalMs = 120, onNeedStart, onNeedStop } = 
         try { onNeedStart(); } catch (e) { /* start 失败不阻断订阅，帧事件由适配层报错 */ }
       }
       return () => {
+        // C45：幂等退订——重复 unsubscribe 不得二次触发 onNeedStop（否则 CDP stop/detach 双发）
+        if (!subs.includes(fn)) return;
         subs = subs.filter((s) => s !== fn);
         if (subs.length === 0) {
           if (timer) { clearTimeout(timer); timer = null; }
@@ -97,7 +99,15 @@ function getHub(browserManager, profileId) {
     minFrameIntervalMs: 120, // ≈8fps 上限
     onNeedStart() {
       attachScreencast(browserManager, profileId)
-        .then((stop) => { const e = hubs.get(profileId); if (e) e.stopAdapter = stop; })
+        .then((stop) => {
+          const e = hubs.get(profileId);
+          if (e && e.hub.subscriberCount() > 0) { e.stopAdapter = stop; return; }
+          // C45 缺陷修复（A 类）：attach 异步期间 hub 已被移除或订阅者已清零时，
+          // 旧实现直接丢弃 stop → CDP session + screencast 永久泄漏（浏览器持续推帧+ack）。
+          // 修复：attach 完成即检查活跃状态，失活则立即释放。
+          Promise.resolve(stop()).catch(() => {});
+          if (e) hubs.delete(profileId);
+        })
         .catch(() => { /* attach 失败：SSE 客户端将收到错误事件（无帧）；下次订阅重试 */ });
     },
     onNeedStop() {
