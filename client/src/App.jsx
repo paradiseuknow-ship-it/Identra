@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import api from './api';
 import { toastBus } from './lib/toastBus.mjs';
+import { useEscapeClose } from './lib/useEscapeClose.mjs';
 import ProfileEditor from './components/ProfileEditor';
 import ProxyPanel from './components/ProxyPanel';
 import TaskPanel from './components/TaskPanel';
@@ -31,6 +32,7 @@ export default function App() {
 
   // 应用内确认弹窗，替代原生 window.confirm（原生框在某些环境下会被静默拦截导致“点击无反应”）
   const requestConfirm = (message, onConfirm) => setConfirmState({ message, onConfirm });
+  useEscapeClose(!!confirmState, () => setConfirmState(null)); // C43：Esc 关确认弹窗（取消语义，不触发确认）
   const runConfirm = () => {
     const { onConfirm } = confirmState || {};
     setConfirmState(null);

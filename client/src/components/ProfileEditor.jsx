@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import api from '../api';
+import { useEscapeClose } from '../lib/useEscapeClose.mjs';
 
 const OS_OPTIONS = ['Windows', 'macOS', 'Linux', 'Android', 'iOS'];
 const BROWSER_OPTIONS = ['Chrome', 'Edge', 'Safari'];
@@ -54,6 +55,7 @@ const TABS = [
 ];
 
 export default function ProfileEditor({ profile, proxies, onClose, onSaved }) {
+  useEscapeClose(true, onClose);
   const isNew = !profile?.id;
   const [activeTab, setActiveTab] = useState('basic');
   const [form, setForm] = useState(() => (profile ? normalizeProfile(profile) : emptyProfile()));

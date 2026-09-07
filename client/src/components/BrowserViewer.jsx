@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { useEscapeClose } from '../lib/useEscapeClose.mjs';
 
 // C42 —— 云查看双模式：
 //   实时流（默认）：SSE + CDP screencast 帧流（≈8fps，页面静止时零流量）
@@ -10,6 +11,7 @@ export default function BrowserViewer({ profileId, onClose }) {
   const [mode, setMode] = useState('stream'); // 'stream' | 'slow'
   const [streamStatus, setStreamStatus] = useState('连接中…');
   const esRef = useRef(null);
+  useEscapeClose(true, onClose); // C43：Esc 关闭云查看
 
   const refresh = useCallback(async () => {
     try {

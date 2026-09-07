@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import api from '../api';
 import { createLatestGuard, createTrailingThrottle } from '../lib/reloadGuard.mjs';
+import { useEscapeClose } from '../lib/useEscapeClose.mjs';
 
 // VIL 决策 → 默认人类可读说明（后端未提供 why 时使用）
 const VIL_WHY = {
@@ -57,6 +58,7 @@ function Section({ title, children }) {
 }
 
 export default function TaskDetail({ taskId, onClose }) {
+  useEscapeClose(true, onClose);
   const [task, setTask] = useState(null);
   const [trace, setTrace] = useState(null);
   const [events, setEvents] = useState([]);
