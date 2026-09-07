@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import api from './api';
+import { toastBus } from './lib/toastBus.mjs';
 import ProfileEditor from './components/ProfileEditor';
 import ProxyPanel from './components/ProxyPanel';
 import TaskPanel from './components/TaskPanel';
@@ -12,6 +13,7 @@ import SchedulesPanel from './components/SchedulesPanel';
 import ExecutionPanel from './components/ExecutionPanel';
 import IntelligencePanel from './components/IntelligencePanel';
 import ErrorBoundary from './components/ErrorBoundary';
+import ToastHost from './components/ToastHost';
 import GovernancePanel from './components/GovernancePanel';
 import ReadinessPanel from './components/ReadinessPanel';
 import TaskDetail from './components/TaskDetail';
@@ -22,7 +24,6 @@ export default function App() {
   const [proxies, setProxies] = useState([]);
   const [editing, setEditing] = useState(null); // profile object or 'new'
   const [runLog, setRunLog] = useState([]);
-  const [toast, setToast] = useState(null);
   const [viewingId, setViewingId] = useState(null);
   const [detailId, setDetailId] = useState(null);
   const [confirmState, setConfirmState] = useState(null); // { message, onConfirm, ok }
@@ -36,10 +37,9 @@ export default function App() {
     if (onConfirm) onConfirm();
   };
 
-  const notify = (msg, ok = true) => {
-    setToast({ msg, ok });
-    setTimeout(() => setToast(null), 2500);
-  };
+  // C41：notify 转发到 ToastHost 总线（签名不变，调用方零改动）。
+  // 旧单条 toast + 裸 setTimeout 的截断竞态与卸载后 setState 由 ToastHost 修复。
+  const notify = (msg, ok = true) => toastBus.emit(msg, ok);
 
   const loadProfiles = useCallback(async () => {
     try { setProfiles(await api.listProfiles()); } catch (e) { notify(e.message, false); }
@@ -245,11 +245,7 @@ export default function App() {
         <TaskDetail taskId={detailId} onClose={() => setDetailId(null)} />
       )}
 
-      {toast && (
-        <div className={`fixed bottom-5 right-5 px-4 py-2 rounded shadow-lg ${toast.ok ? 'bg-emerald-600' : 'bg-rose-600'} text-white text-sm`}>
-          {toast.msg}
-        </div>
-      )}
+      <ToastHost />
       {confirmState && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="w-80 rounded-lg border border-edge bg-panel p-5 shadow-2xl">
