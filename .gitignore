@@ -24,6 +24,7 @@ out/
 /data/
 /server/data/
 **/downloads/
+/server/agent/data/
 *.db
 *.sqlite
 *.sqlite3
@@ -58,6 +59,7 @@ benchmark/results/
 _*.js
 _*.json
 _*.txt
+tmp_*.js
 
 # ---- 8. 备份与转储 ---------------------------------------------------------
 **/*_backup/

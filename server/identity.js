@@ -441,6 +441,9 @@ router.post('/workspaces/:id/members', (req, res) => {
     // ADMIN 可管成员但不能授予 OWNER（§3：不能转移 Owner）；授 OWNER 需 workspace:update（仅 OWNER）
     assertCan(req.identityUser.id, wsId, 'member:manage');
     if (role === 'OWNER') assertCan(req.identityUser.id, wsId, 'workspace:update');
+    // C26：缺 username 曾落到 findUserByName(undefined) → 404「目标用户不存在」，
+    // 属误报（真实语义是入参缺失）。缺失字段必须 400，避免客户端把「没填」误判成「人不存在」。
+    if (!String(req.body.username || '').trim()) throw bad(400, 'username 必填');
     const target = findUserByName(req.body.username);
     if (!target) throw bad(404, '目标用户不存在');
     const all = getMemberships();

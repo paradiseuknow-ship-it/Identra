@@ -78,6 +78,20 @@ export const api = {
   intelSiteDetail: (site) => req('GET', '/ai/intelligence/sites/' + encodeURIComponent(site)),
   intelFlows: () => req('GET', '/ai/intelligence/flows'),
   intelFailures: () => req('GET', '/ai/intelligence/failures'),
+  intelExportPack: (b) => req('POST', '/ai/intelligence/export', b),
+  intelImportPack: (b) => req('POST', '/ai/intelligence/import', b),
+
+  // 治理中心（C26）：API Key / 审计日志 / 工作空间与成员（/api/auth 挂载点）
+  me: () => req('GET', '/auth/me'),
+  apiKeys: () => req('GET', '/auth/api-keys'),
+  createApiKey: (b) => req('POST', '/auth/api-keys', b),
+  revokeApiKey: (id) => req('DELETE', '/auth/api-keys/' + id),
+  auditLog: (qs) => req('GET', '/auth/audit' + (qs || '')),
+  auditExport: (qs) => req('GET', '/auth/audit/export' + (qs || '')),
+  workspaces: () => req('GET', '/auth/workspaces'),
+  createWorkspace: (b) => req('POST', '/auth/workspaces', b),
+  workspaceMembers: (id) => req('GET', '/auth/workspaces/' + id + '/members'),
+  addWorkspaceMember: (id, b) => req('POST', '/auth/workspaces/' + id + '/members', b),
 
   // browser
   launch: (id) => req('POST', '/browser/' + id + '/launch'),

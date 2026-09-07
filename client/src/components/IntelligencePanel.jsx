@@ -40,6 +40,33 @@ export default function IntelligencePanel({ notify }) {
     } catch (e) { notify(e.message, false); }
   };
 
+  // C25：经验包导出/导入（Element + Site + Flow 站点经验整体迁移）
+  const exportPack = async (siteName) => {
+    try {
+      const r = await api.intelExportPack({ site: siteName });
+      const blob = new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'intel-pack-' + siteName.replace(/[^a-z0-9.-]/gi, '_') + '-' + new Date().toISOString().slice(0, 10) + '.json';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      notify('经验包已导出（' + siteName + '）');
+    } catch (e) { notify('导出失败: ' + e.message, false); }
+  };
+
+  const importPack = async (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const pack = parsed.pack || parsed; // 兼容裸 pack 与 { pack } 包装
+      const r = await api.intelImportPack({ pack });
+      notify('经验包已导入');
+      await load();
+    } catch (e) { notify('导入失败: ' + e.message, false); }
+  };
+
   return (
     <div className="space-y-4">
       {/* tab 行 */}
@@ -49,6 +76,10 @@ export default function IntelligencePanel({ notify }) {
             className={`px-3 py-1.5 rounded text-xs border ${view === k ? 'bg-sky-600 border-sky-500 text-white' : 'border-edge text-slate-400 hover:bg-edge'}`}>{label}</button>
         ))}
         <button onClick={load} className="ml-auto px-3 py-1.5 rounded border border-edge hover:bg-edge text-slate-300 text-xs">刷新</button>
+        <label className="px-3 py-1.5 rounded border border-edge hover:bg-edge text-slate-300 text-xs cursor-pointer" title="导入站点经验包（JSON）">
+          导入经验包
+          <input type="file" accept=".json,application/json" className="hidden" onChange={importPack} />
+        </label>
       </div>
       {err && <div className="text-xs text-rose-400">{err}</div>}
 
@@ -74,7 +105,10 @@ export default function IntelligencePanel({ notify }) {
         <div className="bg-panel/60 border border-edge rounded-lg p-4 space-y-4">
           <div className="flex items-center justify-between">
             <span className="text-sm font-semibold text-slate-200">{selected.site?.site} 详情</span>
-            <button onClick={() => setSelected(null)} className="text-xs text-slate-500 hover:text-slate-300">收起</button>
+            <div className="flex gap-2 items-center">
+              <button onClick={() => exportPack(selected.site?.site)} className="px-2 py-1 rounded bg-sky-600/80 hover:bg-sky-500 text-white text-xs" title="导出该站点 Element+Site+Flow 经验包（JSON）">导出经验包</button>
+              <button onClick={() => setSelected(null)} className="text-xs text-slate-500 hover:text-slate-300">收起</button>
+            </div>
           </div>
           <div>
             <div className="text-xs font-medium text-slate-400 mb-1.5">Element 记忆（{selected.elements?.length || 0}）</div>
