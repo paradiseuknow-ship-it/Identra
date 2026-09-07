@@ -133,11 +133,11 @@ function baseIdentity(over = {}) {
   // 2026-09-06 C2 不变量演进：enabled ⊆ 已完成全链 POC 集合。C3/C4/C5 同款演进：
   // navigator-identity（0004）、hardwareConcurrency-identity（0005，N-HC PATCHED
   // 17/17）、deviceMemory-identity（0006，N-DM PATCHED 21/0 + STOCK 2/2）均已完成全链。
-  // 2026-09-08 C53 演进：ua-metadata-platform-identity（0009，metadata 生产层 platform
-  // 覆盖；N-XCONS patched 10/0 含新 P6 三层同源 + gate16a 6/6 + N-IDP 14/0 + N-AUTO 5/0
-  // 零退化）完成全链 → 16-B 全部 8 patch ACTIVE。
-  const POC_COMPLETED = ['identity-config-plumbing', 'automation-native-webdriver', 'platformversion-identity', 'navigator-identity', 'ua-metadata-platform-identity', 'hardwareConcurrency-identity', 'deviceMemory-identity', 'maxTouchPoints-identity'];
-  assert('PM2 八个 16-B patch 已登记；enabled ⊆ 已完成全链 POC 集合', manifest.PATCHES.length === 8
+  // 2026-09-08 C55 演进：ua-metadata-mobile-identity（0010，metadata 生产层 mobile bit，
+  // --fp-mobile 由 0008 模块从 identity.json os 派生；N-XCONS patched 11/0 含 P7 mobile
+  // 双层 + touch 配对 + gate16a 6/6 + N-IDP 14/0 + N-AUTO 5/0 零退化）→ 16-B 9 patch ACTIVE。
+  const POC_COMPLETED = ['identity-config-plumbing', 'automation-native-webdriver', 'platformversion-identity', 'navigator-identity', 'ua-metadata-platform-identity', 'ua-metadata-mobile-identity', 'hardwareConcurrency-identity', 'deviceMemory-identity', 'maxTouchPoints-identity'];
+  assert('PM2 九个 16-B patch 已登记；enabled ⊆ 已完成全链 POC 集合', manifest.PATCHES.length === 9
     && manifest.PATCHES.every((p) => p.enabled === POC_COMPLETED.includes(p.patchId)), manifest.PATCHES.map((p) => p.patchId + ':' + (p.enabled ? 'on' : 'off')));
   assert('PM3 必备字段逐项齐备', manifest.PATCHES.every((p) => manifest.REQUIRED_FIELDS.every((f) => f in p)), null);
   assert('PM4 依赖拓扑合法（重复/悬空依赖 fail-fast）', (() => {

@@ -23,6 +23,8 @@
 //   N-XC-P6 patched（C53/0009 起）：navigator.platform === userAgentData.platform === sec-ch-ua-platform 头
 //           三层同源强断言（取代 C50 版本的 W1 边界留痕：C3 renderer + C53 metadata 生产层
 //           消费同一 --fp-platform 开关，OS 面联动落地后必须三层一致）。
+//   N-XC-P7 patched（C55/0010 起）：identity os=Android → sec-ch-ua-mobile 头 ?1 === JS mobile true
+//           + maxTouchPoints=5 配对（C6 派生与 mobile bit 不再自相矛盾）。
 //
 // 关键纪律：platform-version 是高熵 hint，须 Accept-CH + Critical-CH 首导航授权后二次导航捕获；
 // userAgentData 仅 http(s) origin、deviceMemory secure-context-only → 探针走 127.0.0.1 真实 origin。
@@ -77,7 +79,7 @@ function makeCaptureServer() {
 }
 
 const JS_PROBE = () => new Promise((resolve) => {
-  const out = { platform: navigator.platform, userAgent: navigator.userAgent };
+  const out = { platform: navigator.platform, userAgent: navigator.userAgent, maxTouchPoints: navigator.maxTouchPoints };
   if (navigator.userAgentData) {
     out.uadPlatform = navigator.userAgentData.platform;
     out.uadMobile = navigator.userAgentData.mobile;
@@ -178,6 +180,21 @@ async function main() {
     assert('N-XC-P6 三层同源：navigator.platform === userAgentData.platform === sec-ch-ua-platform 头',
       jsPlat === p.js.uadPlatform && jsPlat === hdrPlat,
       { navigator_platform: jsPlat, uad_platform: p.js.uadPlatform, header: hdrPlat });
+
+    // N-XC-P7（C55/patch 0010 起）：identity os=Android → mobile 双层一致。
+    // C6 派生 maxTouchPoints=5 必须与 mobile=1 配对（desktop 宿主上原生 mobile=0
+    // 与 touch=5 自相矛盾）；0008 模块派生 --fp-mobile，0010 在 metadata 生产层消费
+    // ——sec-ch-ua-mobile 头与 JS userAgentData.mobile 单点双驱动。
+    const idAndroid = {
+      identityId: 'idn-nxcons-android', os: 'Android', osVersion: '13.0.0',
+      cpuProfile: { platform: 'Linux armv8l', hardwareConcurrency: 8 },
+      memoryProfile: { deviceMemoryGB: 4 },
+    };
+    const a = await runCase({ identityObj: idAndroid });
+    const hdrMobile = String(a.hdr['sec-ch-ua-mobile']).trim() === '?1';
+    assert('N-XC-P7 identity os=Android → mobile 双层一致（头 ?1 === JS true）+ touch=5 配对',
+      hdrMobile && a.js.uadMobile === true && a.js.maxTouchPoints === 5,
+      { header: a.hdr['sec-ch-ua-mobile'], js_mobile: a.js.uadMobile, touch: a.js.maxTouchPoints });
   } else {
     console.log('  SKIP-PATCHED patched 矩阵（未设置 FPB_NATIVE_CHROME）');
   }

@@ -107,6 +107,27 @@ const PATCHES = [
     status: 'ACTIVE',
   },
   {
+    // C55 实证真值（0010 patch）：metadata 生产层 mobile bit 覆盖 —— 0008 模块从
+    // identity.json "os" 派生 --fp-mobile（Android/iOS => 1，desktop => 0，缺失不派生），
+    // 0010 在 GetUserAgentMetadata() 消费（"1" => true / "0" => false / 其他 fail-open 原生）。
+    // blink::UserAgentMetadata.mobile 同时驱动 sec-ch-ua-mobile 头 + JS userAgentData.mobile，
+    // 与 C6 maxTouchPoints=5 派生配对，消除 desktop 宿主上 touch=5 + mobile=0 的自相矛盾。
+    patchId: 'ua-metadata-mobile-identity',
+    surface: 'userAgentMetadata.mobile',
+    chromiumVersion: '152',
+    sourceFiles: [
+      'components/embedder_support/user_agent_utils.cc',
+      'chrome/browser/fingerprint/identity_config.cc',
+      'chrome/browser/fingerprint/identity_config.h',
+    ],
+    sourceSymbols: ['embedder_support::GetUserAgentMetadata', 'fp16b::ApplyIdentityConfigToCommandLine'],
+    dependencies: ['identity-config-plumbing'],
+    riskLevel: 'MEDIUM',
+    testSuite: ['N-XC-P7'],
+    enabled: true,
+    status: 'ACTIVE',
+  },
+  {
     // C4 实证真值（16-A 规划确认）：navigator.hardwareConcurrency 唯一 virtual
     // 生产点 = NavigatorBase::hardwareConcurrency()（navigator_base.h:57 override；
     // WorkerNavigator 无独立覆写，window/Worker 单点同源）。stock 基值 =
