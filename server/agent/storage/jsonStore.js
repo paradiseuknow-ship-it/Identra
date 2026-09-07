@@ -1,7 +1,10 @@
 'use strict';
 
 // JsonStore：StoreInterface 的 JSON 文件实现。
-// 同步原子写（临时文件 + rename），与项目既有 db/vault 风格一致。
+// 同步原子写（临时文件 + rename），与项目既有 db/vault 风格一致；主集合与归档
+// 文件统一走原子写（C60 前归档是裸 writeFileSync 直写）。读路径对瞬时文件锁
+// （EPERM/EBUSY/EACCES）与写路径同规格退避重试，fs 失败绝不吞成 fallback
+// （read-modify-write 链路会把整集合覆写成 fallback = 静默清空）。
 // 单进程下足够；多 Worker 场景由上层（TaskManager 唯一写入口 + 状态限频）兜底。
 
 const fs = require('fs');
@@ -62,6 +65,13 @@ function archiveDateString(d) {
   return '' + t.getFullYear() + p(t.getMonth() + 1) + p(t.getDate()) + '-' + p(t.getHours()) + p(t.getMinutes()) + p(t.getSeconds());
 }
 
+// 瞬时文件锁（EPERM/EBUSY/EACCES）统一重试判定：与写路径 Phase 5.8 同一故障面
+// （杀毒软件 / 文件索引器短暂锁定目标文件），读路径此前完全没有这层防护。
+function isTransientLockError(e) {
+  const code = e && e.code;
+  return code === 'EPERM' || code === 'EBUSY' || code === 'EACCES';
+}
+
 // 同步休眠（替代 write 重试退避里的 busy-wait 空转烧 CPU）。
 function syncSleep(ms) {
   try {
@@ -72,6 +82,50 @@ function syncSleep(ms) {
     const end = Date.now() + ms;
     while (Date.now() < end) { /* busy-wait */ }
   }
+}
+
+// 原子写（临时文件 + rename）+ 瞬时锁有限退避重试。
+// write() 与归档追加共用（C60 前归档是裸 writeFileSync 直写，违背「同步原子写」自述，
+// 进程中断可留下半截归档 JSON）。
+function atomicWriteFileSync(f, payload) {
+  const tmp = f + '.tmp';
+  let lastErr = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      fs.writeFileSync(tmp, payload, 'utf8');
+      try { fs.renameSync(tmp, f); return; }
+      catch (re) {
+        // 某些情况下 .tmp 残留会阻碍下次 rename，先清理再重试
+        if (attempt === 4) throw re;
+        try { fs.unlinkSync(tmp); } catch (_) {}
+        lastErr = re;
+        if (!isTransientLockError(re)) throw re;
+        syncSleep((attempt + 1) * 20);
+      }
+    } catch (e) {
+      lastErr = e;
+      if (!isTransientLockError(e)) throw e;
+      syncSleep((attempt + 1) * 20);
+    }
+  }
+  if (lastErr) throw lastErr;
+}
+
+// 读文件 + 瞬时锁有限退避重试（C60：读路径此前零防护）。
+// 注意：瞬时锁重试耗尽后必须抛出——read() 的调用方（insert/upsert/update/remove/
+// appendEvent）全是 read-modify-write，把读失败吞成 fallback 会把整集合覆写成
+// fallback（真实数据丢失）。fs 读取失败 ≠ 文件损坏，两者语义必须分开。
+function readFileSyncRetry(f) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try { return fs.readFileSync(f, 'utf8'); }
+    catch (e) {
+      lastErr = e;
+      if (!isTransientLockError(e)) throw e;
+      syncSleep((attempt + 1) * 20);
+    }
+  }
+  throw lastErr;
 }
 
 class JsonStore extends StoreInterface {
@@ -99,8 +153,13 @@ class JsonStore extends StoreInterface {
     const f = this._file(name);
     this._ensure();
     if (!fs.existsSync(f)) return Array.isArray(fallback) ? fallback.slice() : fallback;
+    // C60：fs 读取失败（瞬时锁重试耗尽 / 权限等）直接抛出，绝不当成「文件不存在」
+    // 吞成 fallback——read-modify-write 链路（insert/upsert/update/remove/appendEvent）
+    // 会把 fallback 覆写回主文件，造成整集合静默清空（真实数据丢失）。
+    // 只有真正的 JSON 解析失败（文件损坏）才走 fallback，维持既有契约。
+    const raw = readFileSyncRetry(f);
     let parsed;
-    try { parsed = JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { return Array.isArray(fallback) ? fallback.slice() : fallback; }
+    try { parsed = JSON.parse(raw); } catch (e) { return Array.isArray(fallback) ? fallback.slice() : fallback; }
     // 返回深拷贝，避免调用方改动污染后续读取
     try { return structuredClone(parsed); } catch (e) { return JSON.parse(JSON.stringify(parsed)); }
   }
@@ -117,47 +176,35 @@ class JsonStore extends StoreInterface {
         const count = Math.floor(AUTO_ARCHIVE_LIMITS[name] / 3);
         const moving = data.slice(0, count);
         data = data.slice(count);
-        const adir = path.join(this.dir, 'archive', name);
-        fs.mkdirSync(adir, { recursive: true });
-        const af = path.join(adir, archiveDateString() + '.json');
-        let prev = [];
-        if (fs.existsSync(af)) {
-          try { const p = JSON.parse(fs.readFileSync(af, 'utf8')); if (Array.isArray(p)) prev = p; } catch (e) { prev = []; }
-        }
-        prev.push(...moving);
-        fs.writeFileSync(af, JSON.stringify(prev, null, 2), 'utf8');
+        this._archiveAppend(name, moving);
       } finally {
         this._archiving = false;
       }
     }
-    const tmp = f + '.tmp';
-    const payload = JSON.stringify(data, null, 2);
-    // Phase 5.8 加固（Benchmark 暴露的 Windows EPERM/EBUSY 竞态）：
-    // 杀毒软件 / 文件索引器会短暂锁定目标文件，导致 rename 偶发失败。
-    // 这里对 write+rename 做有限次数退避重试，避免瞬时锁造成整进程崩溃。
-    let lastErr = null;
-    for (let attempt = 0; attempt < 5; attempt++) {
+    atomicWriteFileSync(f, JSON.stringify(data, null, 2));
+  }
+
+  // 归档追加（C60 抽取共用）：auto-archive 与 archiveOldest 原本是两份同构代码
+  // （C58 D2 教训：重复定义会各自漂移），统一为：损坏归档侧车保全 + 原子写。
+  _archiveAppend(name, moving) {
+    const adir = path.join(this.dir, 'archive', name);
+    fs.mkdirSync(adir, { recursive: true });
+    const f = path.join(adir, archiveDateString() + '.json');
+    let prev = [];
+    if (fs.existsSync(f)) {
       try {
-        fs.writeFileSync(tmp, payload, 'utf8');
-        try { fs.renameSync(tmp, f); return; }
-        catch (re) {
-          // 某些情况下 .tmp 残留会阻碍下次 rename，先清理再重试
-          if (attempt === 4) throw re;
-          try { fs.unlinkSync(tmp); } catch (_) {}
-          lastErr = re;
-          const code = re && re.code;
-          if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') throw re;
-          const t = (attempt + 1) * 20;
-          syncSleep(t);
-        }
+        const p = JSON.parse(readFileSyncRetry(f));
+        if (Array.isArray(p)) prev = p;
       } catch (e) {
-        lastErr = e;
-        const code = e && e.code;
-        if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') throw e;
-        syncSleep((attempt + 1) * 20);
+        // C60：归档历史是 evidence-first 的「不丢数据」承诺，损坏时绝不静默清空
+        // 覆写——先把损坏文件侧车保全（.corrupt-<时间戳>），再从空数组续写。
+        try { fs.renameSync(f, f + '.corrupt-' + archiveDateString()); } catch (_) {}
+        prev = [];
       }
     }
-    if (lastErr) throw lastErr;
+    prev.push(...moving);
+    atomicWriteFileSync(f, JSON.stringify(prev, null, 2));
+    return f;
   }
 
   // 归档最老 count 条（数组头部）到 data/archive/<name>/<时间戳>.json，返回 { archived, remaining }。
@@ -169,16 +216,7 @@ class JsonStore extends StoreInterface {
     }
     const moving = arr.slice(0, count);
     const remaining = arr.slice(count);
-    const dir = path.join(this.dir, 'archive', name);
-    fs.mkdirSync(dir, { recursive: true });
-    const f = path.join(dir, archiveDateString() + '.json');
-    let prev = [];
-    if (fs.existsSync(f)) {
-      try { prev = JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { prev = []; }
-      if (!Array.isArray(prev)) prev = [];
-    }
-    prev.push(...moving);
-    fs.writeFileSync(f, JSON.stringify(prev, null, 2), 'utf8');
+    const f = this._archiveAppend(name, moving);
     this.write(name, remaining);
     return { archived: moving.length, remaining, archiveFile: f };
   }
