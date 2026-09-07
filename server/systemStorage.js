@@ -18,17 +18,21 @@ const MAX_ENTRIES = 80000; // 单目录统计条目上限（防失控遍历）
 
 let statsCache = null; // { at, items }
 
-async function dirSize(dir) {
+// C51：excludeTop —— 只跳过 dir 第一层下指定名称的子目录（整棵剪枝）。
+// 用途：collections 统计 data 目录时排除 profiles 子目录，消除与 profiles 项的双重计数。
+async function dirSize(dir, { excludeTop = [] } = {}) {
   let bytes = 0, files = 0, truncated = false;
-  const stack = [dir];
+  const excludeSet = new Set(excludeTop);
+  const stack = [{ dir, top: true }];
   while (stack.length) {
-    const cur = stack.pop();
+    const { dir: cur, top } = stack.pop();
     let entries;
     try { entries = await fsp.readdir(cur, { withFileTypes: true }); } catch { continue; }
     for (const e of entries) {
       if (files > MAX_ENTRIES) { truncated = true; return { bytes, files, truncated }; }
+      if (top && e.isDirectory() && excludeSet.has(e.name)) continue; // C51：第一层整棵剪枝
       const p = path.join(cur, e.name);
-      if (e.isDirectory()) { stack.push(p); continue; }
+      if (e.isDirectory()) { stack.push({ dir: p, top: false }); continue; }
       if (e.isSymbolicLink()) continue;
       try { const st = await fsp.stat(p); bytes += st.size; files += 1; } catch { /* raced */ }
     }
@@ -50,21 +54,25 @@ function insideBoundary(p, boundary) {
 }
 
 // 收集存储统计（带缓存）
-async function collectStats({ force = false } = {}) {
+// C51：dirs 可注入（守护测试 tmp 隔离）；collections 项 excludeTop 排除 profiles，
+//   修复「collections 统计整个 data（含 data/profiles）→ 与 profiles 项双重计数」的展示缺陷
+//   （label 一直写的是「data 其余」，实现此前与口径不符）。
+async function collectStats({ force = false, dirs = {} } = {}) {
   if (!force && statsCache && Date.now() - statsCache.at < CACHE_TTL_MS) return statsCache.items;
   const defs = [
-    { key: 'benchmark', label: '回归日志与取证（.benchmark）', dir: path.join(ROOT, '.benchmark') },
-    { key: 'profiles', label: '浏览器用户数据（data/profiles）', dir: path.join(ROOT, 'data', 'profiles') },
-    { key: 'collections', label: '业务数据集合（data 其余）', dir: path.join(ROOT, 'data') },
-    { key: 'dist', label: '前端构建产物（client/dist）', dir: path.join(ROOT, 'client', 'dist') },
+    { key: 'benchmark', label: '回归日志与取证（.benchmark）', dir: dirs.benchmark || path.join(ROOT, '.benchmark') },
+    { key: 'profiles', label: '浏览器用户数据（data/profiles）', dir: dirs.profiles || path.join(ROOT, 'data', 'profiles') },
+    { key: 'collections', label: '业务数据集合（data 其余）', dir: dirs.collections || path.join(ROOT, 'data'), excludeTop: ['profiles'] },
+    { key: 'dist', label: '前端构建产物（client/dist）', dir: dirs.dist || path.join(ROOT, 'client', 'dist') },
   ];
   const items = [];
   for (const d of defs) {
     let stat = { bytes: 0, files: 0, truncated: false };
-    try {
-      if (fs.existsSync(d.dir)) stat = await dirSize(d.dir);
-    } catch { /* 目录不可读按 0 处理 */ }
-    items.push({ ...d, exists: fs.existsSync(d.dir), ...stat });
+    const exists = fs.existsSync(d.dir);
+    if (exists) {
+      try { stat = await dirSize(d.dir, { excludeTop: d.excludeTop }); } catch { /* 目录不可读按 0 处理 */ }
+    }
+    items.push({ key: d.key, label: d.label, dir: d.dir, exists, ...stat });
   }
   statsCache = { at: Date.now(), items };
   return items;
@@ -113,7 +121,14 @@ const CLEANUP_TARGETS = {
 };
 
 // 执行清理；dryRun 默认 true（只统计不删除）
+// C51：olderThanDays / keepRecent 参数硬化 —— NaN/负数/非整数一律回落保守默认（7 / 3，保留更多）。
+//   缺陷背景：keepRecent 负数会让 slice 语义反转（candidates 取到最旧 N 条当清理对象、
+//   kept 反而保留其余），路由层 Number()||default 只挡 NaN 挡不住负数 → 在库级钳制。
 async function cleanup({ targets = [], olderThanDays = 7, keepRecent = 3, dryRun = true, isRunning, benchDir, profilesDir } = {}) {
+  const otd = Number(olderThanDays);
+  const kr = Number(keepRecent);
+  olderThanDays = Number.isFinite(otd) && otd >= 0 ? Math.floor(otd) : 7;
+  keepRecent = Number.isFinite(kr) && kr >= 0 ? Math.floor(kr) : 3;
   const plan = [];
   let freed = 0;
   for (const t of targets) {
