@@ -857,6 +857,56 @@ settingsRouter.post('/settings/test', (req, res) => {
   }).catch((e) => res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }));
 });
 
+// C30：系统就绪度自检（首次运行引导 + 健康体检只读聚合）。
+// 只读 GET：所有凭据一律走既有掩码接口（明文永不出站），代理只计数不输出。
+settingsRouter.get('/settings/readiness', (req, res) => {
+  try {
+    const u = req.identityUser || null;
+    const llm = (settings.getMasked().llm) || {};
+    const profiles = db.getProfiles() || [];
+    const tasks = db.getTasks() || [];
+    const templates = fpTemplates.getTemplates() || [];
+    const proxies = db.getProxies() || [];
+    const snapshots = browserManager.runtimeSnapshots() || [];
+
+    const llmReady = !!(llm.provider && llm.provider.set) && !!(llm.apiKey && llm.apiKey.set);
+    const isLocal = !!u && u.status === 'local';
+    const kind = !u ? 'none' : (u.__apiKey ? 'apiKey' : (isLocal ? 'local' : 'session'));
+    const role = u ? (identity.roleOf(u.id, u.currentWorkspaceId) || null) : null;
+
+    const checks = [
+      { key: 'auth', label: '身份会话', ok: !!u, optional: false,
+        detail: u ? `${u.username} · ${role || '无角色'} · ${kind === 'apiKey' ? 'API Key' : kind === 'local' ? '本地单机' : '会话登录'}` : '未解析到身份',
+        hint: '本机模式自动引导；多用户模式需在治理中心建立账号与角色', panel: 'governance' },
+      { key: 'llm', label: 'LLM 凭据', ok: llmReady, optional: false,
+        detail: llmReady ? `${llm.provider.masked} / ${(llm.model && llm.model.masked) || '(默认模型)'} / Key ${(llm.apiKey && llm.apiKey.masked) || ''}` : '缺少 provider 或 API Key',
+        hint: '系统设置 → LLM：填 provider 与 Key 后点「测试连通」', panel: 'settings' },
+      { key: 'profile', label: '浏览器配置', ok: profiles.length > 0, optional: false,
+        detail: `${profiles.length} 个配置`, hint: '配置管理 → 新建配置，然后启动浏览器', panel: 'profiles' },
+      { key: 'template', label: '指纹模板', ok: templates.length > 0, optional: true,
+        detail: `${templates.length} 个模板（可选，用于复用指纹基线）`, hint: '指纹模板 → 保存复用基线', panel: 'templates' },
+      { key: 'proxy', label: '代理', ok: proxies.length > 0, optional: true,
+        detail: `${proxies.length} 条代理（可选，跨境/多地区场景需要）`, hint: '代理管理 → 添加代理并做健康检查', panel: 'proxies' },
+      { key: 'task', label: '自动化任务', ok: tasks.length > 0, optional: true,
+        detail: `${tasks.length} 个任务（可选，AI 操作员/定时调度需要）`, hint: '自动化任务 → 新建任务', panel: 'tasks' },
+    ];
+    const blockers = checks.filter((c) => !c.optional && !c.ok);
+
+    res.json({
+      ok: blockers.length === 0,
+      generatedAt: Date.now(),
+      stage: blockers.length === 0 ? 'READY' : 'SETUP_REQUIRED',
+      auth: u ? { userId: u.id, username: u.username, workspaceId: u.currentWorkspaceId || null, role, kind } : null,
+      llm: { ready: llmReady, provider: (llm.provider && llm.provider.masked) || null, model: (llm.model && llm.model.masked) || null, keyMasked: (llm.apiKey && llm.apiKey.masked) || null, baseUrl: (llm.baseUrl && llm.baseUrl.masked) || null },
+      assets: { profiles: profiles.length, templates: templates.length, proxies: proxies.length, tasks: tasks.length, activeSessions: snapshots.length },
+      security: { bind: BIND, tokenRequired: !!process.env.FPB_API_TOKEN, evaluateEnabled: EVALUATE_ENABLED, masterKeySet: !!process.env.FPB_MASTER_KEY },
+      checks,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) });
+  }
+});
+
 // ---------------- Backup / Restore（C22 数据备份） ----------------
 settingsRouter.get('/backup/export', (req, res) => {
   const u = req.identityUser;

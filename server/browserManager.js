@@ -77,18 +77,39 @@ function profileDataDir(profileId) {
 // 读取本机真实 Chrome 的完整版本号（如 151.0.7922.138），用于把伪造 UA 对齐到引擎实际版本，
 // 使 UA 字符串 / Sec-CH-UA 请求头 / navigator.userAgentData 三者版本完全一致（与 adsPower 同款自然度）。
 // 失败返回 null，此时沿用指纹池版本。返回完整版本（含补丁/构建号），避免 UA 写成 151.0.0.0 这种零补丁假版本。
+//
+// C30 真实缺陷修复：原实现每次 launch 都 fork 一次 powershell 读 PE 版本头，且失败**静默返回 null**。
+// 顺序回归跑 130+ 套件时系统负载高，powershell 冷启动常越过 5s 超时 → getChromeVersion() 返回 null
+// → 伪造 UA 停在指纹池版本（147），而 brands/identity 走原生回放（152）→ **UA 层 ↔ brands 层版本分裂**
+// （step19 L6a/L7 invariant 红灯）。这是 A 类层间一致性缺陷，不是测试噪声：
+//   ① 版本号属进程级不变事实 → memo 缓存（一次成功即复用，彻底消除重复 fork 与负载窗口）；
+//   ② 失败重试一轮 + 超时放宽到 8s；
+//   ③ 失败必须留下可观测 warn（原先 return null 静默，等于把失守的一致性藏起来）。
+let _chromeVerCache = null;
+let _chromeVerWarned = false;
 function getChromeVersion() {
-  if (!SYSTEM_CHROME || !fs.existsSync(SYSTEM_CHROME)) return null;
-  try {
-    const out = execSync(
-      `powershell -NoProfile -Command "(Get-Item '${SYSTEM_CHROME.replace(/'/g, "''")}').VersionInfo.ProductVersion"`,
-      { encoding: 'utf8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] }
-    );
-    const m = (out || '').trim().match(/^(\d+\.\d+\.\d+\.\d+)/);
-    return m ? m[1] : null;
-  } catch (e) {
+  if (_chromeVerCache) return _chromeVerCache;
+  if (!SYSTEM_CHROME || !fs.existsSync(SYSTEM_CHROME)) {
+    if (!_chromeVerWarned) {
+      _chromeVerWarned = true;
+      console.warn('[ua] 未找到本机 Chrome 可执行文件，伪造 UA 无法对齐引擎版本：' + SYSTEM_CHROME);
+    }
     return null;
   }
+  const cmd = `powershell -NoProfile -Command "(Get-Item '${SYSTEM_CHROME.replace(/'/g, "''")}').VersionInfo.ProductVersion"`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const out = execSync(cmd, { encoding: 'utf8', timeout: 8000, stdio: ['pipe', 'pipe', 'pipe'] });
+      const m = (out || '').trim().match(/^(\d+\.\d+\.\d+\.\d+)/);
+      if (m) { _chromeVerCache = m[1]; return _chromeVerCache; }
+    } catch (e) {
+      if (attempt === 1 && !_chromeVerWarned) {
+        _chromeVerWarned = true;
+        console.warn('[ua] 读取引擎版本失败（UA 将无法对齐引擎，层间一致性风险）：' + String(e.message || e).slice(0, 160));
+      }
+    }
+  }
+  return null;
 }
 
 // Phase 16-B C7-CONFIG：Accept-Language 单一事实源 = fp.languages（identity 列表）。
@@ -844,6 +865,9 @@ async function launch(profile, proxies) {
     const before = fp.userAgent;
     fp.userAgent = fp.userAgent.replace(/Chrome\/\d+(\.\d+)*/, 'Chrome/' + realVer);
     if (before !== fp.userAgent) console.log(`[ua] 已将伪造 UA 版本对齐到引擎: ${before} -> ${fp.userAgent}`);
+  } else if (fp.userAgent && /Chrome\/\d+(\.\d+)*/.test(fp.userAgent)) {
+    // 一致性失守必须可见：不阻断启动，但每次都报警（防止再次出现「静默分裂」而无人察觉）
+    console.warn(`[ua] 引擎版本未知（profile ${profile.id}）：UA 保持 ${fp.userAgent.match(/Chrome\/[\d.]+/)[0]}，未与 brands/identity 对齐`);
   }
 
   // Phase 16-B §9（Option B）：profile launch 时确保 profile-bound identity.json。

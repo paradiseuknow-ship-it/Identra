@@ -12,6 +12,7 @@ import SchedulesPanel from './components/SchedulesPanel';
 import ExecutionPanel from './components/ExecutionPanel';
 import IntelligencePanel from './components/IntelligencePanel';
 import GovernancePanel from './components/GovernancePanel';
+import ReadinessPanel from './components/ReadinessPanel';
 import TaskDetail from './components/TaskDetail';
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
   const [viewingId, setViewingId] = useState(null);
   const [detailId, setDetailId] = useState(null);
   const [confirmState, setConfirmState] = useState(null); // { message, onConfirm, ok }
+  const [readiness, setReadiness] = useState(null); // C30 就绪度快照（header 徽标用）
 
   // 应用内确认弹窗，替代原生 window.confirm（原生框在某些环境下会被静默拦截导致“点击无反应”）
   const requestConfirm = (message, onConfirm) => setConfirmState({ message, onConfirm });
@@ -47,6 +49,20 @@ export default function App() {
   }, []);
 
   useEffect(() => { loadProfiles(); loadProxies(); }, [loadProfiles, loadProxies]);
+
+  // C30：启动即跑就绪度自检——必需项缺失时自动落到引导页（不再让用户自己猜缺什么）
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.systemReadiness();
+        if (!alive) return;
+        setReadiness(r);
+        if (r && r.stage === 'SETUP_REQUIRED') setTab('readiness');
+      } catch (e) { /* 自检失败不阻断主流程 */ }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   // C20：运行态快照轮询（仅 profiles tab 活跃时，5s 一拍；失败静默——运行态是增强不是关键路径）
   const [runtime, setRuntime] = useState({});
@@ -163,11 +179,20 @@ export default function App() {
       <header className="flex items-center gap-3 px-5 py-3 border-b border-edge bg-panel">
         <div className="text-lg font-semibold">🛰️ 指纹浏览器控制台</div>
         <span className="text-xs text-slate-500">Chromium 内核 · 指纹伪装 · 自动化执行</span>
+        {readiness && (
+          <button onClick={() => setTab('readiness')}
+            title={readiness.checks.filter((c) => !c.ok && !c.optional).map((c) => c.label).join('、') || '必需项全部就绪'}
+            className={`ml-auto text-xs px-2 py-0.5 rounded border ${readiness.ok
+              ? 'border-emerald-700/60 text-emerald-300 bg-emerald-600/10'
+              : 'border-amber-700/60 text-amber-300 bg-amber-600/10'}`}>
+            {readiness.ok ? '● 就绪' : '● 待引导'}
+          </button>
+        )}
       </header>
 
       <div className="flex flex-1 min-h-0">
         <nav className="w-48 border-r border-edge bg-panel/60 p-3 space-y-1">
-                    {[['profiles', '配置管理'], ['templates', '指纹模板'], ['proxies', '代理管理'], ['tasks', '自动化任务'], ['ai', 'AI 操作员'], ['schedules', '定时调度'], ['execution', '执行引擎'], ['intelligence', '智能记忆'], ['governance', '治理中心'], ['observability', 'Observability'], ['settings', '系统设置']].map(([k, label]) => (
+                    {[['readiness', '就绪检查'], ['profiles', '配置管理'], ['templates', '指纹模板'], ['proxies', '代理管理'], ['tasks', '自动化任务'], ['ai', 'AI 操作员'], ['schedules', '定时调度'], ['execution', '执行引擎'], ['intelligence', '智能记忆'], ['governance', '治理中心'], ['observability', 'Observability'], ['settings', '系统设置']].map(([k, label]) => (
             <button key={k}
               onClick={() => setTab(k)}
               className={`w-full text-left px-3 py-2 rounded ${tab === k ? 'bg-sky-600 text-white' : 'hover:bg-edge text-slate-300'}`}>
@@ -193,6 +218,7 @@ export default function App() {
           {tab === 'schedules' && <SchedulesPanel profiles={profiles} notify={notify} requestConfirm={requestConfirm} onViewDetail={setDetailId} />}
           {tab === 'execution' && <ExecutionPanel notify={notify} />}
           {tab === 'intelligence' && <IntelligencePanel notify={notify} />}
+          {tab === 'readiness' && <ReadinessPanel notify={notify} onNavigate={setTab} onRefresh={setReadiness} />}
           {tab === 'governance' && <GovernancePanel notify={notify} requestConfirm={requestConfirm} />}
           {tab === 'observability' && <ObservabilityPanel onViewDetail={setDetailId} />}
         </main>

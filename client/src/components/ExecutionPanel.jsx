@@ -26,6 +26,7 @@ export default function ExecutionPanel({ notify }) {
   const [submitForm, setSubmitForm] = useState({ taskId: '', priorityOverride: '' });
   const [submitResult, setSubmitResult] = useState(null);
   const [recovery, setRecovery] = useState(null);
+  const [recoverTimeoutMs, setRecoverTimeoutMs] = useState('30000');
   const [resProfileId, setResProfileId] = useState('');
   // 样例必须自身合法：MUST_VERIFY 类动作（click/fill/...）必须带 verification(type≠none) 或 expectedBusinessState，
   // 否则 schema 直接判不合法（业务完成契约：禁止仅以 action_success 作为完成证据）。
@@ -99,6 +100,20 @@ export default function ExecutionPanel({ notify }) {
     finally { setBusy(false); }
   };
 
+  // C33：僵尸资源回收——心跳超时 / 已终态任务仍占着的浏览器资源绑定
+  const [recover, setRecover] = useState(null);
+
+  const runResourceRecover = async () => {
+    setBusy(true);
+    try {
+      const r = await api.resourceRecover({ heartbeatTimeoutMs: Number(recoverTimeoutMs) || 30000 });
+      setRecover(r);
+      notify(`资源回收完成：动作 ${(r.actions || []).length} 项`);
+      await load();
+    } catch (e) { notify(e.message, false); setRecover({ error: String(e.message || e) }); }
+    finally { setBusy(false); }
+  };
+
   const releaseResource = async () => {
     if (!resProfileId.trim()) return notify('请填写 profileId', false);
     setBusy(true);
@@ -143,6 +158,7 @@ export default function ExecutionPanel({ notify }) {
             <button disabled={busy} onClick={() => ctl('pause', '调度器已暂停')} className="px-3 py-1.5 rounded bg-amber-600/80 hover:bg-amber-500 disabled:opacity-40 text-white">暂停</button>
             <button disabled={busy} onClick={() => ctl('resume', '调度器已恢复')} className="px-3 py-1.5 rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white">恢复</button>
             <button disabled={busy} onClick={() => ctl('drain', '排水完成（等当前任务收尾）')} className="px-3 py-1.5 rounded border border-edge hover:bg-edge text-slate-300 disabled:opacity-40">排水</button>
+            <button disabled={busy} onClick={() => ctl('tick', '已手动执行一次派遣 tick')} className="px-3 py-1.5 rounded border border-edge hover:bg-edge text-slate-300 disabled:opacity-40">单次 tick</button>
             <button disabled={busy} onClick={() => ctl('stop', '调度器已停止')} className="px-3 py-1.5 rounded bg-rose-600/80 hover:bg-rose-500 disabled:opacity-40 text-white">停止</button>
           </div>
         </div>
@@ -239,6 +255,26 @@ export default function ExecutionPanel({ notify }) {
               回收 <span className="text-emerald-400">{Array.isArray(recovery.recovered) ? recovery.recovered.length : recovery.recovered}</span> ·
               DEAD <span className={(Array.isArray(recovery.dead) ? recovery.dead.length : recovery.dead) ? 'text-rose-400' : 'text-slate-400'}>{Array.isArray(recovery.dead) ? recovery.dead.length : recovery.dead}</span>
             </div>
+          )}
+        </div>
+
+        {/* C33：僵尸资源回收（补全 resources/recover 端点 UI 缺口） */}
+        <div className="bg-panel/60 border border-edge rounded-lg p-4">
+          <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+            <span className="text-sm font-semibold text-slate-200">僵尸资源回收</span>
+            <button disabled={busy} onClick={runResourceRecover} className="px-3 py-1 rounded bg-amber-600/80 hover:bg-amber-500 disabled:opacity-40 text-white text-xs">立即回收</button>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-500">心跳超时</span>
+            <input className="w-24 px-2 py-1 rounded bg-black/30 border border-edge text-slate-200" value={recoverTimeoutMs}
+              onChange={(e) => setRecoverTimeoutMs(e.target.value)} />
+            <span className="text-slate-500">ms</span>
+          </div>
+          <div className="text-[11px] text-slate-500 mt-1.5">
+            回收心跳超时或所属任务已终态的浏览器资源绑定，避免崩溃后资源泄漏占满池子。
+          </div>
+          {recover && (
+            <pre className="text-xs bg-black/40 rounded p-2 overflow-auto max-h-32 text-slate-300 mt-2">{JSON.stringify(recover, null, 2).slice(0, 1200)}</pre>
           )}
         </div>
       </div>

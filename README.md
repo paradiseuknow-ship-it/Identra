@@ -32,8 +32,21 @@ npm run dev     # 开发模式（后端 8787 + 前端 5173 热更新）
 npm start       # 仅后端（生产/长跑；自动服务 client/dist 静态前端）
 npm run build   # 前端构建（client/dist）
 FPB_NO_EMPTY_OUT_DIR=1 npm run build   # 零删除构建（dist 累积后清空动作会被 safe-delete 守卫拦截时用）
-npm test        # 全量回归（runRegression.js 132 项 + phase9 125 项双护栏）
+npm test        # 全量回归（runRegression.js 137 项 + phase9 130 项双护栏）
 ```
+
+**一键启动（Windows，推荐）**：双击仓库根 `start.bat` —— 自动完成 Node 检查 → 服务端依赖 → 客户端依赖 → 前端构建 → 生成并写入 `FPB_MASTER_KEY` → 起服务并打开 `http://127.0.0.1:8787`。发布包解压后同样是双击 `start.bat`。
+
+**首次运行就绪度自检**：控制台「就绪检查」页会在进入时自动跑一遍，并在必需项缺失时自动落到引导页（不再让用户猜缺什么）。
+
+| 类别 | 检查项 | 未通过时做什么 |
+|------|--------|----------------|
+| 必需 | 身份会话 | 本机模式自动引导；多用户模式去「治理中心」建账号与角色 |
+| 必需 | LLM 凭据 | 「系统设置 → LLM」填 provider + Key，点「测试连通」（Key 永不明文出站，只回 last4 掩码） |
+| 必需 | 浏览器配置 | 「配置管理」新建配置后启动浏览器 |
+| 可选 | 指纹模板 / 代理 / 自动化任务 | 缺失不影响启动，只影响对应能力 |
+
+同口径机读端点：`GET /api/settings/readiness` → `stage: READY | SETUP_REQUIRED` + `checks[]`（每项含 `optional`、`hint`、`panel` 用于前端跳转）。
 
 前端控制台：`http://localhost:5173`（开发）/ 后端 API：`http://localhost:8787`。
 
@@ -50,7 +63,7 @@ npm test        # 全量回归（runRegression.js 132 项 + phase9 125 项双护
 | 智能记忆 | 站点画像 / 元素记忆 / 流记忆 / 失败知识只读面板 + 经验包导出导入（跨环境迁移）+ Router 决策试算 / 环境推荐 / 经验健康看板（准确率、LLM 节省、Memory ROI、站点×环境矩阵） |
 | 治理与合规 | API Keys 自管（明文仅创建时出现一次、只读标记、撤销即失效）、安全审计日志（只写不可篡改 + 过滤查询 + JSON 导出）、工作空间与成员 RBAC |
 | 任务取证 | 单任务详情：结构化诊断（根因/置信/重试策略/证据/失败快照）、修复尝试与策略成功率、执行记录、动作链重放 |
-| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（132/0 + OK=125/BAD=0） |
+| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（137/0 + OK=130/BAD=0） |
 
 ## 发布包（portable）
 ```bash
@@ -86,7 +99,7 @@ data/                 # 运行时存储（gitignore）
 
 ## 当前基线（2026-09-07）
 - **可靠性**：v2 池 100 任务 × 真实 deepseek：run3b→run6 = 95% → 97% → 98% → **99% SUCCESS**（唯一非 SUCCESS = CREDIBLE_BUSINESS 可信升级，按设计工作）
-- **回归护栏**：runRegression **132/0** + phase9 **OK=125/BAD=0**（C28 后历史最佳；C29 为 client 侧改动 + 新增守护测试 11/0，双回归因宿主 safe-delete 守卫误伤 fp16b 浏览器测试待复跑确认）
+- **回归护栏**：runRegression **137/0** + phase9 **OK=130/BAD=0**（C33 后历史最佳；含 step19 层一致性修复实证全绿）
 - **身份架构**：16-B 全家族收口（6 Native ACTIVE + languages CONFIG + brands/screen CLOSED，详见 `.benchmark/PHASE16B_ROI_GATE.md`）
 - **交付**：C29 执行引擎补齐（提交执行 / 崩溃恢复 / 资源池获取释放 / 动作契约与策略只读调试）
 - **交付**：C28 Intelligence 决策试算 + 经验健康看板上线；C27 任务取证四件套（诊断/修复/执行/重放）上线

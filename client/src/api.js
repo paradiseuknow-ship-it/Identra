@@ -54,6 +54,8 @@ export const api = {
   // profiles 运行态快照（C20）
   profileRuntime: () => req('GET', '/profiles/runtime'),
   // 数据备份（C22）
+  // C30 系统就绪度自检（只读）
+  systemReadiness: () => req('GET', '/settings/readiness'),
   exportBackup: () => req('GET', '/backup/export'),
   restoreBackup: (snapshot) => req('POST', '/backup/restore', snapshot),
 
@@ -77,6 +79,8 @@ export const api = {
   executionRecovery: (b) => req('POST', '/ai/execution/recovery', b || {}),
   resourceAcquire: (b) => req('POST', '/ai/execution/resources/acquire', b),
   resourceRelease: (b) => req('POST', '/ai/execution/resources/release', b),
+  // C33：僵尸资源回收（心跳超时/终态任务的残留绑定）
+  resourceRecover: (b) => req('POST', '/ai/execution/resources/recover', b),
   schemaValidate: (b) => req('POST', '/ai/schema/validate', b),
   policyDecide: (b) => req('POST', '/ai/policy/decide', b),
 
