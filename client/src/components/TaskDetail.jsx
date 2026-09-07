@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import api from '../api';
+import { createLatestGuard, createTrailingThrottle } from '../lib/reloadGuard.mjs';
 
 // VIL 决策 → 默认人类可读说明（后端未提供 why 时使用）
 const VIL_WHY = {
@@ -67,31 +68,36 @@ export default function TaskDetail({ taskId, onClose }) {
 
   useEffect(() => {
     let alive = true;
+    // C37：SSE 与轮询双通道并发 reload —— latest-wins 守卫，先发后至的旧响应不落 state
+    //（否则任务事件密集时旧 trace/observation 覆盖新数据，UI 状态回跳）。
+    const guard = createLatestGuard();
 
     const reload = async () => {
-      try {
-        const [t, tr] = await Promise.all([api.aiGetTask(taskId), api.aiTrace(taskId)]);
-        if (!alive) return;
-        setTask(t);
-        setTrace(tr.trace || null);
-      } catch (e) {
-        if (alive) setErr(String(e.message || e));
-      }
-      // C27 取证四件套：任一失败（404/未产生诊断）不阻断主面板，降级为 null
+      await guard(
+        () => Promise.all([api.aiGetTask(taskId), api.aiTrace(taskId)]),
+        ([t, tr]) => { if (alive) { setTask(t); setTrace(tr.trace || null); } }
+      ).catch((e) => { if (alive) setErr(String(e.message || e)); });
       if (!alive) return;
-      const [d, r, x, rp] = await Promise.all([
-        api.aiDiagnosis(taskId).catch(() => null),
-        api.aiRepairs(taskId).catch(() => null),
-        api.aiExecutionDetail(taskId).catch(() => null),
-        api.aiReplay(taskId).catch(() => null),
-      ]);
-      if (alive) setForensics({ diagnosis: d, repairs: r, execution: x, replay: rp });
+      // C27 取证四件套：任一失败（404/未产生诊断）不阻断主面板，降级为 null
+      await guard(
+        () => Promise.all([
+          api.aiDiagnosis(taskId).catch(() => null),
+          api.aiRepairs(taskId).catch(() => null),
+          api.aiExecutionDetail(taskId).catch(() => null),
+          api.aiReplay(taskId).catch(() => null),
+        ]),
+        ([d, r, x, rp]) => { if (alive) setForensics({ diagnosis: d, repairs: r, execution: x, replay: rp }); }
+      ).catch(() => {});
     };
 
     reload();
     const poll = setInterval(reload, 2500);
 
-    // 复用 SSE 进行实时更新：收到事件即追加，并触发一次数据刷新
+    // C37：SSE 收到事件仍实时追加 timeline，但数据刷新改为 800ms leading+trailing 节流 ——
+    // 此前每条事件直触发一次完整 reload（6 请求/事件），任务执行事件密集时形成请求风暴。
+    const bump = createTrailingThrottle(reload, 800);
+
+    // 复用 SSE 进行实时更新
     let es;
     try {
       es = new EventSource('/api/ai/tasks/' + taskId + '/events');
@@ -100,7 +106,7 @@ export default function TaskDetail({ taskId, onClose }) {
           const data = JSON.parse(ev.data);
           eventsRef.current = [...eventsRef.current.slice(-199), data];
           setEvents(eventsRef.current);
-          reload();
+          bump.call();
         } catch (e) { /* ignore malformed */ }
       };
     } catch (e) { /* EventSource 不可用时静默降级为轮询 */ }
@@ -108,6 +114,7 @@ export default function TaskDetail({ taskId, onClose }) {
     return () => {
       alive = false;
       clearInterval(poll);
+      bump.cancel();
       if (es) es.close();
     };
   }, [taskId]);
