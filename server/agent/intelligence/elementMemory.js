@@ -130,8 +130,11 @@ function getRecord(site, semantic, ctx) {
     if (exact) return exact;
   }
   // 2) 无 context 查询（统计/测试/通用读取）→ 返回最佳 ACTIVE 记录（含 context 专属），保证可读
+  // C75 D1：前缀匹配必须落在 key 分隔符边界上 —— 否则 semantic 'search'（base='site|search'）
+  // 会前缀命中 'searchbox'/'searchbar'（'site|searchbox|CTX...'）等更长语义的记忆，
+  // 跨语义污染候选池（pattern 把关是宽松 includes，挡不住同文本元素）。
   if (!ck) {
-    return store.findWhere('aiElementMemory', (r) => r.key.indexOf(base) === 0 && r.status === 'ACTIVE')
+    return store.findWhere('aiElementMemory', (r) => (r.key === base || r.key.indexOf(base + '|') === 0) && r.status === 'ACTIVE')
       .sort((a, b) => b.version - a.version)[0] || null;
   }
   // 3) 有 context 但未精确命中 → 回退 context-less 记录
@@ -279,12 +282,17 @@ function importPack(packObj) {
   const pack = packObj && packObj.pack ? packObj.pack : packObj;
   if (!pack || pack.format !== PACK_FORMAT) return { ok: false, error: '格式不支持', imported: 0, skipped: 0 };
   let imported = 0, skipped = 0;
+  // C75 D2：导入记录的 site 必须与 pack.site 一致 —— 经验包内的 site 字段可被篡改/错误，
+  // 直接 upsert 会绕过「跨站隔离」把记忆注入任意站点（matcher 的 site 硬隔离只防查询，
+  // 防不了写入侧污染）。不一致记录计入 skipped，不静默改写。
   for (const r of pack.elementMemory || []) {
+    if (r.site !== pack.site) { skipped++; continue; }
     const ex = store.find('aiElementMemory', r.id);
     if (!ex || (ex.version || 1) < (r.version || 1)) { store.upsert('aiElementMemory', r); imported++; }
     else skipped++;
   }
   for (const s of pack.siteMemory || []) {
+    if (s.site !== pack.site) { skipped++; continue; }
     const ex = store.find('aiSiteMemory', s.id);
     if (!ex || (ex.version || 1) < (s.version || 1)) { store.upsert('aiSiteMemory', s); imported++; }
     else skipped++;

@@ -45,8 +45,12 @@ function recordTaskResult(site, { ok, flowName, avgSteps, failureType }) {
   if (failureType && !r.frequentFailures.includes(failureType)) r.frequentFailures.push(failureType);
 
   const total = r.history.successTasks + r.history.failedTasks;
+  // C75 D4：风险分级补齐 low 档 —— 旧实现 total>=3 即 medium（哪怕是 100% 成功站点），
+  // 「高成功」与「少样本」在看板上无法区分。语义：high=成功率差、medium=有失败记录、
+  // low=样本足够且成功率健康、unknown=样本不足。
   if (total >= 5 && r.history.successTasks / total < 0.6) r.riskLevel = 'high';
-  else if (total >= 3) r.riskLevel = 'medium';
+  else if (total >= 3 && r.history.successTasks / total < 1) r.riskLevel = 'medium';
+  else if (total >= 3) r.riskLevel = 'low';
   else r.riskLevel = 'unknown';
 
   recordOutcome(r, ok);

@@ -201,6 +201,9 @@ function importPack(packObj) {
   let imported = 0, skipped = 0;
   const merge = (name, arr) => {
     for (const r of arr || []) {
+      // C75 D2：与 elementMemory.importPack 同守卫 —— 记录 site 必须与 pack.site 一致，
+      // 否则跨站隔离被导入写入侧旁路。不一致计 skipped，不静默改写。
+      if (r.site !== pack.site) { skipped++; continue; }
       const ex = store.find(name, r.id);
       if (!ex || (ex.version || 1) < (r.version || 1)) { store.upsert(name, r); imported++; }
       else skipped++;
@@ -214,6 +217,11 @@ function importPack(packObj) {
   const ps = require('./profile/profileAnalyzer');
   for (const p of pack.profileScores || []) {
     if (!p || !p.profileId || !p.siteScore) continue;
+    // C75 D3：目标 profile 必须已有评分记录 —— ensure() 会为不存在的 profileId 凭空创建
+    // 幽灵评分记录（NEUTRAL_DIMS 初值），Profile Advisor 随后可能把任务导向一个
+    // 根本不存在的环境（任务创建后 browserManager 找不到 profile 直接失败）。
+    // 经验包只应增强既有环境的站点经验，不能创造环境。
+    if (!ps.getRecord(p.profileId)) { skipped++; continue; }
     const rec = ps.ensure(p.profileId, { name: p.name });
     const site = pack.site;
     const ss = rec.siteScores[site] || (rec.siteScores[site] = { score: 0, success: 0, failed: 0, samples: 0, recent: [], confidence: 0, updatedAt: 0 });
