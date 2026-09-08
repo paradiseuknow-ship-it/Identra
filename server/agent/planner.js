@@ -251,6 +251,11 @@ function urlOnlyEvidenceViolations(steps) {
   return bad;
 }
 
+// 敏感字段门错误标记（schema/action.js 敏感字段检查的唯一报错文案，勿改一处漏一处）。
+// C72：定义从文件尾部上移到 planObjective 之前 —— 原位置在使用点之后（const TDZ 仅因
+// 函数调用发生在模块初始化后才未爆雷），消除未来重构触发 ReferenceError 的隐患。
+const SENSITIVE_GATE_RE = /是敏感字段，必须用 credentialRef/;
+
 async function planObjective({ objective, target, constraints, credentialRefs, executionMode, provider, ctx }) {
   const taskLike = {
     objective: objective || '',
@@ -484,9 +489,6 @@ async function planObjective({ objective, target, constraints, credentialRefs, e
 
   return { ok: false, error: lastError || '规划失败（已重试耗尽）' };
 }
-
-// 敏感字段门错误标记（schema/action.js 敏感字段检查的唯一报错文案，勿改一处漏一处）
-const SENSITIVE_GATE_RE = /是敏感字段，必须用 credentialRef/;
 
 // 重规划（REPLAN）：当 Plan 本身过期（DOM 结构变化 / 真实动作失败，且常规重定位与重试已耗尽）时，
 // 基于【当前浏览器观察】与【已完成步骤】让 provider 重新生成「剩余步骤」。

@@ -484,6 +484,31 @@ function obsId(prefix) {
   return (prefix || 'obs_') + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+// C72（2026-09-08）缓存命中路径的动态字段一致性：network/storage 在缓存命中时本就刷新，
+// 但 challenge 检测与 networkState 此前只跑在新鲜路径 —— 被拦截页面 DOM 静止（403/429/503
+// 后 DOM 不变极常见）时后续观察全部缓存命中，EXTERNAL_BLOCK/INTERACTIVE_CHALLENGE 永不触发，
+// 任务烧满预算而不是升级人工。提取为共享函数，新鲜/缓存两条路径消费同一实现（单点无漂移）。
+function computeNetworkState(page) {
+  if (page && typeof page.__pendingRequests === 'number') {
+    return page.__pendingRequests > 0 ? 'pending' : 'idle';
+  }
+  return 'unknown';
+}
+function computeChallenge(observation) {
+  try {
+    const _failures = (observation.network && observation.network.failures) || [];
+    const blockedDoc = _failures.find((r) => r && r.resourceType === 'document'
+      && (r.status === 403 || r.status === 429 || r.status === 503));
+    return challengeDetector.detectChallenge({
+      status: blockedDoc ? blockedDoc.status : null,
+      html: (observation.textSummary || '') + '\n' + (observation.visibleText || ''),
+      title: observation.title || '',
+    });
+  } catch (e) {
+    return null; // 检测是增强能力，绝不成为新故障源
+  }
+}
+
 async function inspect(page, opts = {}) {
   let data;
   try {
@@ -500,9 +525,13 @@ async function inspect(page, opts = {}) {
       // 缓存命中时网络快照仍需刷新：DOM 一样不代表网络状态一样。
       const cached = hit.summary;
       try { cached.network = networkObserver.snapshot(page, { limit: 20 }); } catch (e) {}
+      // C72：networkState 与 challenge 与 network 同批刷新（此前只跑在新鲜路径 ——
+      // 被拦截页面 DOM 静止时缓存命中恒走旧值，EXTERNAL_BLOCK 永不触发）。
+      cached.networkState = computeNetworkState(page);
       // STEP 22 (V1)：storage 同理必须刷新 —— 登录态写入 localStorage 不一定伴随 DOM 变化，
       // 若沿用缓存观察会让 storage 验证读到过期状态（假 FAIL/假 PASS 都可能）。
       cached.storage = data.storage || { localStorage: {}, sessionStorage: {} };
+      cached.challenge = computeChallenge(cached);
       return { ok: true, cached: true, observation: cached };
     }
   }
@@ -539,11 +568,9 @@ async function inspect(page, opts = {}) {
     attemptId: opts.attemptId || null,
     previousObservationDiff: { urlChanged: false, textChanged: false, domChanged: false, keyTextChanged: false, elementStateChanged: false, pageStructureChanged: false },
   };
-  // 真实网络状态：本 page 实例的请求计数器
+  // 真实网络状态：本 page 实例的请求计数器（C72：与缓存命中路径共享同一实现）
   ensureNetHook(page);
-  if (page && typeof page.__pendingRequests === 'number') {
-    observation.networkState = page.__pendingRequests > 0 ? 'pending' : 'idle';
-  }
+  observation.networkState = computeNetworkState(page);
   // STEP 2：结构化网络快照（请求/响应/失败/console/pageerror，全部脱敏）。
   // 只读，不参与任何成功判定 —— 供 Diagnosis（STEP 3）与 Self-Healing（STEP 4）消费。
   try {
@@ -557,20 +584,8 @@ async function inspect(page, opts = {}) {
   // 数据源：Node 侧已脱敏文本（textSummary/visibleText/title）+ 网络快照中主文档
   // （resourceType=document）的阻断状态码（403/429/503）。绝不改验证语义、绝不触发处理动作。
   // PX beacon 全站存在 ≠ 拦截：challengeDetector 内部三层判定负责防误报。
-  let challengeDetection = null;
-  try {
-    const _failures = (observation.network && observation.network.failures) || [];
-    const blockedDoc = _failures.find((r) => r && r.resourceType === 'document'
-      && (r.status === 403 || r.status === 429 || r.status === 503));
-    challengeDetection = challengeDetector.detectChallenge({
-      status: blockedDoc ? blockedDoc.status : null,
-      html: (observation.textSummary || '') + '\n' + (observation.visibleText || ''),
-      title: observation.title || '',
-    });
-  } catch (e) {
-    challengeDetection = null; // 检测是增强能力，绝不成为新故障源
-  }
-  observation.challenge = challengeDetection;
+  // C72：与缓存命中路径共享同一实现（computeChallenge）。
+  observation.challenge = computeChallenge(observation);
   // 真实 before/after 差异：与同一 task 上一次观察对比（供 VIL 判 DOM_CHANGED / mutationState）
   if (opts.taskId) {
     const prev = obsCache.last(opts.taskId);
