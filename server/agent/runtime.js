@@ -21,6 +21,22 @@ const verificationIntelligence = require('./verification/verificationIntelligenc
 function finalizeOrphans(taskId) {
   try { stepManager.finalizeOrphanAttempts(taskId); } catch (e) { /* 守卫失败不影响主流程终态 */ }
 }
+
+// C69（2026-09-08）ghost runStep 守卫：STEP_TIMEOUT 的 Promise.race 只放弃等待、不取消底层
+// 协程 —— tools.execute 可无限挂起（这正是超时机制存在的原因），挂起恢复后原协程会「迟到地」
+// 写入终态：幽灵成功覆盖已失败/已修复的 step（假阳性 SUCCESS）、幽灵 escalate/pause 误转任务终态。
+// 主循环顶部的 live-status 检查只防「重入已终态 step」，防不了幽灵对未终态 step 的迟到写。
+// 机制：同 step 每次执行注册 token（后继执行覆盖之）；STEP_TIMEOUT 显式失效；幽灵所有
+// step 状态 / 任务终态写之前检查 token 有效性，失效即只记录自身 attempt、不碰共享状态。
+const activeStepRuns = new Map(); // stepId -> 最新一次执行的 token
+function beginStepRun(stepId) {
+  const token = 'sr' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  activeStepRuns.set(stepId, token);
+  return token;
+}
+function isStepRunActive(stepId, token) { return activeStepRuns.get(stepId) === token; }
+function endStepRun(stepId, token) { if (activeStepRuns.get(stepId) === token) activeStepRuns.delete(stepId); }
+function invalidateStepRun(stepId) { activeStepRuns.delete(stepId); }
 const verificationWindow = require('./verification/verificationWindow');
 const store = require('./store');
 const recorder = require('./recorder');
@@ -200,7 +216,9 @@ async function resolvePlan(task) {
 }
 
 // 单步执行（含一次 Attempt + Verification）；actionOverride 用于确定性恢复的候选动作
-async function runStep(task, step, beforeObs, actionOverride) {
+// C69：真正的执行体在 runStepInner（_runToken = 幽灵守卫 token）；runStep 是注册/注销包装。
+async function runStepInner(task, step, beforeObs, actionOverride, _runToken) {
+  const _inert = () => !isStepRunActive(step.id, _runToken); // 幽灵判定：token 被后继执行覆盖/显式失效
   const executionId = task.currentExecutionId;
   const action = actionOverride || step.action;
   stepManager.setStepState(step.id, 'RUNNING'); // PENDING → RUNNING（状态机要求先转 RUNNING）
@@ -225,9 +243,11 @@ async function runStep(task, step, beforeObs, actionOverride) {
     // 使 observation.inspect 返回 { ok:false, error:'page.evaluate is not a function' } 并被静默吞掉。
     const page = await browserManager.getPage(task.profileId);
     const obs = page ? await observation.inspect(page, { taskId: task.id }) : null;
-    stepManager.succeedAttempt(attempt.id);
-    stepManager.setStepState(step.id, 'SUCCESS');
-    return { ok: true, simulated: true, observation: obs ? obs.observation : null };
+    if (!_inert()) {
+      stepManager.succeedAttempt(attempt.id);
+      stepManager.setStepState(step.id, 'SUCCESS');
+    }
+    return { ok: true, simulated: true, abandoned: _inert(), observation: obs ? obs.observation : null };
   }
 
   // 执行 Action（Tools 内部已做 Schema/Policy/Lock + before/after 快照）
@@ -246,19 +266,23 @@ async function runStep(task, step, beforeObs, actionOverride) {
     const errCode = (err && (err.code || (err.error && err.error.code))) || 'UNKNOWN';
     if (errCode === 'CREDENTIAL_UNAVAILABLE') {
       const failErr = { code: 'CREDENTIAL_UNAVAILABLE', message: (err.error && err.error.message) || err.message || '凭据不可用' };
-      stepManager.failAttempt(attempt.id, failErr);
-      stepManager.setStepState(step.id, 'FAILED');
-      events.emit({ taskId: task.id, executionId, stepId: step.id, attemptId: attempt.id, type: 'ai.warning', payload: { code: failErr.code, message: failErr.message } });
-      taskManager.escalate(task.id, new Error('凭据不可用：' + failErr.message), { reason: 'CREDENTIAL_UNAVAILABLE' });
-      return { ok: false, escalated: true, error: failErr };
+      stepManager.failAttempt(attempt.id, failErr); // 幽灵只记自身 attempt（无害）；step 状态与任务终态写需 token 有效
+      if (!_inert()) {
+        stepManager.setStepState(step.id, 'FAILED');
+        events.emit({ taskId: task.id, executionId, stepId: step.id, attemptId: attempt.id, type: 'ai.warning', payload: { code: failErr.code, message: failErr.message } });
+        taskManager.escalate(task.id, new Error('凭据不可用：' + failErr.message), { reason: 'CREDENTIAL_UNAVAILABLE' });
+      }
+      return { ok: false, escalated: !_inert(), abandoned: _inert(), error: failErr };
     }
     stepManager.failAttempt(attempt.id, err);
     if (err.code === 'ACTION_REQUIRES_APPROVAL') {
       // ASSIST 高风险 → PAUSED_FOR_HUMAN（Case 6）；携带待审批动作供 Approve/Modify
-      stepManager.setStepState(step.id, 'FAILED');
-      events.emit({ taskId: task.id, executionId, stepId: step.id, attemptId: attempt.id, type: 'ai.warning', payload: { code: err.code, message: err.message } });
-      taskManager.pauseForHuman(task.id, err.message, { stepId: step.id, action: step.action });
-      return { ok: false, paused: true, error: err };
+      if (!_inert()) {
+        stepManager.setStepState(step.id, 'FAILED');
+        events.emit({ taskId: task.id, executionId, stepId: step.id, attemptId: attempt.id, type: 'ai.warning', payload: { code: err.code, message: err.message } });
+        taskManager.pauseForHuman(task.id, err.message, { stepId: step.id, action: step.action });
+      }
+      return { ok: false, paused: !_inert(), abandoned: _inert(), error: err };
     }
     events.emit({ taskId: task.id, executionId, stepId: step.id, attemptId: attempt.id, type: 'ai.warning', payload: { code: err.code, message: err.message } });
     return { ok: false, error: err, observation: toolRes.observation };
@@ -323,12 +347,14 @@ async function runStep(task, step, beforeObs, actionOverride) {
             });
             toolRes.observation = win.finalObservation;
             // Phase 9 P3：VIL 观察窗口恢复 = 业务验证最终通过 → 确认记忆
-            if (toolRes && toolRes.memoryConfirmation) {
-              try { require('./intelligence/elementMemory').confirmPendingSuccess(toolRes.memoryConfirmation); } catch (e) {}
+            if (!_inert()) {
+              if (toolRes && toolRes.memoryConfirmation) {
+                try { require('./intelligence/elementMemory').confirmPendingSuccess(toolRes.memoryConfirmation); } catch (e) {}
+              }
+              stepManager.succeedAttempt(attempt.id);
+              stepManager.setStepState(step.id, 'SUCCESS');
             }
-            stepManager.succeedAttempt(attempt.id);
-            stepManager.setStepState(step.id, 'SUCCESS');
-            return { ok: true, observation: win.finalObservation, vil };
+            return { ok: true, observation: win.finalObservation, vil, abandoned: _inert() };
           }
           // 窗口耗尽：用最终观察覆盖，供后续重分类 / 升级判定
           toolRes.observation = win.finalObservation;
@@ -338,13 +364,15 @@ async function runStep(task, step, beforeObs, actionOverride) {
       // HUMAN_ESCALATE：VIL 直接决策升级人工（敏感/关键动作验证失败且证据不足）。
       // 真正参与 Runtime Decision —— 不进入自主重试/修复循环，直接转 HUMAN_ESCALATION 终态。
       if (vil.decision === verificationIntelligence.DECISIONS.HUMAN_ESCALATE) {
-        stepManager.setStepState(step.id, 'FAILED');
-        events.emit({
-          taskId: task.id, executionId, stepId: step.id, attemptId: attempt.id,
-          type: 'ai.warning', payload: { code: 'VIL_HUMAN_ESCALATE', message: vil.failureType + ' → ' + (vil.evidence[0] || '') },
-        });
-        taskManager.escalate(task.id, new Error(`VIL 升级人工：${vil.failureType} / ${(vil.evidence[0] || '').slice(0, 160)}`), { reason: 'VIL:' + vil.failureType });
-        return { ok: false, escalated: true, error: { code: 'HUMAN_ESCALATION', message: vil.failureType } };
+        if (!_inert()) {
+          stepManager.setStepState(step.id, 'FAILED');
+          events.emit({
+            taskId: task.id, executionId, stepId: step.id, attemptId: attempt.id,
+            type: 'ai.warning', payload: { code: 'VIL_HUMAN_ESCALATE', message: vil.failureType + ' → ' + (vil.evidence[0] || '') },
+          });
+          taskManager.escalate(task.id, new Error(`VIL 升级人工：${vil.failureType} / ${(vil.evidence[0] || '').slice(0, 160)}`), { reason: 'VIL:' + vil.failureType });
+        }
+        return { ok: false, escalated: !_inert(), abandoned: _inert(), error: { code: 'HUMAN_ESCALATION', message: vil.failureType } };
       }
 
       // RE_EXECUTE：不在此内联重执行（避免绕过 retry/repair 架构与无限循环），
@@ -433,12 +461,25 @@ async function runStep(task, step, beforeObs, actionOverride) {
   }
 
   // Phase 9 P3：业务验证通过 → 确认挂起的元素记忆（记忆只由业务结果强化，不再由动作机械成功强化）
-  if (toolRes && toolRes.memoryConfirmation) {
-    try { require('./intelligence/elementMemory').confirmPendingSuccess(toolRes.memoryConfirmation); } catch (e) {}
+  // C69：幽灵（token 失效）不得写 SUCCESS —— 这正是「幽灵成功覆盖已失败 step」的主现场
+  if (!_inert()) {
+    if (toolRes && toolRes.memoryConfirmation) {
+      try { require('./intelligence/elementMemory').confirmPendingSuccess(toolRes.memoryConfirmation); } catch (e) {}
+    }
+    stepManager.succeedAttempt(attempt.id);
+    stepManager.setStepState(step.id, 'SUCCESS');
   }
-  stepManager.succeedAttempt(attempt.id);
-  stepManager.setStepState(step.id, 'SUCCESS');
-  return { ok: true, observation: toolRes.observation };
+  return { ok: true, observation: toolRes.observation, abandoned: _inert() };
+}
+
+// C69 ghost 守卫包装：token 注册/注销；finally 覆盖所有 return 点（正常完成即注销）。
+async function runStep(task, step, beforeObs, actionOverride) {
+  const token = beginStepRun(step.id);
+  try {
+    return await runStepInner(task, step, beforeObs, actionOverride, token);
+  } finally {
+    endStepRun(step.id, token);
+  }
 }
 
 // 主循环
@@ -560,6 +601,9 @@ async function run(taskId) {
           new Promise((_, reject) => setTimeout(() => reject(new Error('STEP_TIMEOUT')), STEP_TIMEOUT_MS)),
         ]);
       } catch (stepHang) {
+        // C69：显式杀死 ghost 注册 —— 重试耗尽走 repair 分支时不再起新 runStep，
+        // 幽灵协程若靠「后继覆盖」失效就轮不到；超时点直接失效最确定。
+        invalidateStepRun(step.id);
         r = { ok: false, error: { code: 'STEP_TIMEOUT', message: '单步执行超时(浏览器/页面无响应): ' + String(stepHang.message || stepHang).slice(0, 200) } };
       }
       lastFailureResult = (r && r.ok) ? null : r;
@@ -913,4 +957,4 @@ function resolveRepairTimeoutMs(v) {
   return Number.isFinite(n) && n > 0 ? n : 90000;
 }
 
-module.exports = { run, ensureBrowser, resolvePlan, runStep, tryReplan, resolveRepairTimeoutMs, isReplanCandidate, stepFailureSignature, sameSigReplanCount, shouldFuseSameSigReplan };
+module.exports = { run, ensureBrowser, resolvePlan, runStep, tryReplan, resolveRepairTimeoutMs, isReplanCandidate, stepFailureSignature, sameSigReplanCount, shouldFuseSameSigReplan, isStepRunActive, invalidateStepRun };
