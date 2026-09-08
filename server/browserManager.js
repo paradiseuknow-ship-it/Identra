@@ -802,9 +802,24 @@ async function warmupProxyConnection(context, proxy) {
   }
 }
 
+// C64 L1（B 类）：并发去重——launchPersistentContext 可能耗时数秒，老实现仅以
+// sessions.has 判重，await 期间 sessions 尚未 set，同一 profile 的并发 launch
+// （前端双击/自动化并发）会各自走完前段并撞同一 userDataDir（Chrome SingletonLock
+// 冲突 / 双实例半启动 / profile 数据损坏）。in-flight Promise 表：同 profile 并发
+// 调用共享同一次启动；完成/失败后移除（失败允许重试）。
+const _launchInFlight = new Map();
+
 async function launch(profile, proxies) {
   if (sessions.has(profile.id)) return sessions.get(profile.id);
+  if (_launchInFlight.has(profile.id)) return _launchInFlight.get(profile.id);
+  const p = _launchProfile(profile, proxies).finally(() => { _launchInFlight.delete(profile.id); });
+  _launchInFlight.set(profile.id, p);
+  return p;
+}
 
+async function _launchProfile(profile, proxies) {
+  let shimServers = []; // C64 L2：声明提到 try 外——失败路径清理需要
+  try {
   let proxy = profile.proxyInline && profile.proxyInline.server
     ? profile.proxyInline
     : (proxies ? proxies.find((x) => x.id === profile.proxyId) : null);
@@ -822,7 +837,6 @@ async function launch(profile, proxies) {
 
   // 本地代理中转 shim（解决 Chromium 对代理认证支持差 + 住宅代理 CONNECT 偶发失败/无重试的问题）
   // 出口 IP 检测通过 shim 走也能拿到真实上游出口，因此可以在 resolveLaunchIpGeo 之前起。
-  const shimServers = [];
   if (proxy && proxy.server) {
     const type = (proxy.type || '').toLowerCase();
     if (type === 'socks5' && (proxy.username || proxy.password)) {
@@ -1196,6 +1210,13 @@ h1{margin:0 0 18px;font-size:22px;color:#38bdf8}
   const session = { context, page, fp, proxy: proxy || null, profileId: profile.id, startedAt: Date.now(), shimServers, chromePid, pages: [page], activePageIndex: 0, behavior: behavior || {} };
   sessions.set(profile.id, session);
   return session;
+  } catch (e) {
+    // C64 L2（B 类）：启动失败（launchPersistentContext 抛错/代理检查失败等）必须
+    // 关闭已创建的本地 shim server——close() 只覆盖成功路径，失败路径老实现无人
+    // 关闭 → listen 句柄/端口随失败次数累积泄漏（进程无法优雅退出 + 端口耗尽）。
+    for (const ss of shimServers) { try { ss.close(); } catch (_) {} }
+    throw e;
+  }
 }
 
 function getSession(profileId) {
