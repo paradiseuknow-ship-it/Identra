@@ -99,9 +99,16 @@ async function cleanupBenchmarkLogs({ olderThanDays = 7, keepRecent = 3, benchDi
 }
 
 // browserProfiles：未被运行会话持有的 profile 目录（isRunning 由调用方注入）
+// C63 D2（B 类）：isRunning 是安全关键参数——缺失时老实现「typeof !== 'function' 就当
+// 全部未运行」= 危险默认方向反了（运行中 profile 目录会被列入清理候选，dryRun=false
+// 时 rm 正在使用的 Chromium 用户数据 = 浏览器数据损坏）。现在 fail-closed：未注入
+// 判定函数时拒绝列出任何候选（宁可漏删，不可误删）。
 async function cleanupBrowserProfiles({ isRunning, profilesDir } = {}) {
   const dir = profilesDir || path.join(ROOT, 'data', 'profiles'); // profilesDir 可注入（同上）
   if (!fs.existsSync(dir)) return { candidates: [], kept: [] };
+  if (typeof isRunning !== 'function') {
+    return { candidates: [], kept: [], skipped: 'isRunning not provided: fail-closed (refusing to list profiles without a liveness check)' };
+  }
   const candidates = [], kept = [];
   for (const name of await fsp.readdir(dir)) {
     const p = path.join(dir, name);

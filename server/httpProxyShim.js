@@ -120,6 +120,16 @@ function startHttpShim(upstream, options = {}) {
         upstreamSocket.write(connectReq);
 
         let buf = Buffer.alloc(0);
+        // C63 D1（B 类）：隧道一旦建立（200 已回复客户端 + pipe 生效），后续上游 error
+        // 绝不允许再走重试分支——重试会向上游写第二次 CONNECT 并对 clientSocket 二次
+        // 注入 'HTTP/1.1 200 Connection established' 响应头 + 重复 pipe = 已协商 TLS 流
+        // 被注入垃圾字节（hop 模式 + 不稳定上游正是本 shim 的目标场景）。建立后 error
+        // 只做双端清理，让上层（浏览器）自然重连。
+        let settled = false;
+        function destroyBoth() {
+          try { upstreamSocket.destroy(); } catch (e) {}
+          try { clientSocket.destroy(); } catch (e) {}
+        }
         function onData(chunk) {
           buf = Buffer.concat([buf, chunk]);
           const headerEnd = buf.indexOf('\r\n\r\n');
@@ -140,14 +150,15 @@ function startHttpShim(upstream, options = {}) {
           }
 
           // 隧道建立成功
+          settled = true;
           try { clientSocket.write('HTTP/1.1 200 Connection established\r\n\r\n'); } catch (e) {}
           if (head && head.length) upstreamSocket.write(head);
           if (body.length) clientSocket.write(body);
           clientSocket.pipe(upstreamSocket);
           upstreamSocket.pipe(clientSocket);
 
-          clientSocket.on('error', () => {});
-          upstreamSocket.on('error', () => {});
+          clientSocket.on('error', destroyBoth);
+          upstreamSocket.on('error', destroyBoth);
           clientSocket.on('close', () => { try { upstreamSocket.destroy(); } catch (e) {} });
           upstreamSocket.on('close', () => { try { clientSocket.destroy(); } catch (e) {} });
         }
@@ -155,6 +166,7 @@ function startHttpShim(upstream, options = {}) {
         upstreamSocket.on('data', onData);
 
         upstreamSocket.on('error', () => {
+          if (settled) { destroyBoth(); return; } // C63 D1：建立后绝不重试
           upstreamSocket.destroy();
           if (hop) { setTimeout(() => tryOnce(attempt, null), 200); return; }
           if (attempt < maxAttempts - 1) { setTimeout(() => tryOnce(attempt + 1, null), 300); return; }

@@ -77,7 +77,9 @@ function attachScreencast(browserManager, profileId) {
     onFrame = async (p) => {
       try {
         const hubEntry = hubs.get(profileId);
-        if (hubEntry) hubEntry.hub.pushFrame(Buffer.from(p.data, 'base64').toString('base64'));
+        // C63 D3（C 类冗余消除）：p.data 本身就是 base64 字符串（CDP 契约），老实现
+        // decode→encode 恒等往返每帧白做一次全帧 base64 编解码（8fps × 全帧 JPEG）。
+        if (hubEntry) hubEntry.hub.pushFrame(p.data);
         await cdp.send('Page.screencastFrameAck', { sessionId: p.sessionId }).catch(() => {});
       } catch { /* 帧处理异常不影响 screencast 生命周期 */ }
     };
