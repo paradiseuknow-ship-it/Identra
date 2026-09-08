@@ -42,7 +42,7 @@ function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// C79 读路径硬化（消费 C62 fsSafe，范式对齐 identity.js readJson）：
+// C80 读路径硬化（消费 C62 fsSafe，范式对齐 identity.js readJson）：
 // 本模块三个集合（profiles/proxies/tasks）的 upsert/delete 全是 read-all → modify → write-all
 // RMW 链——旧实现 readJson 把瞬时文件锁（EPERM/EBUSY，杀毒/索引器）与真损坏一并吞成
 // fallback[]，下一次 save* 就把整个集合覆写成空 = 永久静默清空（C60/C61/C62 同族 A 类）。

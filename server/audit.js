@@ -27,7 +27,7 @@ const SENSITIVE_KEY_RE = /password|passwd|secret|token|card|cvv|cvc|authorizatio
 
 let _entries = null;
 let _flushTimer = null;
-// C79：读失败（瞬时锁耗尽 / 真损坏）期间禁止 flush 落盘——fail-open 只对查询与内存链生效，
+// C80：读失败（瞬时锁耗尽 / 真损坏）期间禁止 flush 落盘——fail-open 只对查询与内存链生效，
 // 绝不把内存 [] 覆写到磁盘（否则审计历史被静默清空，且损坏现场丢失）。
 let _loadFailed = false;
 
@@ -80,9 +80,9 @@ function scheduleFlush() {
 function flush() {
   try {
     if (!_entries) return;
-    if (_loadFailed) return; // C79：读失败期间绝不落盘（防止把内存 [] 覆盖成审计历史清空）
+    if (_loadFailed) return; // C80：读失败期间绝不落盘（防止把内存 [] 覆盖成审计历史清空）
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    // C79：原子写（旧裸 writeFileSync 崩溃/锁中断留下半截 JSON → 下次 load 损坏分支）
+    // C80：原子写（旧裸 writeFileSync 崩溃/锁中断留下半截 JSON → 下次 load 损坏分支）
     atomicWriteFileSync(AUDIT_FILE, JSON.stringify(_entries, null, 2), 'utf8');
   } catch (e) { /* 磁盘异常不阻断业务 */ }
 }

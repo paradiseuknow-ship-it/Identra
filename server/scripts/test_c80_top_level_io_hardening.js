@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// C79 —— server/ 顶层老模块收尾扫（integrity/agentScore/db/auth/audit/geoip/proxyPool/
+// C80 —— server/ 顶层老模块收尾扫（integrity/agentScore/db/auth/audit/geoip/proxyPool/
 // settings/loadEnv/dataRoot 共 1253 行）守护测试：
 //   D1 (A 类)：db.js 自持 I/O 未消费 C62 fsSafe —— readJson 把瞬时锁（EPERM/EBUSY）与
 //     真损坏一并吞成 fallback[]，而 upsertProfile/deleteProfile/upsertTask 全是
@@ -29,7 +29,7 @@ function chk(name, cond, detail) {
 }
 
 function runInChild(tag, env, script) {
-  const tmpJS = path.join(os.tmpdir(), 'c79-' + tag + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '.js');
+  const tmpJS = path.join(os.tmpdir(), 'c80-' + tag + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '.js');
   fs.writeFileSync(tmpJS, script, 'utf8');
   const r = spawnSync(process.execPath, [tmpJS], {
     env: Object.assign({}, process.env, env),
@@ -46,14 +46,14 @@ function cleanup(tag) {
   const dir = (tag && typeof tag === 'string' && fs.existsSync(tag)) ? tag : null;
   if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {} }
   for (const f of fs.readdirSync(os.tmpdir())) {
-    if (f.startsWith('c79-')) { try { fs.rmSync(path.join(os.tmpdir(), f), { force: true }); } catch (e) {} }
+    if (f.startsWith('c80-')) { try { fs.rmSync(path.join(os.tmpdir(), f), { force: true }); } catch (e) {} }
   }
 }
 
 // ---- P1 (D1): db.js RMW 不再被瞬时锁/读错误静默降级 ----
 {
   // 注意：P1a 会把 profiles.json 变成目录（EISDIR 注入），必须与 P1b 用独立 dataDir
-  const dataDirA = fs.mkdtempSync(path.join(os.tmpdir(), 'c79-db-'));
+  const dataDirA = fs.mkdtempSync(path.join(os.tmpdir(), 'c80-db-'));
   // P1a: 非瞬时 fs 错误（EISDIR：把目录当文件读）必须 fail-loud 冒泡，绝不吞成 fallback[]
   const r1 = runInChild('db-eisdir', { FPB_DATA_DIR: dataDirA }, `
     'use strict';
@@ -72,7 +72,7 @@ function cleanup(tag) {
   cleanup(dataDirA);
 
   // P1b: 写路径原子性 —— 正常写后无 .tmp 残留 + roundtrip 一致 + ENOENT fallback 契约保留
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'c79-db2-'));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'c80-db2-'));
   const r2 = runInChild('db-atomic', { FPB_DATA_DIR: dataDir }, `
     'use strict';
     const db = require('${here.replace(/\\/g, '/')}/../db.js');
@@ -108,7 +108,7 @@ function cleanup(tag) {
 // ---- P2 (D2): settings.js RMW 防覆写 + 损坏侧车 ----
 {
   // P2a 会把 setFile 变成目录（EISDIR 注入），必须与 P2b 用独立文件
-  const dataDirA = fs.mkdtempSync(path.join(os.tmpdir(), 'c79-set-'));
+  const dataDirA = fs.mkdtempSync(path.join(os.tmpdir(), 'c80-set-'));
   const setFileA = path.join(dataDirA, 'runtime_settings.json');
   // P2a: 损坏 settings 文件 → getMasked fail-soft + .corrupt 侧车保全（apiKey 密文现场可恢复）
   const r1 = runInChild('set-corrupt', { FPB_SETTINGS_FILE: setFileA, FPB_DATA_DIR: dataDirA }, `
@@ -140,7 +140,7 @@ function cleanup(tag) {
   cleanup(dataDirA);
 
   // P2b: 正常 RMW roundtrip + 密文落盘 + 覆盖语义
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'c79-set2-'));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'c80-set2-'));
   const setFile = path.join(dataDir, 'runtime_settings.json');
   const r2 = runInChild('set-rmw', { FPB_SETTINGS_FILE: setFile, FPB_DATA_DIR: dataDir }, `
     'use strict';
@@ -169,7 +169,7 @@ function cleanup(tag) {
 
 // ---- P3 (D3): audit.js 读失败禁落盘 + 原子写 + 脱敏固化 ----
 {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'c79-audit-'));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'c80-audit-'));
   // P3a: 正常 log → flush → 新进程 query 可见（持久化 roundtrip）+ 无 .tmp 残留
   const r1 = runInChild('audit-persist', { FPB_DATA_DIR: dataDir }, `
     'use strict';
@@ -214,7 +214,7 @@ function cleanup(tag) {
   chk('P3b 损坏现场 .corrupt 侧车保全', o2.sidecar === 1, JSON.stringify(o2));
 
   // P3c: 脱敏固化（敏感键不落盘）+ 环形上限 —— 独立 dataDir（P3b 故意把磁盘留成损坏现场）
-  const dataDirB = fs.mkdtempSync(path.join(os.tmpdir(), 'c79-audit2-'));
+  const dataDirB = fs.mkdtempSync(path.join(os.tmpdir(), 'c80-audit2-'));
   const r3 = runInChild('audit-redact', { FPB_DATA_DIR: dataDirB }, `
     'use strict';
     const fs = require('fs');

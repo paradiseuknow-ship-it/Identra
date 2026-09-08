@@ -39,7 +39,7 @@ const READONLY_ENV_FIELDS = [
   'FPB_SCENARIO_DIR',
 ];
 
-// C79 读路径硬化（消费 C62 fsSafe，范式对齐 identity.js）：
+// C80 读路径硬化（消费 C62 fsSafe，范式对齐 identity.js）：
 // updateSettings 是 read-all → modify → write-all RMW 链——旧 readAll 把瞬时锁
 // （EPERM/EBUSY）与真损坏一并吞成 {}，RMW 写回时原 apiKey 密文等字段被静默丢弃
 //（C61 vault 同族）。现在：
