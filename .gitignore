@@ -80,3 +80,6 @@ desktop.ini
 .workbuddy/
 .step22-e2e/
 release/
+
+# ---- 11. C90 数据清理备份（运行时数据快照，绝不入库）------------------------
+_cleanup_backup_*/
