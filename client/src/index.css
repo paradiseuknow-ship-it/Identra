@@ -3,7 +3,9 @@
 @tailwind utilities;
 
 @layer base {
-  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; color-scheme: dark; }
+  /* 原生控件（select 弹层/日期/滚动条）统一按暗色渲染，option 显式落色兜底 Windows Chromium */
+  select option { background-color: #15171d; color: #e6e8ee; }
   body {
     margin: 0;
     background: #0b0c10;
