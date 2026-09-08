@@ -306,15 +306,21 @@ router.get('/profiles/runtime', (req, res) => {
   res.json({ profiles: snapshots, at: Date.now() });
 });
 
+// C82：浮动 async handler 守卫（Express 4 不接 rejection → 任何 await 抛错 = 请求悬挂至超时）。
+// 与 C65 cookie 两路由同族，本轮水平复审全量清退：路由层永远回 JSON，不悬挂。
 router.get('/profiles/:id', async (req, res) => {
-  const p = db.getProfile(req.params.id);
-  if (!p) return res.status(404).json({ error: 'not found' });
-  if (!guardProfile(res, req.identityUser, p, 'profile:use')) return;
-  const mergedOverride = { os: p.os, browser: p.browser, ...p.fingerprintOverride };
-  const ipGeo = await resolveIpGeo(mergedOverride, resolveProxy(p, db.getProxies()));
-  p.fingerprint = generateFingerprint(seedFromProfile(p), mergedOverride, ipGeo);
-  db.upsertProfile(p);
-  res.json({ ...p, running: browserManager.isRunning(p.id), vault: vault.getMaskedSummary(p.id) });
+  try {
+    const p = db.getProfile(req.params.id);
+    if (!p) return res.status(404).json({ error: 'not found' });
+    if (!guardProfile(res, req.identityUser, p, 'profile:use')) return;
+    const mergedOverride = { os: p.os, browser: p.browser, ...p.fingerprintOverride };
+    const ipGeo = await resolveIpGeo(mergedOverride, resolveProxy(p, db.getProxies()));
+    p.fingerprint = generateFingerprint(seedFromProfile(p), mergedOverride, ipGeo);
+    db.upsertProfile(p);
+    res.json({ ...p, running: browserManager.isRunning(p.id), vault: vault.getMaskedSummary(p.id) });
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
+  }
 });
 
 // Profile Integrity：按需体检（开发期排查"脏 Profile"，非阻塞）
@@ -339,9 +345,10 @@ router.get('/profiles/:id/integrity', async (req, res) => {
 });
 
 router.put('/profiles/:id', async (req, res) => {
-  const p = db.getProfile(req.params.id);
-  if (!p) return res.status(404).json({ error: 'not found' });
-  if (!guardProfile(res, req.identityUser, p, 'profile:manage')) return;
+  try {
+    const p = db.getProfile(req.params.id);
+    if (!p) return res.status(404).json({ error: 'not found' });
+    if (!guardProfile(res, req.identityUser, p, 'profile:manage')) return;
   if (req.body.regenerateSeed) {
     p.seed = 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
   }
@@ -371,12 +378,16 @@ router.put('/profiles/:id', async (req, res) => {
   db.upsertProfile(p);
   auditReq(req, 'profile.update', 'profile', p.id, { name: p.name });
   res.json(p);
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
+  }
 });
 
 router.post('/profiles/:id/duplicate', async (req, res) => {
-  const p = db.getProfile(req.params.id);
-  if (!p) return res.status(404).json({ error: 'not found' });
-  if (!guardProfile(res, req.identityUser, p, 'profile:manage')) return;
+  try {
+    const p = db.getProfile(req.params.id);
+    if (!p) return res.status(404).json({ error: 'not found' });
+    if (!guardProfile(res, req.identityUser, p, 'profile:manage')) return;
   const id = 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const copy = JSON.parse(JSON.stringify(p));
   copy.id = id;
@@ -392,6 +403,9 @@ router.post('/profiles/:id/duplicate', async (req, res) => {
   db.upsertProfile(copy);
   auditReq(req, 'profile.duplicate', 'profile', copy.id, { sourceId: p.id, name: copy.name });
   res.json(copy);
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
+  }
 });
 
 router.delete('/profiles/:id', (req, res) => {
@@ -413,11 +427,15 @@ router.delete('/profiles/:id', (req, res) => {
 
 // 仅生成指纹预览（不落库），供编辑器实时预览
 router.post('/profiles/preview-fp', async (req, res) => {
-  const seed = req.body.seed || 'preview';
-  const override = req.body.fingerprintOverride || {};
-  const ipGeo = await resolveIpGeo(override, resolveProxy({ proxyId: req.body.proxyId, proxyInline: req.body.proxyInline }, db.getProxies()));
-  const fp = generateFingerprint(seed, override, ipGeo);
-  res.json(fp);
+  try {
+    const seed = req.body.seed || 'preview';
+    const override = req.body.fingerprintOverride || {};
+    const ipGeo = await resolveIpGeo(override, resolveProxy({ proxyId: req.body.proxyId, proxyInline: req.body.proxyInline }, db.getProxies()));
+    const fp = generateFingerprint(seed, override, ipGeo);
+    res.json(fp);
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
+  }
 });
 
 router.use('/', (req, res, next) => next());
@@ -629,11 +647,15 @@ proxyRouter.post('/proxies/rotate', async (req, res) => {
 });
 
 proxyRouter.post('/proxies/:id/check-geo', async (req, res) => {
-  const p = db.getProxies().find((x) => x.id === req.params.id);
-  if (!p) return res.status(404).json({ error: 'not found' });
-  if (!guardResource(res, req.identityUser, p, 'profile:use')) return;
-  const result = await checkProxyGeo(p);
-  res.json(result);
+  try {
+    const p = db.getProxies().find((x) => x.id === req.params.id);
+    if (!p) return res.status(404).json({ error: 'not found' });
+    if (!guardResource(res, req.identityUser, p, 'profile:use')) return;
+    const result = await checkProxyGeo(p);
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
+  }
 });
 proxyRouter.post('/proxies/check-inline', async (req, res) => {
   try {
@@ -669,12 +691,16 @@ browserRouter.post('/browser/:id/launch', async (req, res) => {
   }
 });
 browserRouter.post('/browser/:id/stop', async (req, res) => {
-  const p = db.getProfile(req.params.id);
-  if (!p) return res.status(404).json({ error: 'not found' });
-  if (!guardProfile(res, req.identityUser, p, 'profile:use')) return;
-  await browserManager.close(req.params.id);
-  auditReq(req, 'browser.stop', 'profile', p.id, {});
-  res.json({ ok: true, running: false });
+  try {
+    const p = db.getProfile(req.params.id);
+    if (!p) return res.status(404).json({ error: 'not found' });
+    if (!guardProfile(res, req.identityUser, p, 'profile:use')) return;
+    await browserManager.close(req.params.id);
+    auditReq(req, 'browser.stop', 'profile', p.id, {});
+    res.json({ ok: true, running: false });
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
+  }
 });
 browserRouter.get('/browser/status', (req, res) => {
   // C65：workspace 过滤（此前回显全部 profile 的 id+running 状态 = 跨工作区存在性泄漏）
@@ -1121,8 +1147,15 @@ automationRouter.post('/automation/run', async (req, res) => {
   // C65：删除原死代码块（taskId 二次重查 + 对 p.id 的恒等无操作赋值 —— p 本就来自 getProfile(profileId)）
   if (!steps || !steps.length) return res.status(400).json({ error: 'no steps' });
 
-  const result = await runWorkflow(p, steps, { vars: opts?.vars, freshPage: opts?.freshPage !== false });
-  res.json(result);
+  // C82：runWorkflow 是设计性抛错契约（launch 失败/任务取消/step 抛错都会 reject，
+  // C71 download face 修复正依赖此语义）——handler 必须接住 rejection 回 500 JSON，
+  // 否则请求悬挂至客户端超时（UI 零反馈死等）。
+  try {
+    const result = await runWorkflow(p, steps, { vars: opts?.vars, freshPage: opts?.freshPage !== false });
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
+  }
 });
 
 // 模板生成预览
