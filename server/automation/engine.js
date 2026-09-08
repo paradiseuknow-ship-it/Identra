@@ -48,7 +48,9 @@ async function runStep(page, step, vars, log) {
       break;
     case 'selectOption':
       await page.selectOption(resolveValue(args.selectors || args.selector, vars), resolveValue(args.value, vars));
-      log.push(`selectOption ${resolveValue(args.selectors || args.selector, vars)} = ${resolveValue(args.value, vars)}`);
+      // C81：日志不得携带解析后的实际值——value 可能是 {{card.number}}/{{password}} 等
+      // vault 解密明文（工作流日志会进 UI/LLM 上下文）；与 fill 同口径记长度。
+      log.push(`selectOption ${resolveValue(args.selectors || args.selector, vars)} (len=${String(resolveValue(args.value, vars)).length})`);
       break;
     case 'check':
       await page.check(resolveValue(args.selectors || args.selector, vars));
@@ -59,9 +61,9 @@ async function runStep(page, step, vars, log) {
       {
         const sel = resolveValue(args.selectors || args.selector, vars);
         await page.waitForSelector(sel, { timeout: args.timeout || 15000 });
-        const txt = await page.textContent(sel);
-        vars['$' + (args.name || 'extract')] = txt.trim();
-        log.push(`extract ${sel} -> ${(txt || '').slice(0, 80)}`);
+        const txt = await page.textContent(sel); // C81：空元素 textContent 可返回 null，防 TypeError
+        vars['$' + (args.name || 'extract')] = String(txt == null ? '' : txt).trim();
+        log.push(`extract ${sel} -> ${String(txt == null ? '' : txt).slice(0, 80)}`);
       }
       break;
     case 'screenshot':
@@ -91,15 +93,21 @@ async function runWorkflow(profile, steps, opts = {}) {
   const ctx = buildVars(profile.id, opts.vars || {});
 
   try {
-    // 复用现有 page，或用新 page（避免污染主页面）
+    // 复用现有 page，或用新 page（避免污染主页面）。
+    // C81：freshPage 新开的 page 必须在 finally 关闭——原实现成功/异常路径都泄漏，
+    // 长跑工作流反复执行会累积游离 page（内存 + 目标数膨胀）。
     const page = opts.freshPage ? await session.context.newPage() : session.page;
-    for (const step of steps) {
-      await runStep(page, step, ctx, log);
+    try {
+      for (const step of steps) {
+        await runStep(page, step, ctx, log);
+      }
+      // 收集以 $ 开头的提取结果
+      const extracted = {};
+      for (const k of Object.keys(ctx)) if (k.startsWith('$')) extracted[k.slice(1)] = ctx[k];
+      return { success: true, log, extracted };
+    } finally {
+      if (opts.freshPage) await page.close().catch(() => {});
     }
-    // 收集以 $ 开头的提取结果
-    const extracted = {};
-    for (const k of Object.keys(ctx)) if (k.startsWith('$')) extracted[k.slice(1)] = ctx[k];
-    return { success: true, log, extracted };
   } catch (e) {
     return { success: false, log, error: String(e.message || e).slice(0, 300) };
   } finally {

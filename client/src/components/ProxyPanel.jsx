@@ -34,14 +34,17 @@ export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }
     } catch (e) { notify('添加失败: ' + e.message, false); }
   };
 
-  // C37: 编辑代理（PUT /proxies/:id；id/归属/健康字段由服务端剥离）
+  // C37: 编辑代理（PUT /proxies/:id；id/归属/健康字段由服务端剥离）。
+  // C81：password 留空 = 保持不变（不提交该字段，服务端 undefined 语义=不动）。
   const saveEdit = async () => {
     if (!form.server) return notify('请填写 server', false);
     try {
-      await api.updateProxy(editing, {
+      const payload = {
         name: form.name, type: form.type, server: form.server, username: form.username,
-        password: form.password, refreshUrl: form.refreshUrl, ipLookupChannel: form.ipLookupChannel,
-      });
+        refreshUrl: form.refreshUrl, ipLookupChannel: form.ipLookupChannel,
+      };
+      if (form.password) payload.password = form.password;
+      await api.updateProxy(editing, payload);
       setEditing(null); setForm(emptyForm);
       onChange(); notify('代理已更新');
     } catch (e) { notify('更新失败: ' + e.message, false); }
@@ -51,7 +54,10 @@ export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }
     setEditing(p.id);
     setForm({
       name: p.name || '', type: p.type || 'socks5', server: p.server || '',
-      username: p.username || '', password: p.password || '',
+      username: p.username || '',
+      // C81：列表返回的 password 是 '••••••'+尾2 掩码，回填后原样提交会把掩码串当真实
+      // 密码落盘（服务端 C81 已有掩码拦截兜底，此处客户端侧不再回填，语义=留空保持不变）。
+      password: '',
       refreshUrl: p.refreshUrl || '', ipLookupChannel: p.ipLookupChannel || 'ipify',
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -126,7 +132,7 @@ export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }
           <input className="inp" placeholder="刷新 URL (可选)" value={form.refreshUrl} onChange={(e) => setForm({ ...form, refreshUrl: e.target.value })} />
           <input className="inp" placeholder="server (host:port)" value={form.server} onChange={(e) => setForm({ ...form, server: e.target.value })} />
           <input className="inp" placeholder="用户名(可选)" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
-          <input className="inp" placeholder="密码(可选)" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+          <input className="inp" type="password" placeholder={editing ? '留空保持原密码' : '密码(可选)'} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
         </div>
         {editing ? (
           <div className="mt-3 flex gap-2">

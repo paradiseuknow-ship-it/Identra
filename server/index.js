@@ -549,6 +549,10 @@ proxyRouter.put('/proxies/:id', (req, res) => {
     const body = { ...(req.body || {}) };
     // 防归属/健康伪造：归属字段与健康档案均不受客户端控制（健康只能由 check 路由写入）
     ['id', 'workspaceId', 'createdBy', 'lastCheck', 'health'].forEach((k) => delete body[k]);
+    // C81 防掩码回写（B 类）：GET 列表返回的 password 是 '••••••'+尾2 掩码（getProxiesPublic），
+    // 客户端编辑表单回填该掩码后原样提交 → 此处若不拦截，掩码串会被 vault.encrypt 落盘
+    // **永久覆盖真实密码**（下次连接代理 401，凭据静默损坏）。掩码开头 = 客户端未改密码 → 保留原值。
+    if (typeof body.password === 'string' && body.password.indexOf('\u2022\u2022\u2022\u2022') === 0) delete body.password;
     if (body.pool !== undefined) body.pool = proxyPool.normalizePool(body.pool);
     Object.assign(p, body);
     p.updatedBy = req.identityUser ? req.identityUser.id : p.updatedBy;
