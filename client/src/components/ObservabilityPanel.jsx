@@ -13,7 +13,17 @@ const KIND_COLOR = {
   CHECKPOINT: 'bg-indigo-600',
   VIL: 'bg-fuchsia-600',
   ESCALATION: 'bg-rose-700',
+  RECOVERY: 'bg-teal-600',
 };
+
+// 安全序列化：JSON.stringify(undefined) 返回 undefined（而非字符串），裸 .slice 即
+// TypeError 渲染崩溃；循环引用还会抛异常。时间线节点来自持久化集合聚合（跨层契约边界），
+// 任何节点形状都不允许崩掉整个时间线渲染（C78 D2 防御契约）。
+function safeJson(v, max = 120) {
+  if (v == null) return '';
+  try { return (JSON.stringify(v) || '').slice(0, max); }
+  catch (e) { return String(v).slice(0, max); }
+}
 
 function fmtTs(ts) {
   if (!ts) return '-';
@@ -112,17 +122,19 @@ function Stat({ label, value, approx }) {
   );
 }
 
-function TimelineNode({ n }) {
+export function TimelineNode({ n }) {
   const color = KIND_COLOR[n.kind] || 'bg-gray-600';
   let detail = '';
   if (n.kind === 'PLAN') detail = `${n.objective || ''} (${n.stepCount} 步)`;
   else if (n.kind === 'STEP') detail = `${n.type} · ${n.description || ''} · ${n.status}`;
   else if (n.kind === 'ACTION') detail = `${n.action && (n.action.type || n.action.tool) || ''} · ${n.status}`;
-  else if (n.kind === 'OBSERVATION') detail = JSON.stringify(n.observation).slice(0, 120);
+  else if (n.kind === 'OBSERVATION') detail = safeJson(n.observation);
   else if (n.kind === 'ERROR') detail = `${n.code || ''}: ${n.message || ''}${n.snapshotRef ? ' [截图]' : ''}`;
   else if (n.kind === 'REPAIR') detail = `${n.strategy} · ${n.status} · risk=${n.risk}`;
   else if (n.kind === 'RETRY') detail = `第 ${n.index} 次尝试`;
-  else if (n.kind === 'VERIFICATION') detail = JSON.stringify(n.payload).slice(0, 120);
+  else if (n.kind === 'VERIFICATION') detail = safeJson(n.payload);
+  // C78：恢复成功节点（server 自 verification-recovery 起聚合，此前 UI 无分支 → 详情恒空）。
+  else if (n.kind === 'RECOVERY') detail = `恢复成功 · 动作=${n.recoveryAction || '-'} · 观测 ${n.observationCount != null ? n.observationCount : 0} 次${n.elapsedMs != null ? ' · 耗时 ' + (n.elapsedMs / 1000).toFixed(1) + 's' : ''}`;
   else if (n.kind === 'CHECKPOINT') detail = `${n.url || ''} · 上次成功: ${n.lastSuccessfulAction || '-'}`;
   else if (n.kind === 'VIL') {
     const conf = n.confidence != null ? (n.confidence <= 1 ? (n.confidence * 100).toFixed(0) + '%' : String(n.confidence)) : '-';
