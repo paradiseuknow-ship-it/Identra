@@ -61,13 +61,17 @@ function verifyWithAlternatives(contract, after, before) {
 //   initialObservation    — 动作后首次观察（已验证失败）
 //   decision              — VIL 决策（决定用哪套时间表）
 //   verifyFn / inspectFn  — 可注入（默认 verifyWithAlternatives / observation.inspect）
-//   emit                 — 事件发射器（默认 events.emit）
+//   emit                  — 事件发射器（默认 events.emit）
+//   failureType           — VIL failureType（C73 D1：调度选择必须看 failureType，
+//                           不能只看 decision —— EVENTUAL_CONSISTENCY 的 decision 是 'WAIT'，
+//                           旧实现拿 failureType 名与 decision 比较，'WAIT' 永远匹配不上，
+//                           导致有时序证据的最终一致性场景落入 2.7s 短窗口）。
 // 返回：
 //   { recovered, finalObservation, observationCount, elapsedMs, stateChanged,
 //     verificationAttempts, schedule, windowEvents }
 async function runObservationWindow({
   page, taskId, ctx = {}, verification: v, beforeObservation, initialObservation,
-  decision, verifyFn, inspectFn, emit, actionFinishedAt,
+  decision, failureType, verifyFn, inspectFn, emit, actionFinishedAt,
 } = {}) {
   const doVerify = verifyFn || verifyWithAlternatives;
   // v0.2.2：窗口内每次重新 capture 的观察都标注来源 + actionFinishedAt，使「Fresh Observation」
@@ -80,7 +84,11 @@ async function runObservationWindow({
   }, o)));
   const doEmit = emit || ((e) => events.emit(e));
 
-  const schedule = decision === 'EVENTUAL_CONSISTENCY' || decision === 'OBSERVATION_DELAY' || decision === 'RETRY_VERIFY'
+  // C73 D1：调度选择同时看 failureType（时序证据的权威来源）与 decision（向后兼容旧调用方）。
+  // EVENTUAL_CONSISTENCY → decision='WAIT'、OBSERVATION_DELAY → decision='RETRY_VERIFY'；
+  // 旧实现只比较 decision，'WAIT' 落入短窗口（与头部注释「EVENTUAL_CONSISTENCY 用完整窗口」矛盾）。
+  const schedule = (decision === 'EVENTUAL_CONSISTENCY' || decision === 'OBSERVATION_DELAY' || decision === 'RETRY_VERIFY' ||
+    failureType === 'EVENTUAL_CONSISTENCY' || failureType === 'OBSERVATION_DELAY')
     ? SCHEDULE_TIMING
     : SCHEDULE_STATE_UNKNOWN;
   const maxMs = DEFAULT_MAX_MS;

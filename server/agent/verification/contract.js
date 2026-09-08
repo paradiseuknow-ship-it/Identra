@@ -145,8 +145,11 @@ function substitute(contract, action) {
   const url = action && action.target && action.target.url ? String(action.target.url) : '';
   const t = action && action.target;
   const target = t ? (t.semantic || t.field || t.text || (typeof t === 'string' ? t : '')) : '';
+  // C73 D2：必须用函数替换 —— 字符串替换会把值中的 $ 模式（$&/$'/$`/$$）当作替换模式展开，
+  // 导致契约期望值被破坏（如 fill 值 "100$&200" → 期望变成 "100__VALUE__200"），
+  // 而工具实际键入的是原始值 → field_value 永不匹配 → 假 VERIFY_FAILED。函数替换按字面量返回。
   const walk = (node) => {
-    if (typeof node === 'string') return node.replace('__VALUE__', val).replace('__URL__', url).replace('__TARGET__', target);
+    if (typeof node === 'string') return node.replace('__VALUE__', () => val).replace('__URL__', () => url).replace('__TARGET__', () => target);
     if (Array.isArray(node)) return node.map(walk);
     if (node && typeof node === 'object') { for (const k of Object.keys(node)) node[k] = walk(node[k]); }
     return node;
@@ -189,10 +192,17 @@ function contractFromObjective(objective, action) {
 // Convert a legacy {type, expect} verification into a single-clause contract.
 function legacyToContract(v) {
   if (!v || !v.type || v.type === 'none') return null;
+  // C73 D4 家族：field_value / field_checked / storage 类子句依赖辅助键（target /
+  // storageType / key / equals / pattern）——只透传 type/expect 会丢定位键，
+  // 「未找到目标字段」假失败（vault 场景回归实证）。
+  const cl = { type: v.type, expect: v.expect };
+  for (const k of ['target', 'storageType', 'key', 'equals', 'exists', 'pattern']) {
+    if (v[k] !== undefined) cl[k] = v[k];
+  }
   return {
     stateType: 'GENERIC_STATE',
     expected: v.expect || v.type,
-    requiredEvidence: [{ type: v.type, expect: v.expect }],
+    requiredEvidence: [cl],
     forbiddenEvidence: [],
     evidenceLogic: 'AND',
     confidence: 0.75,

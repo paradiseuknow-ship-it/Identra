@@ -330,6 +330,8 @@ async function runStepInner(task, step, beforeObs, actionOverride, _runToken) {
             ctx: { taskId: task.id, executionId, stepId: step.id, attemptId: attempt.id },
             verification: effV, beforeObservation: beforeActionObs,
             initialObservation: toolRes.observation, decision: vil.decision,
+            // C73 D1：窗口调度按 failureType 选择（EVENTUAL_CONSISTENCY→WAIT 之前被误判进短窗口）
+            failureType: vil.failureType,
             // v0.2.2：传入动作完成时间，使窗口内重新 capture 的观察可被证明为 Fresh Observation。
             actionFinishedAt: (toolRes.observation && toolRes.observation.capturedAt) || toolRes.timestamp || undefined,
           });

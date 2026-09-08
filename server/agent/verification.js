@@ -27,6 +27,13 @@ function verify(v, after, before) {
     return { success: r.success, confidence: r.confidence, evidence: r.evidence, contract: r, forbiddenHit: r.forbiddenHit, alternativesMatched: r.alternativesMatched };
   }
   if (!v || !v.type || v.type === 'none') {
+    // C73 D4：契约形态对象（含 requiredEvidence、无 type，如 normalizeContract/legacyToContract
+    // 产物未经 businessState 包裹直接传入）不能落进「未要求验证」恒真分支 —— 那会把
+    // 「本应评估的业务合约」静默判成 success:true（假阳性）。fail-closed：委托合约评估。
+    if (v && Array.isArray(v.requiredEvidence) && v.requiredEvidence.length) {
+      const r = contract.evaluateContract(v, after, before, verify);
+      return { success: r.success, confidence: r.confidence, evidence: r.evidence, contract: r, forbiddenHit: r.forbiddenHit, alternativesMatched: r.alternativesMatched };
+    }
     return { success: true, confidence: 0.5, evidence: ['未要求验证'] };
   }
   const type = v.type;
@@ -89,7 +96,13 @@ function verify(v, after, before) {
         return { success: ok, confidence: ok ? 0.8 : 0.4, evidence };
       }
       const actual = String(st.value || '');
-      const ok = actual.trim().toLowerCase().includes(want.trim().toLowerCase());
+      // C73 D3（vault 注入修正）：expect 为空 = 期望值未知（vault 凭据执行时才注入，
+      // planner 声明时不携带 value）→ 退化为「已填写」验证（与敏感字段 valueLength>0 同级）。
+      // 旧实现 includes('') 恒真 —— 空字段也判成功（假阳性）；首版修复硬 fail-closed
+      // 误杀 vault 场景（step22 Scenario A 回归实证）。两者都不对：期望未知时验证「写入发生」。
+      const ok = actual.trim().length > 0 &&
+        (!want.trim() || actual.trim().toLowerCase().includes(want.trim().toLowerCase()));
+      if (!want.trim()) evidence.push('field_value: 期望值为空（vault 凭据执行时注入），退化为「已填写」验证');
       evidence.push(`字段值校验: 实际="${actual.slice(0, 40)}" 期望包含="${want.slice(0, 40)}" → ${ok ? '匹配' : '不匹配'}`);
       return { success: ok, confidence: ok ? 0.9 : 0.5, evidence };
     }

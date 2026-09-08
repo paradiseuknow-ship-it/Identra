@@ -221,7 +221,13 @@ function clausePresent(cl, after, before) {
       if (!cands.length) return false;
       const st = cands[0].el.state || {};
       if (st.sensitive) return Number(st.valueLength || 0) > 0;
-      return String(st.value || '').trim().toLowerCase().includes(String(cl.expect || '').trim().toLowerCase());
+      // C73 D3（vault 注入修正，与 verification.js 同语义）：空期望 = 期望值未知（凭据执行时
+      // 注入）→ 退化为「已填写」验证；includes('') 恒真（假阳性）与硬 fail-closed（误杀 vault）
+      // 都不对。期望未知时验证「写入发生」。
+      const want = String(cl.expect || '').trim();
+      const actual = String(st.value || '').trim();
+      if (!want) return actual.length > 0;
+      return actual.toLowerCase().includes(want.toLowerCase());
     }
     case 'field_checked': {
       const tgt = cl.target || cl.expect || '';
