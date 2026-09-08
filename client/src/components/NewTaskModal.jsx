@@ -1,0 +1,114 @@
+import React, { useEffect, useState } from 'react';
+import api from '../api';
+import { useEscapeClose } from '../lib/useEscapeClose.mjs';
+import { humanStatus, humanMode } from '../ui/kit';
+import { IconChevron } from '../ui/icons';
+
+// Goal-first 任务创建流：第一层只有一个问题「你希望 AI 做什么？」
+// Profile / 执行模式等工程选项折叠进「高级选项」；生成计划后原地预览 → 一键开始执行。
+// API 面：aiChat（复用既有规划链）→ aiStartTask，零新增后端。
+
+export default function NewTaskModal({ profiles, onClose, onCreated }) {
+  const [goal, setGoal] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [profileId, setProfileId] = useState('');
+  const [mode, setMode] = useState('AUTONOMOUS');
+  const [preview, setPreview] = useState(null); // { taskId, plan, status, sessionId }
+  const [starting, setStarting] = useState(false);
+  useEscapeClose(true, onClose);
+
+  // 无 profile 时默认禁用（AI 任务必须绑定一个浏览器环境）
+  useEffect(() => { if (profiles.length === 1) setProfileId(profiles[0].id); }, [profiles]);
+
+  const plan = async () => {
+    if (!goal.trim()) return;
+    setBusy(true);
+    try {
+      const r = await api.aiChat({ message: goal.trim(), profileId: profileId || undefined, executionMode: mode });
+      setPreview(r);
+    } catch (e) { alert(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const start = async () => {
+    setStarting(true);
+    try {
+      await api.aiStartTask(preview.taskId);
+      onCreated(preview.taskId);
+    } catch (e) { alert(e.message); setStarting(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 pt-[10vh]" onClick={() => !busy && !starting && onClose()}>
+      <div className="w-[560px] max-w-[92vw] card shadow-2xl fade-up" onClick={(e) => e.stopPropagation()}>
+        {!preview ? (
+          <div className="p-6">
+            <div className="text-lg font-medium text-slate-100">你希望 AI 做什么？</div>
+            <textarea
+              autoFocus
+              className="inp mt-4 min-h-[96px] resize-y"
+              placeholder="例如：打开 xxx.com，注册一个新账号并登录，完成后告诉我结果"
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) plan(); }}
+            />
+            <div className="mt-2 text-[11px] text-slate-600">⌘/Ctrl + Enter 生成计划</div>
+
+            <button onClick={() => setAdvanced(!advanced)} className="mt-4 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300">
+              <span style={{ display: 'inline-flex', transform: advanced ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}><IconChevron size={12} /></span>
+              高级选项
+            </button>
+            {advanced && (
+              <div className="mt-3 space-y-3 rounded-lg border border-edge p-3.5">
+                <label className="block">
+                  <span className="label">使用哪个浏览器环境</span>
+                  <select className="inp" value={profileId} onChange={(e) => setProfileId(e.target.value)}>
+                    <option value="">自动选择</option>
+                    {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="label">执行模式</span>
+                  <select className="inp" value={mode} onChange={(e) => setMode(e.target.value)}>
+                    <option value="AUTONOMOUS">自主模式 — AI 全程执行，高风险动作才询问</option>
+                    <option value="ASSIST">协助模式 — 每一步都需要你确认</option>
+                    <option value="SIMULATION">演练模式 — 只规划不执行</option>
+                    <option value="DEBUG">调试模式</option>
+                  </select>
+                </label>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 mt-6">
+              <button onClick={onClose} className="btn btn-ghost">取消</button>
+              <button onClick={plan} disabled={busy || !goal.trim()} className="btn btn-primary px-4">
+                {busy ? '正在规划…' : '生成计划'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-6">
+            <div className="text-[11px] tracking-widest text-slate-500 uppercase mb-2">执行计划预览</div>
+            <div className="text-sm text-slate-200">{preview.plan?.goal || goal}</div>
+            <div className="mt-4 space-y-2">
+              {(preview.plan?.steps || []).map((s, i) => (
+                <div key={s.id || i} className="flex items-start gap-2.5 text-xs">
+                  <span className="w-5 h-5 rounded-full border border-edge text-slate-500 flex items-center justify-center shrink-0 tabular-nums">{i + 1}</span>
+                  <span className="text-slate-300 flex-1">{s.description}</span>
+                  {s.risk && <span className={`shrink-0 ${s.risk === 'LOW' ? 'text-slate-600' : s.risk === 'HIGH' || s.risk === 'CRITICAL' ? 'text-amber-400' : 'text-slate-500'}`}>{s.risk}</span>}
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 mt-6">
+              <button onClick={() => setPreview(null)} disabled={starting} className="btn btn-ghost">返回修改</button>
+              <button onClick={start} disabled={starting} className="btn btn-primary px-4">
+                {starting ? '启动中…' : '开始执行'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

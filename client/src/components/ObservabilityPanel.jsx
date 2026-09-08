@@ -278,7 +278,7 @@ export default function ObservabilityPanel({ onViewDetail }) {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Observability</h2>
+      <h2 className="text-lg font-semibold text-slate-100">执行轨迹</h2>
       {err && <div className="text-red-600 text-sm">{err}</div>}
       <TaskDashboard dash={dash} tasks={tasks} onSelect={select} onViewDetail={onViewDetail} />
       {selected && (

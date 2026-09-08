@@ -42,7 +42,7 @@ export default function AuthGate({ onAuthed }) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950">
       <form onSubmit={submit} className="w-96 max-w-[92vw] rounded border border-edge bg-panel p-6 space-y-3">
-        <div className="text-lg font-semibold text-slate-200">🛰️ 指纹浏览器控制台</div>
+        <div className="text-lg font-semibold text-slate-200">Identra · AI Browser Workspace</div>
         <div className="text-xs text-slate-500">当前部署启用了访问令牌（多用户模式），请先登录。本地单机模式无需登录。</div>
         <div className="flex gap-2 pt-1">
           <button type="button" onClick={() => { setMode('login'); setErr(''); }} className={tabCls('login')}>登录</button>

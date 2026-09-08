@@ -115,7 +115,7 @@ export default function TemplatesPanel({ notify, requestConfirm }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-semibold">指纹模板（{templates.length}）</h2>
+        <h2 className="text-lg font-semibold text-slate-100">模板库（{templates.length}）</h2>
         <button onClick={openNew} className="px-3 py-1.5 rounded bg-sky-600 text-white text-sm hover:bg-sky-500">+ 新建模板</button>
       </div>
       <div className="text-xs text-slate-500 mb-4">模板钉住稳定字段（同形），每个 profile 由独立 seed 派生噪声字段（不同样）。</div>

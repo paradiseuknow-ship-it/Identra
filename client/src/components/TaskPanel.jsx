@@ -40,7 +40,7 @@ export default function TaskPanel({ profiles, notify, onLog, requestConfirm }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-semibold">自动化任务（{tasks.length}）</h2>
+        <h2 className="text-lg font-semibold text-slate-100">任务（{tasks.length}）</h2>
         <button onClick={() => setEditing({ name: '', type: 'registration', profileId: '', config: { url: '', selectors: {} }, steps: [] })}
           className="px-3 py-1.5 rounded bg-sky-600 text-white text-sm hover:bg-sky-500">+ 新建任务</button>
       </div>

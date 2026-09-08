@@ -85,7 +85,7 @@ const stripComments = (src) => src.split('\n')
       onBatch: noop, notify: noop,
     }));
 
-    console.log('SSR_RESULT ' + JSON.stringify(Object.fromEntries(Object.entries(results).map(([k, v]) => [k, v.ok ? { ok: true, len: v.len, markers: { header: v.html.includes('指纹浏览器控制台'), cookieBtn: v.html.includes('>Cookie<') } } : { ok: false, err: v.err }]))));
+    console.log('SSR_RESULT ' + JSON.stringify(Object.fromEntries(Object.entries(results).map(([k, v]) => [k, v.ok ? { ok: true, len: v.len, markers: { header: v.html.includes('Identra'), cookieBtn: v.html.includes('>Cookie<') } } : { ok: false, err: v.err }]))));
   `;
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'c74-ssr-'));

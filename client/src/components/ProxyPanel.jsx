@@ -101,7 +101,7 @@ export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-semibold">代理管理</h2>
+        <h2 className="text-lg font-semibold text-slate-100">代理接入（{proxies.length}）</h2>
         {health && (
           <div className="flex items-center gap-2 text-xs">
             <span className="text-slate-500">池健康度 ({health.total}):</span>

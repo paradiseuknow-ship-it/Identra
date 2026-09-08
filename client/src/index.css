@@ -2,20 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer components {
-  .inp {
-    @apply w-full bg-ink border border-edge rounded px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-sky-500;
+@layer base {
+  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  body {
+    margin: 0;
+    background: #0b0c10;
+    color: #e6e8ee;
+    font-family: Inter, 'Segoe UI', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-feature-settings: 'tnum' 1;
   }
+  ::selection { background: rgba(77, 124, 246, 0.35); }
 }
 
-body {
-  margin: 0;
-  background: #0b0f17;
-  color: #e5e7eb;
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+@layer components {
+  /* —— 面板原语：空间产生层级，边框极弱 —— */
+  .card { @apply bg-panel border border-edge rounded-xl; }
+  .card-hover { @apply transition-colors duration-150 hover:border-slate-600/60; }
+
+  /* —— 按钮族 —— */
+  .btn { @apply inline-flex items-center justify-center gap-1.5 rounded-lg text-sm px-3 py-1.5 transition-colors duration-150 select-none whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed; }
+  .btn-primary { @apply bg-slate-100 text-slate-900 hover:bg-white font-medium; }
+  .btn-accent { @apply bg-accent text-white hover:bg-[#5f8bf8]; }
+  .btn-ghost { @apply text-slate-400 hover:text-slate-100 hover:bg-white/[0.06]; }
+  .btn-outline { @apply border border-edge text-slate-300 hover:text-slate-100 hover:bg-white/[0.04]; }
+  .btn-danger { @apply bg-rose-600/90 hover:bg-rose-500 text-white; }
+
+  /* —— 表单 —— */
+  .inp { @apply w-full bg-black/25 border border-edge rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-slate-500 transition-colors; }
+  .label { @apply block text-xs text-slate-500 mb-1.5; }
+
+  /* —— 状态 pill：状态色只染点/文字/极轻背景 —— */
+  .pill { @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs; }
+
+  /* —— 导航 —— */
+  .navitem { @apply w-full flex items-center gap-2.5 px-2.5 py-[7px] rounded-lg text-[13px] text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] transition-colors duration-150 text-left; }
+  .navitem-active { @apply bg-white/[0.07] text-slate-100; }
+  .navgroup { @apply px-2.5 pt-5 pb-1.5 text-[10px] font-semibold tracking-[0.14em] text-slate-600 uppercase; }
 }
 
 * { box-sizing: border-box; }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: #262a33; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #333845; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 轻入场动画：fade + 4px slide，全局统一克制节奏 */
+@keyframes fadeUp { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.fade-up { animation: fadeUp 0.22s ease-out both; }
