@@ -58,29 +58,43 @@ function decrypt(b64) {
 }
 
 // ---- 持久化（仅存密文） ----
+// C61 读路径硬化：vault 自持读写不走 jsonStore，C60 的 readFileSyncRetry 加固没有覆盖到这里。
+//   老缺陷（A类/数据丢失）：readAll 的 catch 把瞬时文件锁（EPERM/EBUSY/EACCES——正是
+//   writeAll 自己在重试加固的同一故障面）与「文件损坏」混为一谈，静默返回 {}，
+//   而 setProfileSecrets/deleteProfileSecrets 全是 read-modify-write → 一次瞬时锁后
+//   下一次写把整个 vault 覆写成 {}（全部凭据密文静默蒸发）。
+//   修复消费 C62 共享原语 fsSafe.js（C60 语义对齐）+ vault 本地薄包装（ENOENT=合法缺失）。
+const { readFileSyncRetry, atomicWriteFileSync } = require('./fsSafe');
+
+// 瞬时锁重试；ENOENT 返回 null（vault 文件不存在=空 vault）；耗尽/非瞬时 fs 错误抛出（fail-loud，绝不吞成 {}）。
+function readVaultRaw() {
+  try {
+    return readFileSyncRetry(VAULT_FILE);
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
+// 真损坏（JSON 解析失败）：侧车保全原始字节后从空开始，绝不静默覆写未知密文。
+function preserveCorruptSidecar(file) {
+  try { fs.renameSync(file, file + '.corrupt-' + Date.now()); } catch (e) { /* 侧车尽力而为 */ }
+}
+
 function readAll() {
-  if (!fs.existsSync(VAULT_FILE)) return {};
-  try { return JSON.parse(fs.readFileSync(VAULT_FILE, 'utf8')); } catch (e) { return {}; }
+  const raw = readVaultRaw();
+  if (raw == null) return {};
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    preserveCorruptSidecar(VAULT_FILE);
+    return {};
+  }
 }
 function writeAll(obj) {
   fs.mkdirSync(path.dirname(VAULT_FILE), { recursive: true });
-  const data = JSON.stringify(obj, null, 2);
-  // 重试以应对杀软/云同步/其他进程造成的瞬时 EPERM/EBUSY 锁
-  let lastErr;
-  for (let i = 0; i < 5; i++) {
-    try {
-      // 写临时文件再重命名，避免半截写入 + 降低被锁概率
-      const tmp = VAULT_FILE + '.tmp';
-      fs.writeFileSync(tmp, data, 'utf8');
-      fs.renameSync(tmp, VAULT_FILE);
-      return;
-    } catch (e) {
-      lastErr = e;
-      if (e.code === 'EPERM' || e.code === 'EBUSY') { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 80 * (i + 1)); continue; }
-      throw e;
-    }
-  }
-  throw lastErr;
+  // C61：共享原子写（tmp+rename+瞬时锁重试，fsSafe.js C60 语义对齐）
+  atomicWriteFileSync(VAULT_FILE, JSON.stringify(obj, null, 2));
 }
 
 function setProfileSecrets(profileId, secrets) {
@@ -90,13 +104,17 @@ function setProfileSecrets(profileId, secrets) {
   if (secrets.password != null) enc.password = encrypt(secrets.password);
   if (secrets.card) {
     const c = secrets.card;
-    enc.card = {
-      number: c.number != null ? encrypt(c.number) : null,
-      expMonth: c.expMonth != null ? encrypt(c.expMonth) : null,
-      expYear: c.expYear != null ? encrypt(c.expYear) : null,
-      cvv: c.cvv != null ? encrypt(c.cvv) : null,
-      name: c.name != null ? encrypt(c.name) : null,
-    };
+    // C61 B类修复：模块注释承诺「局部更新：合并已有密文」，但老实现是浅合并——
+    // 整个 card 对象被替换，局部卡更新（如只改 expMonth）把 number/cvv/name 密文
+    // 全部置 null（卡数据静默丢失）。现在逐字段合并：
+    //   字段缺失/undefined = 保留旧密文；null = 显式清除；有值 = 替换。
+    const CARD_FIELDS = ['number', 'expMonth', 'expYear', 'cvv', 'name'];
+    const prevCard = (all[profileId] && all[profileId].card) || {};
+    const mergedCard = { ...prevCard };
+    for (const k of CARD_FIELDS) {
+      if (k in c) mergedCard[k] = c[k] != null ? encrypt(c[k]) : null;
+    }
+    enc.card = mergedCard;
   }
   // 允许局部更新：合并已有密文
   const prev = all[profileId] || {};

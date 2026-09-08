@@ -45,18 +45,43 @@ function isTzValid(tz) {
   }
 }
 
-function getTemplates() {
+// C61 I/O 硬化（老模块首轮深扫，与 C60 jsonStore 同族缺陷；消费 C62 共享原语 fsSafe.js）：
+//   D1 (A类/数据丢失) saveTemplates 裸 writeFileSync 直写（中断留半截 JSON），且
+//      getTemplates 把瞬时锁（EPERM/EBUSY/EACCES）与「文件损坏」混为一谈静默返回 []，
+//      而 index.js 全部走 saveTemplates(getTemplates().concat(...)) 读改写 → 一次瞬时锁
+//      或半截写入后，下一次任意模板操作把整个模板库覆写成 []（模板库静默清空）。
+//   D2 (B类) 真损坏 JSON 时旧模板文件被静默丢弃后覆写——侧车保全而非蒸发。
+const { readFileSyncRetry, atomicWriteFileSync } = require('./fsSafe');
+
+// 瞬时锁重试；ENOENT 返回 null（模板库不存在=空库）；耗尽/非瞬时 fs 错误抛出（fail-loud，绝不吞成 []）。
+function readTplRaw() {
   try {
-    if (!fs.existsSync(TPL_FILE)) return [];
-    const l = JSON.parse(fs.readFileSync(TPL_FILE, 'utf8'));
+    return readFileSyncRetry(TPL_FILE);
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
+function preserveCorruptSidecar(file) {
+  try { fs.renameSync(file, file + '.corrupt-' + Date.now()); } catch (e) { /* 侧车尽力而为 */ }
+}
+
+function getTemplates() {
+  const raw = readTplRaw();
+  if (raw == null) return [];
+  try {
+    const l = JSON.parse(raw);
     return Array.isArray(l) ? l : [];
   } catch (e) {
+    preserveCorruptSidecar(TPL_FILE);
     return [];
   }
 }
 function saveTemplates(list) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(TPL_FILE, JSON.stringify(list, null, 2), 'utf8');
+  // C61：共享原子写（tmp+rename+瞬时锁重试，fsSafe.js C60 语义对齐）
+  atomicWriteFileSync(TPL_FILE, JSON.stringify(list, null, 2));
 }
 
 // 白名单归一化：只保留已知键；screen/geolocation 递归收紧
