@@ -69,14 +69,32 @@ export default function SettingsPanel({ notify }) {
     } catch (e) { notify('备份导出失败: ' + e.message, false); }
   }
 
+  // C66：恢复流程两步确认接线（C47 半成品收尾）。旧实现原生 window.confirm 在
+  // 自动化浏览器/部分 WebView 中被静默拦截（恒 false）→ 恢复按钮是死的；且
+  // pendingRestore 状态与确认 UI 块从未被赋值/实现（confirmRestore 不存在，纯死代码）。
+  // 现流程：选文件 → 本地解析+校验 JSON → 挂起待确认（不触网不发请求）→
+  // 显式「确认恢复」按钮才真正调用 restore API；取消/重选即丢弃。
   async function restoreBackup(ev) {
     const file = ev.target.files && ev.target.files[0];
     ev.target.value = ''; // 允许重复选择同一文件
     if (!file) return;
-    if (!window.confirm('恢复将全量覆盖当前数据（Profile/代理/凭据/AI 记忆）。当前数据会自动快照到 pre-restore 目录。确定继续？')) return;
     try {
-      const text = await file.text();
-      const snapshot = JSON.parse(text);
+      const snapshot = JSON.parse(await file.text());
+      if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+        notify('备份文件格式无效（需要一个 JSON 对象快照）', false);
+        return;
+      }
+      setPendingRestore({ name: file.name, snapshot });
+    } catch (e) {
+      notify('备份文件解析失败: ' + e.message, false);
+    }
+  }
+
+  async function confirmRestore() {
+    if (!pendingRestore) return;
+    const snapshot = pendingRestore.snapshot;
+    setPendingRestore(null);
+    try {
       const r = await api.restoreBackup(snapshot);
       notify('恢复完成（' + r.restored.length + ' 个文件）。建议重启服务确保全部模块重新读盘。');
     } catch (e) { notify('恢复失败: ' + e.message, false); }

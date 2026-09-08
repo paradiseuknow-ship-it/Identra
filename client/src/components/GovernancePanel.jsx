@@ -23,7 +23,15 @@ function download(name, text) {
 const fmtTime = (t) => (t ? new Date(t).toLocaleString() : '—');
 
 export default function GovernancePanel({ notify, requestConfirm }) {
-  const confirmIt = requestConfirm || ((msg) => Promise.resolve(window.confirm(msg)));
+  // C66：requestConfirm 是 callback 式（message, onConfirm）且无返回值；旧实现把
+  // confirm 式签名（await boolean）叠在它上面 → `await confirmIt(...)` 恒 undefined →
+  // 撤销 API Key / 删除凭据引用确认后永远静默 return（按钮点了没反应）。
+  // 改为 callback 桥接：有 requestConfirm 走应用内确认弹窗；否则回退原生 confirm
+  // （仅组件单测/独立渲染场景可达，正常 App 挂载恒走应用内弹窗）。
+  const confirmIt = (msg, onConfirm) => {
+    if (requestConfirm) requestConfirm(msg, onConfirm);
+    else if (window.confirm(msg)) onConfirm();
+  };
 
   const [me, setMe] = useState(null);
   const [keys, setKeys] = useState([]);
@@ -105,12 +113,13 @@ export default function GovernancePanel({ notify, requestConfirm }) {
     finally { setBusy(false); }
   };
 
-  const revokeKey = async (k) => {
-    if (!(await confirmIt(`撤销 API Key「${k.name}」？使用该 Key 的客户端将立即失效（不可恢复）。`))) return;
-    setBusy(true);
-    try { await api.revokeApiKey(k.id); notify('已撤销'); await loadKeys(); await loadAudit(); }
-    catch (e) { notify(e.message, false); }
-    finally { setBusy(false); }
+  const revokeKey = (k) => {
+    confirmIt(`撤销 API Key「${k.name}」？使用该 Key 的客户端将立即失效（不可恢复）。`, async () => {
+      setBusy(true);
+      try { await api.revokeApiKey(k.id); notify('已撤销'); await loadKeys(); await loadAudit(); }
+      catch (e) { notify(e.message, false); }
+      finally { setBusy(false); }
+    });
   };
 
   const exportAudit = async () => {
@@ -167,13 +176,13 @@ export default function GovernancePanel({ notify, requestConfirm }) {
     } catch (e) { notify(e.message, false); }
     finally { setBusy(false); }
   };
-  const removeSecretRef = async (s) => {
-    const yes = await confirmIt('删除凭据引用 ' + (s.id || '') + '？（只删除引用，不影响 Profile 内已存的明文）');
-    if (!yes) return;
-    setBusy(true);
-    try { await api.deleteSecret(s.id); notify('已删除'); await loadSecrets(); }
-    catch (e) { notify(e.message, false); }
-    finally { setBusy(false); }
+  const removeSecretRef = (s) => {
+    confirmIt('删除凭据引用 ' + (s.id || '') + '？（只删除引用，不影响 Profile 内已存的明文）', async () => {
+      setBusy(true);
+      try { await api.deleteSecret(s.id); notify('已删除'); await loadSecrets(); }
+      catch (e) { notify(e.message, false); }
+      finally { setBusy(false); }
+    });
   };
 
   return (
