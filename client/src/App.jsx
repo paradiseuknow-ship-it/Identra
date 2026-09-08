@@ -270,6 +270,7 @@ export default function App() {
           proxies={proxies}
           onClose={() => setEditing(null)}
           onSaved={onSaved}
+          notify={notify}
         />
       )}
 

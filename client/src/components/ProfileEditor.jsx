@@ -54,7 +54,8 @@ const TABS = [
   { key: 'advanced', label: '高级设置' },
 ];
 
-export default function ProfileEditor({ profile, proxies, onClose, onSaved }) {
+// C70：notify 由 App 注入（应用内 toast）。原生 alert 在自动化/内嵌环境会被静默拦截 = 错误零反馈。
+export default function ProfileEditor({ profile, proxies, onClose, onSaved, notify }) {
   useEscapeClose(true, onClose);
   const isNew = !profile?.id;
   const [activeTab, setActiveTab] = useState('basic');
@@ -80,7 +81,9 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved }) {
   const mainRef = useRef(null);
 
   const refreshPreview = async (payload) => {
-    const seed = form.seed || (profile?.id || 'preview');
+    // C70：seed 支持显式覆盖 —— 新建态「生成新指纹」先 setField('seed') 再调本函数时，
+    // 闭包里的 form.seed 还是旧值（setState 未生效），旧实现会用旧种子生成预览 = 看似无效。
+    const seed = payload?.seed || form.seed || (profile?.id || 'preview');
     try {
       const data = await api.previewFp({
         seed,
@@ -131,15 +134,14 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved }) {
       if (isNew) {
         const newSeed = 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
         setField('seed', newSeed);
-        await refreshPreview();
+        // C70：显式传新种子 —— 闭包 form.seed 陈旧，refreshPreview 原样读会拿旧值
+        await refreshPreview({ seed: newSeed });
       } else {
         const updated = await api.regenerateSeed(profile.id);
         setForm((f) => ({ ...f, seed: updated.seed }));
         setFp(updated.fingerprint);
       }
-    } catch (e) {
-      alert('生成失败: ' + e.message);
-    } finally {
+    } catch (e) { notify?.('生成失败: ' + e.message, false); } finally {
       setRegenerating(false);
     }
   };
@@ -161,7 +163,7 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved }) {
         });
       }
       onSaved();
-    } catch (e) { alert('保存失败: ' + e.message); }
+    } catch (e) { notify?.('保存失败: ' + e.message, false); }
     finally { setBusy(false); }
   };
 
@@ -187,7 +189,7 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved }) {
 
         <div className="flex flex-1 min-h-0">
           <div ref={mainRef} className="flex-1 overflow-y-auto p-5 space-y-6">
-            <div data-tab="basic" ref={sectionRefs.basic}><BasicTab form={form} setField={setField} setOv={setOv} /></div>
+            <div data-tab="basic" ref={sectionRefs.basic}><BasicTab form={form} setField={setField} setOv={setOv} isNew={isNew} templates={templates} /></div>
             <div data-tab="proxy" ref={sectionRefs.proxy}><ProxyTab form={form} setField={setField} proxies={proxies} /></div>
             <div data-tab="account" ref={sectionRefs.account}><AccountTab form={form} setField={setField} setBehavior={setBehavior} vault={vault} setVault={setVault} /></div>
             <div data-tab="fingerprint" ref={sectionRefs.fingerprint}><FingerprintTab form={form} setField={setField} setOv={setOv} setNested={setNested} fp={fp} refreshPreview={refreshPreview} /></div>
@@ -300,7 +302,9 @@ function Row({ label, value, multiline }) {
   );
 }
 
-function BasicTab({ form, setField, setOv }) {
+// C70 修复：isNew/templates 此前未从父组件传入（裸标识符 → render 即 ReferenceError，
+// 且 ProfileEditor 挂载在面板级 ErrorBoundary 之外 = 整个应用树崩溃，C12+C13 起即坏）。
+function BasicTab({ form, setField, setOv, isNew, templates }) {
   return (
     <div className="space-y-4">
       <Section title="基础信息">

@@ -24,11 +24,14 @@ export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }
 
   const healthOf = (id) => health && health.items && health.items.find((x) => x.id === id);
 
+  // C70：补 try/catch —— 原实现 createProxy 抛错即 unhandled rejection，用户零反馈且表单不明所以
   const add = async () => {
     if (!form.server) return notify('请填写 server', false);
-    await api.createProxy(form);
-    setForm(emptyForm);
-    onChange(); notify('已添加代理');
+    try {
+      await api.createProxy(form);
+      setForm(emptyForm);
+      onChange(); notify('已添加代理');
+    } catch (e) { notify('添加失败: ' + e.message, false); }
   };
 
   // C37: 编辑代理（PUT /proxies/:id；id/归属/健康字段由服务端剥离）
@@ -81,9 +84,11 @@ export default function ProxyPanel({ proxies, onChange, notify, requestConfirm }
     finally { setChecking(null); }
   };
 
+  // C70：删除回调同样补 try/catch（失败静默 + 列表不刷新）
   const remove = (id) => {
     requestConfirm('确认删除该代理？删除后无法恢复。', async () => {
-      await api.deleteProxy(id); onChange(); notify('已删除');
+      try { await api.deleteProxy(id); onChange(); notify('已删除'); }
+      catch (e) { notify('删除失败: ' + e.message, false); }
     });
   };
 
