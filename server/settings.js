@@ -14,6 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const vault = require('./vault');
+const { readFileSyncRetry } = require('./fsSafe');
 
 const SETTINGS_FILE = process.env.FPB_SETTINGS_FILE
   ? path.resolve(process.env.FPB_SETTINGS_FILE)
@@ -38,11 +39,26 @@ const READONLY_ENV_FIELDS = [
   'FPB_SCENARIO_DIR',
 ];
 
+// C79 读路径硬化（消费 C62 fsSafe，范式对齐 identity.js）：
+// updateSettings 是 read-all → modify → write-all RMW 链——旧 readAll 把瞬时锁
+// （EPERM/EBUSY）与真损坏一并吞成 {}，RMW 写回时原 apiKey 密文等字段被静默丢弃
+//（C61 vault 同族）。现在：
+//   - 瞬时锁：5 次退避重试，耗尽 fail-loud（updateSettings 抛错 → 4xx，绝不覆写）；
+//   - ENOENT / 真损坏：仍 fail-soft {}（展示面只读语义不变），但真损坏时先把原文件
+//     侧车保全为 .corrupt-<ts>，apiKey 密文现场可恢复。
 function readAll() {
   if (!fs.existsSync(SETTINGS_FILE)) return {};
+  let raw;
   try {
-    return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) || {};
+    raw = readFileSyncRetry(SETTINGS_FILE);
   } catch (e) {
+    if (e && e.code === 'ENOENT') return {};
+    throw e; // 瞬时锁耗尽 / 其他 fs 故障：fail-loud，RMW 链绝不带着空 {} 落盘
+  }
+  try {
+    return JSON.parse(raw) || {};
+  } catch (e) {
+    try { fs.copyFileSync(SETTINGS_FILE, SETTINGS_FILE + '.corrupt-' + Date.now()); } catch (_) {}
     return {};
   }
 }

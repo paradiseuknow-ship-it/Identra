@@ -14,6 +14,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { readFileSyncRetry, atomicWriteFileSync } = require('./fsSafe');
 
 // 数据目录：C59 起统一走 dataRoot（与 identity.js 同批；一次性 legacy 迁移见 dataRoot.js）
 const { dataRoot, migrateLegacyFile } = require('./dataRoot');
@@ -26,13 +27,29 @@ const SENSITIVE_KEY_RE = /password|passwd|secret|token|card|cvv|cvc|authorizatio
 
 let _entries = null;
 let _flushTimer = null;
+// C79：读失败（瞬时锁耗尽 / 真损坏）期间禁止 flush 落盘——fail-open 只对查询与内存链生效，
+// 绝不把内存 [] 覆写到磁盘（否则审计历史被静默清空，且损坏现场丢失）。
+let _loadFailed = false;
 
 function load() {
   if (_entries) return _entries;
+  _loadFailed = false;
+  if (!fs.existsSync(AUDIT_FILE)) { _entries = []; return _entries; }
+  let raw;
   try {
-    _entries = fs.existsSync(AUDIT_FILE) ? JSON.parse(fs.readFileSync(AUDIT_FILE, 'utf8')) : [];
+    raw = readFileSyncRetry(AUDIT_FILE);
+  } catch (e) {
+    _loadFailed = true; // 瞬时锁耗尽等：查询/记录 fail-open（内存空），磁盘现状不动
+    _entries = [];
+    return _entries;
+  }
+  try {
+    _entries = JSON.parse(raw);
     if (!Array.isArray(_entries)) _entries = [];
   } catch (e) {
+    // 真损坏：先侧车保全现场（.corrupt-<ts>，供事后取证），再 fail-open
+    try { fs.copyFileSync(AUDIT_FILE, AUDIT_FILE + '.corrupt-' + Date.now()); } catch (_) {}
+    _loadFailed = true;
     _entries = [];
   }
   return _entries;
@@ -63,8 +80,10 @@ function scheduleFlush() {
 function flush() {
   try {
     if (!_entries) return;
+    if (_loadFailed) return; // C79：读失败期间绝不落盘（防止把内存 [] 覆盖成审计历史清空）
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(AUDIT_FILE, JSON.stringify(_entries, null, 2), 'utf8');
+    // C79：原子写（旧裸 writeFileSync 崩溃/锁中断留下半截 JSON → 下次 load 损坏分支）
+    atomicWriteFileSync(AUDIT_FILE, JSON.stringify(_entries, null, 2), 'utf8');
   } catch (e) { /* 磁盘异常不阻断业务 */ }
 }
 
@@ -113,6 +132,7 @@ function count() { return load().length; }
 function resetForTests() {
   if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
   _entries = null;
+  _loadFailed = false;
 }
 
 module.exports = {

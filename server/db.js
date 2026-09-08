@@ -42,19 +42,37 @@ function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
+// C79 读路径硬化（消费 C62 fsSafe，范式对齐 identity.js readJson）：
+// 本模块三个集合（profiles/proxies/tasks）的 upsert/delete 全是 read-all → modify → write-all
+// RMW 链——旧实现 readJson 把瞬时文件锁（EPERM/EBUSY，杀毒/索引器）与真损坏一并吞成
+// fallback[]，下一次 save* 就把整个集合覆写成空 = 永久静默清空（C60/C61/C62 同族 A 类）。
+//   - 瞬时锁：5 次退避重试，耗尽 fail-loud 抛出（API 5xx 优于数据覆写清空）；
+//   - ENOENT：集合尚未创建，返回 fallback（合法缺省语义，含 exists 竞态）；
+//   - 真 JSON 损坏：仍走 fallback（与 C60 jsonStore / identity 契约一致）；
+//   - 写路径：tmp+rename 原子写（旧裸 writeFileSync 崩溃/锁中断会留下半截 JSON，
+//     而「半截 JSON」正是下一次 readJson 走损坏 fallback 的直接来源）。
+const { readFileSyncRetry, atomicWriteFileSync } = require('./fsSafe');
+
 function readJson(file, fallback) {
   ensureDir();
   if (!fs.existsSync(file)) return fallback;
+  let raw;
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    raw = readFileSyncRetry(file);
   } catch (e) {
-    return fallback;
+    if (e && e.code === 'ENOENT') return fallback;
+    throw e; // 瞬时锁耗尽 / 其他 fs 故障：fail-loud，绝不静默降级
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return fallback; // 真损坏：保持 fallback 契约
   }
 }
 
 function writeJson(file, data) {
   ensureDir();
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+  atomicWriteFileSync(file, JSON.stringify(data, null, 2), 'utf8');
 }
 
 // ---- Profiles ----
