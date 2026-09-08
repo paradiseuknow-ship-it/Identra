@@ -134,8 +134,11 @@ function chk(name, ok, detail) {
     const appSrc = fs.readFileSync(path.join(ROOT, 'client', 'src', 'App.jsx'), 'utf8');
     const panelPath = path.join(ROOT, 'client', 'src', 'components', 'ReadinessPanel.jsx');
     chk('P6a api.js 暴露 systemReadiness', apiSrc.includes('systemReadiness:'), 'missing');
-    chk('P6b App.jsx 接入 readiness tab + 启动自检 + header 徽标',
-      appSrc.includes("['readiness', '就绪检查']") && appSrc.includes('systemReadiness()') && appSrc.includes('SETUP_REQUIRED'),
+    // C86 IA：readiness 退出导航，入口 = 顶栏 Workspace Health pill（All systems operational）
+    // + SETUP_REQUIRED 自动引导；断言随壳层重构同步演进（B 类一致性，非降阈值）。
+    chk('P6b App.jsx 接入 readiness（健康 pill + SETUP_REQUIRED 引导）+ 启动自检',
+      appSrc.includes("setTab('readiness')") && appSrc.includes('All systems operational')
+      && appSrc.includes('systemReadiness()') && appSrc.includes('SETUP_REQUIRED'),
       'missing');
     chk('P6c ReadinessPanel 组件存在且含六项检查渲染',
       fs.existsSync(panelPath) && fs.readFileSync(panelPath, 'utf8').includes('系统就绪度'), 'missing');

@@ -25,8 +25,9 @@ function chk(name, ok, detail) {
   chk('P1 docs/USER_GUIDE.md 存在', !!guide, guidePath);
 
   // 与 client/src/App.jsx nav tab 逐一对账，防手册与实际面板脱节
+  // C86：nav 已升级为四分组结构 ['key', 'Label', <Icon/>]，提取器允许第三个元素（图标节点）
   const appSrc = fs.readFileSync(path.join(ROOT, 'client', 'src', 'App.jsx'), 'utf8');
-  const navTabs = [...appSrc.matchAll(/\['([a-z]+)',\s*'([^']+)'\]/g)].map((m) => m[2]);
+  const navTabs = [...appSrc.matchAll(/\['([a-z]+)',\s*'([^']+)',\s*</g)].map((m) => m[2]);
   chk('P0a App.jsx 解析出 nav 面板名', navTabs.length >= 10, JSON.stringify(navTabs));
   const missTabs = navTabs.filter((label) => !guide.includes(label));
   chk('P2 手册覆盖全部 nav 面板（' + navTabs.length + ' 个）', missTabs.length === 0, 'missing=' + missTabs.join(' / '));

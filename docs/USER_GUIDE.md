@@ -4,6 +4,29 @@
 
 ---
 
+## 0. 界面导航（C86 AI Workspace）
+
+侧栏分四组；顶栏右侧常驻 Workspace Health 健康 pill（`● All systems operational` = 一切正常，点击进完整自检页）与 **New Task** 主按钮（一句话描述目标 → 生成计划 → 一键执行）。
+
+| 分组 | 面板 | 说明 |
+| --- | --- | --- |
+| Workspace | **Overview** | 新首页：AI 正在做什么 / 完成多少 / 需要关注什么 |
+| Workspace | **Tasks** | 自动化任务管理（旧「自动化任务」） |
+| Workspace | **Runs** | 执行队列与运行记录（旧「执行引擎」） |
+| Workspace | **Browser Profiles** | 浏览器环境与指纹配置（旧「配置管理」） |
+| Automation | **AI Operator** | 给 AI 一个目标，它来执行（三栏：Goal / 执行态 / AI Activity） |
+| Automation | **Schedules** | 定时自动执行（旧「定时调度」） |
+| Automation | **Templates** | 指纹模板库 |
+| Insights | **Activity** | 执行轨迹与事件流（旧 Observability） |
+| Insights | **Memory** | 站点画像与经验记忆（旧「智能记忆」） |
+| System | **Proxies** | 代理资源接入 |
+| System | **Governance** | 密钥、审计与协作 |
+| System | **Settings** | 系统配置 |
+
+状态语言对照：`AI 自修复中`（HEALING）/ `需要你确认`（PAUSED_FOR_HUMAN）/ `执行中`（RUNNING）；时间线中 teal 色「AI 已自动恢复」表示 AI 遇到页面变化后自动重新定位并继续执行，无需人工介入。
+
+---
+
 ## 1. 就绪检查（第一次打开控制台）
 
 控制台启动后会自动跑一遍就绪度自检；必需项缺失时会**自动落到「就绪检查」页**，不需要你猜缺什么。
