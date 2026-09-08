@@ -65,7 +65,7 @@ npm test        # 全量回归（runRegression.js 186 项 + phase9 179 项双护
 | 智能记忆 | 站点画像 / 元素记忆 / 流记忆 / 失败知识只读面板 + 经验包导出导入（跨环境迁移）+ Router 决策试算 / 环境推荐 / 经验健康看板（准确率、LLM 节省、Memory ROI、站点×环境矩阵） |
 | 治理与合规 | API Keys 自管（明文仅创建时出现一次、只读标记、撤销即失效）、凭据引用注册表（credentialRef 脱敏视图 + 明文就绪状态现算）、安全审计日志（只写不可篡改 + 过滤查询 + JSON 导出）、工作空间与成员 RBAC |
 | 任务取证 | 单任务详情：结构化诊断（根因/置信/重试策略/证据/失败快照）、修复尝试与策略成功率、执行记录、动作链重放 |
-| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（186/0 + OK=179/BAD=0） |
+| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（187/0 + OK=180/BAD=0） |
 
 ## 发布包（portable）
 ```bash
@@ -101,7 +101,7 @@ data/                 # 运行时存储（gitignore）
 
 ## 当前基线（2026-09-09）
 - **可靠性**：v2 池 100 任务 × 真实 deepseek：run3b→run6 = 95% → 97% → 98% → **99% SUCCESS**（唯一非 SUCCESS = CREDIBLE_BUSINESS 可信升级，按设计工作）
-- **回归护栏**：runRegression **186/0**（416.9s）+ phase9 **OK=179/BAD=0**（C85 后历史最佳；C85 跨切面水平复审第五轮（收尾面）——/api/ai/schedules 子路由审计闭环：scheduleTrigger.js 自有 CRUD 4 条 mutation 补 audit.logRequest 埋点（C84 登记的收尾候选），意图归因同款（只记谁/何时/哪个 scheduleId），tick 自动触发不逐次审计（高频自动化事件 = 环形缓冲冲刷边界，events 事件流已覆盖）仅手动 trigger 落审计，objective/targetUrl 明文不入 detail，结构断言固化「审计只在 HTTP 意图层」，test_c85 41/0，.benchmark 回归日志双落盘）
+- **回归护栏**：runRegression **187/0**（354.7s）+ phase9 **OK=180/BAD=0**（C87 后历史最佳；C86 UI/UX 高级化重构后的首个全量守护对账批次——15 个客户端锚点守护套件在 C86 新 IA 下全量复跑零失配；C87 修复 NewTaskModal 两处真实缺陷：D1 原生 alert ×2（C70「原生对话框 → 应用内 toast」红线在 C86 新组件的最后残留点，App 传 notify prop 走 C41 toastBus 同源链路）+ D2 Escape 关闭无 busy/starting 守卫（backdrop 与 Esc 行为不一致，规划/启动中可被 Esc 掐断 → guardedClose useCallback 同源收口）；test_c87 15/0 含 P2a「client/src 零原生 alert(」全库量化红线守卫（C70 红线整类杀手化）+ NewTaskModal 双态 SSR 运行时渲染；USER_GUIDE 增补 §0.1 Goal-first 创建流使用节，c34/c48 手册守护复跑全绿，.benchmark 回归日志双落盘）
 - **交付 C83 — 审计覆盖对账（server/index.js 面）**：37 条 mutation 路由全量枚举，6 条真实审计链断裂补埋点 —— browser.evaluate（RCE 等价面）/ navigate / human-click/type/google-search（会话驱动面）/ cookies import（认证态注入）/ export（cookie exfil 面）/ automation/run 成功+失败双路径（业务关键 mutation）；detail 只记长度/数量（凭据明文红线），冻结 allowlist 豁免 5 条无状态预览/诊断面 + 2 条高频拟人流（环形缓冲冲刷边界），test_c83 72/0
 - **交付 C85 — /schedules 子路由审计闭环（scheduleTrigger.js 面，C84 登记的收尾候选）**：C84 闭环 agent/index.js 34 面后，/schedules 独立子路由（自带守卫也自带审计盲区）create/update/delete/trigger 四面零审计；补 4 处 audit.logRequest 埋点（ai.schedule.*），意图归因同款（resourceId=scheduleId，运行细节归 events/trace）；tick 高频自动触发不逐次审计（环形缓冲冲刷边界，events.emit('schedule.triggered') 已覆盖）仅手动 trigger 落审计，P2c 结构断言固化「审计只在 HTTP 意图层、模块层禁调」；objective/targetUrl 明文不入 detail（C81 红线），无效创建 400 不落审计（无实体即无意图实现），跨工作区 403 守卫先于埋点，test_c85 41/0
 - **交付 C84 — AI 面审计闭环（agent/index.js 面，C83 登记的后续批次）**：/api/ai/* 全部 34 条 mutation 路由此前零审计（AI 任务全生命周期在安全审计链不可见），补 28 处埋点 + 2 既有 secrets + 4 冻结豁免 = 34 面闭环；意图归因设计——审计只补「谁在何时对哪个任务做了什么」（resourceId=taskId），运行细节仍归 trace/aiSteps 证据链；/chat 审计点锚在任务创建：mock 规划恒失败（C79 已证边界）→ 400 响应但意图审计落盘（行为面最强实证）；聊天/暂停原因明文只记 *Len，modify 只记 patch 字段名（C81 红线）；audit.logRequest 共享原语提升（index.js auditReq 与 agent aiAudit 同源，C62 fsSafe 纪律），test_c84 102/0

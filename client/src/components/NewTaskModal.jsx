@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import api from '../api';
 import { useEscapeClose } from '../lib/useEscapeClose.mjs';
 import { humanStatus, humanMode } from '../ui/kit';
@@ -7,8 +7,10 @@ import { IconChevron } from '../ui/icons';
 // Goal-first 任务创建流：第一层只有一个问题「你希望 AI 做什么？」
 // Profile / 执行模式等工程选项折叠进「高级选项」；生成计划后原地预览 → 一键开始执行。
 // API 面：aiChat（复用既有规划链）→ aiStartTask，零新增后端。
+// C87：错误反馈走应用内 toast（C70 红线：原生 alert 全库禁用，本文件是最后残留点）；
+//      Escape 与 backdrop 同守卫（busy/starting 中不允许掐断弹层）。
 
-export default function NewTaskModal({ profiles, onClose, onCreated }) {
+export default function NewTaskModal({ profiles, notify, onClose, onCreated }) {
   const [goal, setGoal] = useState('');
   const [busy, setBusy] = useState(false);
   const [advanced, setAdvanced] = useState(false);
@@ -16,7 +18,11 @@ export default function NewTaskModal({ profiles, onClose, onCreated }) {
   const [mode, setMode] = useState('AUTONOMOUS');
   const [preview, setPreview] = useState(null); // { taskId, plan, status, sessionId }
   const [starting, setStarting] = useState(false);
-  useEscapeClose(true, onClose);
+  const guardedClose = useCallback(
+    () => { if (!busy && !starting) onClose(); },
+    [busy, starting, onClose]
+  );
+  useEscapeClose(true, guardedClose);
 
   // 无 profile 时默认禁用（AI 任务必须绑定一个浏览器环境）
   useEffect(() => { if (profiles.length === 1) setProfileId(profiles[0].id); }, [profiles]);
@@ -27,7 +33,7 @@ export default function NewTaskModal({ profiles, onClose, onCreated }) {
     try {
       const r = await api.aiChat({ message: goal.trim(), profileId: profileId || undefined, executionMode: mode });
       setPreview(r);
-    } catch (e) { alert(e.message); }
+    } catch (e) { notify('规划失败: ' + e.message, false); }
     finally { setBusy(false); }
   };
 
@@ -36,11 +42,11 @@ export default function NewTaskModal({ profiles, onClose, onCreated }) {
     try {
       await api.aiStartTask(preview.taskId);
       onCreated(preview.taskId);
-    } catch (e) { alert(e.message); setStarting(false); }
+    } catch (e) { notify('启动失败: ' + e.message, false); setStarting(false); }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 pt-[10vh]" onClick={() => !busy && !starting && onClose()}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 pt-[10vh]" onClick={guardedClose}>
       <div className="w-[560px] max-w-[92vw] card shadow-2xl fade-up" onClick={(e) => e.stopPropagation()}>
         {!preview ? (
           <div className="p-6">

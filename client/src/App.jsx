@@ -401,6 +401,7 @@ export default function App() {
       {newTaskOpen && (
         <NewTaskModal
           profiles={profiles}
+          notify={notify}
           onClose={() => setNewTaskOpen(false)}
           onCreated={onTaskCreated}
         />
