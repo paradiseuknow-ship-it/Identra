@@ -135,9 +135,20 @@ export const api = {
   workspaceMembers: (id) => req('GET', '/auth/workspaces/' + id + '/members'),
   addWorkspaceMember: (id, b) => req('POST', '/auth/workspaces/' + id + '/members', b),
 
-  // browser
+  // browser（C67：browser 操作族全量收口 api.js —— 此前 human-* / evaluate / navigate
+  // /screenshot 无 api 导出，BrowserViewer 用内联裸 fetch 不带 Bearer token，
+  // C49 多用户部署（FPB_API_TOKEN）下全部 401。统一走 req() 附带会话凭据。
+  // 例外：/stream 是 EventSource（无法附带 header），保留内联，边界记录于 BrowserViewer。）
   launch: (id) => req('POST', '/browser/' + id + '/launch'),
   stop: (id) => req('POST', '/browser/' + id + '/stop'),
+  navigate: (id, url) => req('POST', '/browser/' + id + '/navigate', { url }),
+  screenshot: (id) => req('GET', '/browser/' + id + '/screenshot'),
+  humanMove: (id, x, y) => req('POST', '/browser/' + id + '/human-move', { x, y }),
+  humanClick: (id, selector) => req('POST', '/browser/' + id + '/human-click', { selector }),
+  humanType: (id, selector, text) => req('POST', '/browser/' + id + '/human-type', { selector, text }),
+  humanScroll: (id, deltaY) => req('POST', '/browser/' + id + '/human-scroll', { deltaY }),
+  humanGoogleSearch: (id, query) => req('POST', '/browser/' + id + '/human-google-search', { query }),
+  evaluateJs: (id, script) => req('POST', '/browser/' + id + '/evaluate', { script }),
 
   // vault
   setVault: (id, b) => req('POST', '/vault/' + id, b),

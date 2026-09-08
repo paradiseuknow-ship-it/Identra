@@ -1,22 +1,29 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useEscapeClose } from '../lib/useEscapeClose.mjs';
+import api from '../api';
 
 // C42 —— 云查看双模式：
 //   实时流（默认）：SSE + CDP screencast 帧流（≈8fps，页面静止时零流量）
 //   低速模式：2.5s 全图截图轮询（窄带兜底）；实时流断线自动降级到低速并提示
+// C67 —— 操作全部走 api.js（附 Bearer token，修复 C49 多用户部署下内联裸 fetch 401）；
+//   新增人工介入操作条：拟人点击/输入/滚动 + Google 拟人搜索 + evaluate（消费 C65 已加守卫端点）。
+//   边界：/stream 为 EventSource（无法附带 Authorization header），保留内联。
 export default function BrowserViewer({ profileId, onClose }) {
   const [img, setImg] = useState(null);
   const [url, setUrl] = useState('https://whoer.net');
   const [err, setErr] = useState(null);
   const [mode, setMode] = useState('stream'); // 'stream' | 'slow'
   const [streamStatus, setStreamStatus] = useState('连接中…');
+  const [sel, setSel] = useState('');
+  const [txt, setTxt] = useState('');
+  const [js, setJs] = useState('');
+  const [opMsg, setOpMsg] = useState(null); // { ok, text }
   const esRef = useRef(null);
   useEscapeClose(true, onClose); // C43：Esc 关闭云查看
 
   const refresh = useCallback(async () => {
     try {
-      const r = await fetch(`/api/browser/${profileId}/screenshot?t=${Date.now()}`);
-      const j = await r.json();
+      const j = await api.screenshot(profileId);
       if (j.ok && j.data) {
         setImg('data:image/png;base64,' + j.data);
         setErr(null);
@@ -74,14 +81,24 @@ export default function BrowserViewer({ profileId, onClose }) {
   const go = async () => {
     if (!url) return;
     try {
-      await fetch(`/api/browser/${profileId}/navigate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
-      });
+      await api.navigate(profileId, url);
+      setErr(null);
       if (mode === 'slow') setTimeout(refresh, 800);
     } catch (e) {
       setErr('导航失败: ' + e.message);
+    }
+  };
+
+  // C67：人工介入操作统一执行器（evaluate 结果 JSON 化展示；拟人操作后低速模式主动刷新）
+  const op = async (fn, okText) => {
+    try {
+      const r = await fn();
+      const suffix = r && r.result !== undefined ? ' → ' + JSON.stringify(r.result) : '';
+      setOpMsg({ ok: true, text: okText + suffix });
+      setErr(null);
+      if (mode === 'slow') setTimeout(refresh, 600);
+    } catch (e) {
+      setOpMsg({ ok: false, text: e.message });
     }
   };
 
@@ -107,6 +124,57 @@ export default function BrowserViewer({ profileId, onClose }) {
           </button>
           <button onClick={onClose} className="px-3 py-1.5 rounded bg-rose-600/80 hover:bg-rose-600 text-white text-sm">关闭</button>
         </div>
+        {/* C67：人工介入操作条 —— 拟人行为层端点（C65 已加归属守卫）的 UI 消费 */}
+        <div className="flex flex-wrap items-center gap-1.5 px-3 py-1.5 border-b border-edge bg-panel/60 text-xs">
+          <span className="text-slate-500 shrink-0">人工介入:</span>
+          <input
+            className="inp flex-1 min-w-[120px] text-xs"
+            placeholder="CSS selector"
+            value={sel}
+            onChange={(e) => setSel(e.target.value)}
+          />
+          <button
+            onClick={() => sel && op(() => api.humanClick(profileId, sel), '拟人点击 ' + sel)}
+            disabled={!sel}
+            className="px-2 py-1 rounded bg-edge hover:bg-slate-700 disabled:opacity-40"
+          >点击</button>
+          <input
+            className="inp flex-1 min-w-[100px] text-xs"
+            placeholder="输入文本"
+            value={txt}
+            onChange={(e) => setTxt(e.target.value)}
+          />
+          <button
+            onClick={() => sel && txt && op(() => api.humanType(profileId, sel, txt), '拟人输入完成')}
+            disabled={!sel || !txt}
+            className="px-2 py-1 rounded bg-edge hover:bg-slate-700 disabled:opacity-40"
+          >输入</button>
+          <button
+            onClick={() => op(() => api.humanScroll(profileId, 600), '已下滚 600px')}
+            className="px-2 py-1 rounded bg-edge hover:bg-slate-700"
+          >下滚</button>
+          <button
+            onClick={() => op(() => api.humanGoogleSearch(profileId, txt || undefined), 'Google 拟人搜索已提交')}
+            className="px-2 py-1 rounded bg-sky-700/70 hover:bg-sky-600 text-sky-100"
+            title="先处理 EU Cookie 同意浮层，再拟人输入搜索词并回车"
+          >G 搜索</button>
+          <input
+            className="inp flex-1 min-w-[120px] text-xs"
+            placeholder="JS 表达式（需 FPB_ALLOW_EVALUATE=1）"
+            value={js}
+            onChange={(e) => setJs(e.target.value)}
+          />
+          <button
+            onClick={() => js && op(() => api.evaluateJs(profileId, js), '执行完成')}
+            disabled={!js}
+            className="px-2 py-1 rounded bg-amber-700/70 hover:bg-amber-600 text-amber-100 disabled:opacity-40"
+          >执行</button>
+        </div>
+        {opMsg && (
+          <div className={`px-3 py-1 border-b border-edge text-xs ${opMsg.ok ? 'text-emerald-400' : 'text-rose-400'} truncate`} title={opMsg.text}>
+            {opMsg.ok ? '✓ ' : '✗ '}{opMsg.text}
+          </div>
+        )}
         <div className="flex-1 bg-black flex items-center justify-center overflow-auto">
           {err && <div className="text-rose-400 text-sm p-4">{err}</div>}
           {!err && !img && <div className="text-slate-500 text-sm">正在获取浏览器画面…</div>}
