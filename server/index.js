@@ -64,15 +64,9 @@ function guardProfile(res, user, profile, permission) {
 const guardResource = guardProfile;
 
 // CAP-O2：统一审计埋点。detail 只放业务标识（name/id/count）；敏感字段由 audit.redact 兜底。
+// C84：实现委托到 audit.logRequest 共享原语（agent/index.js 的 aiAudit 同源），此处仅保留签名。
 function auditReq(req, action, resourceType, resourceId, detail) {
-  const u = req.identityUser;
-  audit.log({
-    workspaceId: u ? u.currentWorkspaceId : null,
-    actorId: u ? u.id : null,
-    actorName: u ? u.username : '',
-    actorType: u ? (u.__apiKey ? 'api_key' : (u.status === 'local' ? 'local' : 'user')) : 'anonymous',
-    action, resourceType, resourceId, detail: detail || {},
-  });
+  return require('./audit').logRequest(req, action, resourceType, resourceId, detail);
 }
 
 // 判断是否需要基于 IP 解析指纹，并返回检测结果

@@ -112,6 +112,21 @@ function log(entry) {
   }
 }
 
+// C84：共享请求审计原语。此前 auditReq 是 server/index.js 的本地 helper，
+// agent/index.js（/api/ai/* 全部 mutation 面）零审计且拿不到它（require index.js 会循环）。
+// 提升到 audit 模块 = 唯一事实源（C62 fsSafe 同款纪律），index.js 的 auditReq 委托到此。
+// detail 只放业务标识（id/count/*Len）；敏感字段由 redact 兜底（调用方手滑是第二道防线）。
+function logRequest(req, action, resourceType, resourceId, detail) {
+  const u = req && req.identityUser;
+  return log({
+    workspaceId: u ? u.currentWorkspaceId : null,
+    actorId: u ? u.id : null,
+    actorName: u ? u.username : '',
+    actorType: u ? (u.__apiKey ? 'api_key' : (u.status === 'local' ? 'local' : 'user')) : 'anonymous',
+    action, resourceType, resourceId, detail: detail || {},
+  });
+}
+
 // 查询（内存读， newest first）。opts: { workspaceId, action, resourceType, actorId, limit }
 function query(opts) {
   const o = opts || {};
@@ -136,6 +151,6 @@ function resetForTests() {
 }
 
 module.exports = {
-  log, query, flush, count, resetForTests,
+  log, logRequest, query, flush, count, resetForTests,
   MAX_ENTRIES, SENSITIVE_KEY_RE, AUDIT_FILE,
 };

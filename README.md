@@ -65,7 +65,7 @@ npm test        # 全量回归（runRegression.js 184 项 + phase9 177 项双护
 | 智能记忆 | 站点画像 / 元素记忆 / 流记忆 / 失败知识只读面板 + 经验包导出导入（跨环境迁移）+ Router 决策试算 / 环境推荐 / 经验健康看板（准确率、LLM 节省、Memory ROI、站点×环境矩阵） |
 | 治理与合规 | API Keys 自管（明文仅创建时出现一次、只读标记、撤销即失效）、凭据引用注册表（credentialRef 脱敏视图 + 明文就绪状态现算）、安全审计日志（只写不可篡改 + 过滤查询 + JSON 导出）、工作空间与成员 RBAC |
 | 任务取证 | 单任务详情：结构化诊断（根因/置信/重试策略/证据/失败快照）、修复尝试与策略成功率、执行记录、动作链重放 |
-| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（184/0 + OK=177/BAD=0） |
+| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（185/0 + OK=178/BAD=0） |
 
 ## 发布包（portable）
 ```bash
@@ -101,7 +101,9 @@ data/                 # 运行时存储（gitignore）
 
 ## 当前基线（2026-09-09）
 - **可靠性**：v2 池 100 任务 × 真实 deepseek：run3b→run6 = 95% → 97% → 98% → **99% SUCCESS**（唯一非 SUCCESS = CREDIBLE_BUSINESS 可信升级，按设计工作）
-- **回归护栏**：runRegression **184/0**（427.2s）+ phase9 **OK=177/BAD=0**（C83 后历史最佳；C83 跨切面水平复审第三轮——审计覆盖面对账：37 条 mutation 路由全量枚举，6 条真实审计链断裂补埋点 —— browser.evaluate（RCE 等价面）/ navigate / human-click/type/google-search（会话驱动面）/ cookies import（认证态注入）/ export（cookie exfil 面）/ automation/run 成功+失败双路径（业务关键 mutation）；detail 只记长度/数量（凭据明文红线），冻结 allowlist 豁免 5 条无状态预览/诊断面 + 2 条高频拟人流（环形缓冲冲刷边界）；结构化对账守卫双向断言防整类回归，test_c83 72/0，.benchmark 回归日志双落盘）
+- **回归护栏**：runRegression **185/0**（337.1s）+ phase9 **OK=178/BAD=0**（C84 后历史最佳；C84 跨切面水平复审第四轮——AI 面审计闭环：/api/ai/* 全部 34 条 mutation 路由 28 处补埋点（C83 登记的后续批次），意图归因设计（resourceId=taskId，运行细节归 trace/aiSteps），/chat 审计锚在任务创建——规划失败也留意图事件，明文只记 *Len 形态，audit.logRequest 共享原语提升，test_c84 102/0，.benchmark 回归日志双落盘）
+- **交付 C83 — 审计覆盖对账（server/index.js 面）**：37 条 mutation 路由全量枚举，6 条真实审计链断裂补埋点 —— browser.evaluate（RCE 等价面）/ navigate / human-click/type/google-search（会话驱动面）/ cookies import（认证态注入）/ export（cookie exfil 面）/ automation/run 成功+失败双路径（业务关键 mutation）；detail 只记长度/数量（凭据明文红线），冻结 allowlist 豁免 5 条无状态预览/诊断面 + 2 条高频拟人流（环形缓冲冲刷边界），test_c83 72/0
+- **交付 C84 — AI 面审计闭环（agent/index.js 面，C83 登记的后续批次）**：/api/ai/* 全部 34 条 mutation 路由此前零审计（AI 任务全生命周期在安全审计链不可见），补 28 处埋点 + 2 既有 secrets + 4 冻结豁免 = 34 面闭环；意图归因设计——审计只补「谁在何时对哪个任务做了什么」（resourceId=taskId），运行细节仍归 trace/aiSteps 证据链；/chat 审计点锚在任务创建：mock 规划恒失败（C79 已证边界）→ 400 响应但意图审计落盘（行为面最强实证）；聊天/暂停原因明文只记 *Len，modify 只记 patch 字段名（C81 红线）；audit.logRequest 共享原语提升（index.js auditReq 与 agent aiAudit 同源，C62 fsSafe 纪律），test_c84 102/0
 - **交付 C82 — 浮动 async handler 悬挂清退**：Express 4 不接 rejection，`/automation/run`（runWorkflow 设计性抛错契约 → 悬挂至超时 UI 零反馈，真实 B 类）+ profiles GET/PUT/duplicate/preview-fp + proxies check-geo + browser stop 共 7 处统一 try/catch 固化「路由层永远回 JSON 不悬挂」契约，pre-fix TIMEOUT 悬挂实录 → post-fix 快速 500 JSON；P3 结构化守卫全量扫描 async handler 防整类回归，test_c82 18/0
 - **交付 C50 — N-XCONS 双层一致性守护**：native identity.json 驱动下 JS↔HTTP Client Hints 全链实测（test_fp16b_nxcons.js，stock 4/0 + patched 9/0 + 1 边界留痕）——platformVersion 双层承诺实证成立（C2 头层真实跟随）；UA/platform/brands 未驱动面原生同源无断裂；边界 W1（navigator.platform JS 层 vs sec-ch-ua-platform 头 OS 面）显式留痕为 POC #3 冻结单面设计，OS 面联动列为后续扩展。Chrome 151→152 漂移实锤：getHighEntropyValue 单数 API 已移除（存量资产零击穿，全部已用复数）。详见 `.benchmark/C50_NXCONS_CROSS_CONSISTENCY.md`
 - **端点×UI 对账主线完案（C22–C36）**：server 路由与 client 消费差全部闭合或判定不做；遗留端点（/ai/queue、/ai/events、/ai/observability/metrics）已带 RFC 8594 deprecation 标记；/auth/register+login 评估结论 = local 自动身份 + 治理中心建号已闭环 readiness auth 项，不新增登录页

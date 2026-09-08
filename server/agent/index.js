@@ -72,6 +72,17 @@ function aiTaskGuarded(req, res) {
   return aiTaskGuardedBy(req, res, req.params.id);
 }
 
+// C84：AI 面（/api/ai/*）审计埋点。C83 完成 server/index.js mutation 面对账后登记的
+// 后续批次——agent/index.js 全部 mutation 路由此前零审计（仅 /secrets 两面自带
+// secret.create/delete），AI 任务全生命周期（创建/启动/取消/删除）在审计链上不可见。
+// 意图归因设计：AI 面自带 trace/aiSteps 运行时证据链，审计层不重复记录运行细节，
+// 只补「谁在何时对哪个任务做了什么」的意图事件——resourceId = taskId（或 worker/scheduler/
+// profile id），detail 只放 id/count/*Len 业务标识；聊天/目标明文永不入审计（C81 红线，
+// audit.redact 兜底为第二层）。实现走 audit.logRequest 共享原语（与 index.js auditReq 同源）。
+function aiAudit(req, action, resourceType, resourceId, detail) {
+  return require('../audit').logRequest(req, action, resourceType, resourceId, detail);
+}
+
 // ---------------- Task ----------------
 router.post('/tasks', (req, res) => {
   try {
@@ -85,6 +96,7 @@ router.post('/tasks', (req, res) => {
       input.createdBy = req.identityUser.id;
     }
     const t = taskManager.createTask(input);
+    aiAudit(req, 'ai.task.create', 'ai_task', t.id, { name: t.name, profileId: t.profileId || null }); // C84
     res.json(Object.assign({}, t, intelligence ? { intelligence } : {}));
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
@@ -106,6 +118,7 @@ router.post('/tasks/:id/start', (req, res) => {
   if (aiTaskGuarded(req, res) === false) return; // C65
   try {
     const r = taskManager.start(req.params.id);
+    aiAudit(req, 'ai.task.start', 'ai_task', req.params.id, { executionId: r.execution.id }); // C84
     res.json({ ok: true, task: r.task, executionId: r.execution.id });
   } catch (e) {
     res.status(409).json({ ok: false, error: String(e.message || e).slice(0, 300) });
@@ -116,6 +129,7 @@ router.post('/tasks/:id/cancel', (req, res) => {
   if (aiTaskGuarded(req, res) === false) return; // C65
   try {
     res.json(taskManager.cancel(req.params.id));
+    aiAudit(req, 'ai.task.cancel', 'ai_task', req.params.id, {}); // C84
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
   }
@@ -125,6 +139,7 @@ router.post('/tasks/:id/resume', (req, res) => {
   if (aiTaskGuarded(req, res) === false) return; // C65
   try {
     res.json(taskManager.resume(req.params.id));
+    aiAudit(req, 'ai.task.resume', 'ai_task', req.params.id, {}); // C84
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
   }
@@ -135,6 +150,7 @@ router.post('/tasks/:id/pause', (req, res) => {
   try {
     const reason = (req.body && req.body.reason) || 'manual pause';
     const t = taskManager.pauseForHuman(req.params.id, reason, { manual: true });
+    aiAudit(req, 'ai.task.pause', 'ai_task', req.params.id, { reasonLen: String(reason).length }); // C84（reason 是自由文本，只记长度）
     res.json({ ok: true, task: t });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
@@ -145,6 +161,7 @@ router.post('/tasks/:id/retry', (req, res) => {
   if (aiTaskGuarded(req, res) === false) return; // C65
   try {
     const r = taskManager.retry(req.params.id);
+    aiAudit(req, 'ai.task.retry', 'ai_task', req.params.id, { executionId: r.execution.id }); // C84
     res.json({ ok: true, task: r.task, executionId: r.execution.id });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
@@ -155,6 +172,7 @@ router.delete('/tasks/:id', (req, res) => {
   if (aiTaskGuarded(req, res) === false) return; // C65
   try {
     res.json(taskManager.deleteTask(req.params.id));
+    aiAudit(req, 'ai.task.delete', 'ai_task', req.params.id, {}); // C84
   } catch (e) {
     res.status(409).json({ ok: false, error: String(e.message || e).slice(0, 300) });
   }
@@ -250,6 +268,7 @@ router.post('/intelligence/profiles/:id/record', (req, res) => {
   if (!site) return res.status(400).json({ ok: false, error: 'site 必填' });
   try {
     const r = require('./intelligence/profile/profileAnalyzer').recordTaskOutcome(req.params.id, site, !!ok, { name, region });
+    aiAudit(req, 'ai.intel.record', 'profile', req.params.id, { site: site || null, ok: !!ok }); // C84（经验反馈写面）
     res.json(r);
   } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
 });
@@ -276,6 +295,7 @@ router.post('/intelligence/export', (req, res) => {
   const { site, name } = req.body || {};
   if (!site) return res.status(400).json({ ok: false, error: 'site 必填' });
   const fm = require('./intelligence/flowMemory');
+  aiAudit(req, 'ai.intel.export', 'intelligence', site, { name: name || null }); // C84（经验包导出 = 数据出域面，与 C83 cookie.export 同族口径）
   res.json(fm.exportPack(site, { name }));
 });
 // 经验包导入
@@ -283,6 +303,7 @@ router.post('/intelligence/import', (req, res) => {
   const { pack } = req.body || {};
   if (!pack) return res.status(400).json({ ok: false, error: 'pack 必填' });
   const fm = require('./intelligence/flowMemory');
+  aiAudit(req, 'ai.intel.import', 'intelligence', (pack && pack.site) || null, { flowCount: Array.isArray(pack.flows) ? pack.flows.length : 0 }); // C84（外部经验包写入 Memory = 状态变更）
   try { res.json(fm.importPack(pack)); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
 });
 // Intelligence Evaluation Layer：健康看板（Phase 3.6）。
@@ -309,6 +330,7 @@ router.post('/execution/workers/start', (req, res) => {
   // 启动一个 Worker 实体（经 WorkerManager，不直接操作 aiWorkers）。
   try {
     const w = execution.workerManager.startWorker(req.body || {});
+    aiAudit(req, 'ai.worker.start', 'worker', w && w.id, {}); // C84
     res.json({ ok: true, worker: w });
   } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
@@ -316,6 +338,7 @@ router.post('/execution/workers/:id/stop', (req, res) => {
   // 优雅停止 Worker（DRAINING → STOPPED）。
   try {
     const r = execution.workerManager.stopWorker(req.params.id);
+    aiAudit(req, 'ai.worker.stop', 'worker', req.params.id, {}); // C84
     res.json(Object.assign({ ok: r.ok }, r));
   } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
@@ -324,6 +347,7 @@ router.post('/execution/recovery', (req, res) => {
   try {
     const pool = new execution.executorPool.ExecutorPool({ maxWorkers: 1 });
     const r = pool.recovery(Date.now(), (req.body && req.body.timeoutMs) || 30000);
+    aiAudit(req, 'ai.execution.recovery', 'execution', null, { recovered: r.recovered, dead: r.dead }); // C84
     res.json({ ok: true, recovered: r.recovered, dead: r.dead });
   } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
@@ -339,9 +363,11 @@ router.post('/execution/submit', (req, res) => {
     const schedRunning = sched && typeof sched.getStatus === 'function' && sched.getStatus().status === 'RUNNING';
     if (schedRunning) {
       const item = execution.queueManager.submit(taskId, { category, profileId, priorityOverride });
+      aiAudit(req, 'ai.execution.submit', 'ai_task', taskId, { mode: 'scheduled' }); // C84
       res.json({ ok: true, mode: 'scheduled', queued: item });
     } else {
       const r = taskManager.start(taskId); // 唯一执行链：enqueue + runtime.run
+      aiAudit(req, 'ai.execution.submit', 'ai_task', taskId, { mode: 'direct' }); // C84
       res.json({ ok: true, mode: 'direct', started: r });
     }
   } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
@@ -350,29 +376,34 @@ router.post('/execution/submit', (req, res) => {
 // 手动恢复（进程重启后 / 崩溃后调用）
 router.post('/tasks/:id/recover', (req, res) => {
   if (aiTaskGuarded(req, res) === false) return; // C65
-  try { res.json(taskManager.recover(req.params.id)); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
+  try { res.json(taskManager.recover(req.params.id)); aiAudit(req, 'ai.task.recover', 'ai_task', req.params.id, {}); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); } // C84
 });
 
 // Execution Layer（Phase 4.3）：Scheduler Loop 控制面。
 const schedulerLoop = require('./execution/schedulerLoop');
 router.post('/execution/scheduler/start', (req, res) => {
-  try { res.json(schedulerLoop.getInstance({ maxWorkers: (req.body && req.body.maxWorkers) || 1 }).start()); }
+  try { const r = schedulerLoop.getInstance({ maxWorkers: (req.body && req.body.maxWorkers) || 1 }).start(); aiAudit(req, 'ai.scheduler.start', 'scheduler', null, {}); res.json(r); } // C84
   catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
 router.post('/execution/scheduler/stop', (req, res) => {
-  try { res.json(schedulerLoop.getInstance().stop()); } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
+  try { const r = schedulerLoop.getInstance().stop(); aiAudit(req, 'ai.scheduler.stop', 'scheduler', null, {}); res.json(r); } // C84
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
 router.post('/execution/scheduler/pause', (req, res) => {
-  try { res.json(schedulerLoop.getInstance().pause()); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
+  try { const r = schedulerLoop.getInstance().pause(); aiAudit(req, 'ai.scheduler.pause', 'scheduler', null, {}); res.json(r); } // C84
+  catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
 router.post('/execution/scheduler/resume', (req, res) => {
-  try { res.json(schedulerLoop.getInstance().resume()); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
+  try { const r = schedulerLoop.getInstance().resume(); aiAudit(req, 'ai.scheduler.resume', 'scheduler', null, {}); res.json(r); } // C84
+  catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
 router.post('/execution/scheduler/drain', (req, res) => {
-  try { res.json(schedulerLoop.getInstance().drain()); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
+  try { const r = schedulerLoop.getInstance().drain(); aiAudit(req, 'ai.scheduler.drain', 'scheduler', null, {}); res.json(r); } // C84
+  catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
 router.post('/execution/scheduler/tick', (req, res) => {
-  try { res.json(schedulerLoop.getInstance().tickOnce()); } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
+  try { const r = schedulerLoop.getInstance().tickOnce(); aiAudit(req, 'ai.scheduler.tick', 'scheduler', null, {}); res.json(r); } // C84（手动 tick 是低频控制面操作，逐次审计不构成冲刷风险）
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
 router.get('/execution/scheduler/status', (req, res) => {
   try { res.json(schedulerLoop.getInstance().getStatus()); } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
@@ -388,13 +419,13 @@ router.get('/execution/resources', (req, res) => {
 router.post('/execution/resources/acquire', (req, res) => {
   const { profileId, taskId, workerId } = req.body || {};
   if (!profileId) return res.status(400).json({ ok: false, error: 'profileId 必填' });
-  try { res.json(browserPool.acquireResource(profileId, { taskId, workerId })); }
+  try { const r = browserPool.acquireResource(profileId, { taskId, workerId }); aiAudit(req, 'ai.resource.acquire', 'profile', profileId, { taskId: taskId || null, workerId: workerId || null }); res.json(r); } // C84
   catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
 router.post('/execution/resources/release', (req, res) => {
   const { profileId, taskId } = req.body || {};
   if (!profileId) return res.status(400).json({ ok: false, error: 'profileId 必填' });
-  try { res.json(browserPool.releaseResource(profileId, { taskId })); }
+  try { const r = browserPool.releaseResource(profileId, { taskId }); aiAudit(req, 'ai.resource.release', 'profile', profileId, { taskId: taskId || null }); res.json(r); } // C84
   catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
 router.post('/execution/resources/recover', (req, res) => {
@@ -407,6 +438,7 @@ router.post('/execution/resources/recover', (req, res) => {
       taskIsTerminal: (id) => { const t = taskManager.getTask(id); return t && ['DONE', 'FAILED', 'CANCELLED', 'COMPLETED'].indexOf(t.status) >= 0; },
     });
     res.json({ ok: true, actions: r.actions, summary: r.summary });
+    aiAudit(req, 'ai.resource.recover', 'resource', null, { actions: Array.isArray(r.actions) ? r.actions.length : 0 }); // C84
   } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
 
@@ -529,6 +561,10 @@ router.post('/chat', async (req, res) => {
       constraints: parsed.constraints || [],
       routerHints: intelligence || undefined,
     });
+    // C84：意图归因——/chat 的审计点锚在任务创建（而非规划成功）。规划失败时任务会被
+    // 删除清理，但「用户发起过这次 AI 规划意图」是审计链上必须留存的事件。
+    // message 是用户明文 → 只记 messageLen，永不落内容（C81 凭据/明文红线同族）。
+    aiAudit(req, 'ai.chat', 'ai_task', task.id, { sessionId: session.id, messageLen: String(message).length });
 
     // 4) Planner → Plan（先查 Flow Memory，高置信度直接加载历史流程，跳过 LLM；不自动执行）
     const pr = await flowPlanner.planWithMemory({ ...parsed, executionMode: task.executionMode, provider: prov, ctx: { taskId: task.id } });
@@ -649,15 +685,15 @@ router.get('/snapshots/:taskId/:file', (req, res) => {
 // ---------------- Approval（Phase 1.4）----------------
 router.post('/tasks/:id/approve', (req, res) => {
   if (aiTaskGuarded(req, res) === false) return; // C65
-  try { res.json(taskManager.approve(req.params.id)); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
+  try { res.json(taskManager.approve(req.params.id)); aiAudit(req, 'ai.task.approve', 'ai_task', req.params.id, {}); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); } // C84（approve = 计划确认放行，最关键的意图事件之一）
 });
 router.post('/tasks/:id/reject', (req, res) => {
   if (aiTaskGuarded(req, res) === false) return; // C65
-  try { res.json(taskManager.reject(req.params.id)); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
+  try { res.json(taskManager.reject(req.params.id)); aiAudit(req, 'ai.task.reject', 'ai_task', req.params.id, {}); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); } // C84
 });
 router.post('/tasks/:id/modify', (req, res) => {
   if (aiTaskGuarded(req, res) === false) return; // C65
-  try { res.json(taskManager.modify(req.params.id, req.body || {})); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
+  try { res.json(taskManager.modify(req.params.id, req.body || {})); aiAudit(req, 'ai.task.modify', 'ai_task', req.params.id, { keys: Object.keys(req.body || {}).slice(0, 10) }); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); } // C84（patch 字段名，不落值）
 });
 
 // ---------------- SSE 事件流 ----------------
