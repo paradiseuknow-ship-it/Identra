@@ -22,7 +22,10 @@ function fallbackDiagnosis({ classifier, failure, observation, step }) {
   let recommendation = '';
   let conf = classifier.confidence || 0.6;
 
-  if (/403|forbidden|access denied/i.test(low) || /forbidden/i.test(url)) {
+  // C77 D1：403 匹配收紧为独立 token（\b403\b），与 C76 D2（errorClassifier）同族对齐——
+  // 页面全文中出现数字子串 403（价格 $1403、编号 40321）此前会被误判 HTTP_FORBIDDEN，
+  // 而 HTTP_FORBIDDEN 的 retryPolicy=escalate，即随机文案导致任务误升级人工。
+  if (/\b403\b|forbidden|access denied/i.test(low) || /forbidden/i.test(url)) {
     category = 'HTTP_FORBIDDEN';
     facts.push('页面/响应出现 403 或 Access denied');
     evidence.push('可见文本包含 403/forbidden');
