@@ -65,7 +65,7 @@ npm test        # 全量回归（runRegression.js 157 项 + phase9 150 项双护
 | 智能记忆 | 站点画像 / 元素记忆 / 流记忆 / 失败知识只读面板 + 经验包导出导入（跨环境迁移）+ Router 决策试算 / 环境推荐 / 经验健康看板（准确率、LLM 节省、Memory ROI、站点×环境矩阵） |
 | 治理与合规 | API Keys 自管（明文仅创建时出现一次、只读标记、撤销即失效）、凭据引用注册表（credentialRef 脱敏视图 + 明文就绪状态现算）、安全审计日志（只写不可篡改 + 过滤查询 + JSON 导出）、工作空间与成员 RBAC |
 | 任务取证 | 单任务详情：结构化诊断（根因/置信/重试策略/证据/失败快照）、修复尝试与策略成功率、执行记录、动作链重放 |
-| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（161/0 + OK=154/BAD=0） |
+| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（163/0 + OK=156/BAD=0） |
 
 ## 发布包（portable）
 ```bash
@@ -101,7 +101,7 @@ data/                 # 运行时存储（gitignore）
 
 ## 当前基线（2026-09-07）
 - **可靠性**：v2 池 100 任务 × 真实 deepseek：run3b→run6 = 95% → 97% → 98% → **99% SUCCESS**（唯一非 SUCCESS = CREDIBLE_BUSINESS 可信升级，按设计工作）
-- **回归护栏**：runRegression **161/0** + phase9 **OK=154/BAD=0**（C60 后历史最佳，工作树口径含 c60+c59 未落库套件各 1；fp16b launch 套件 profile 目录已随 FPB_DATA_DIR tmp 隔离，消除跨实例 Chrome 锁争用 flaky）
+- **回归护栏**：runRegression **163/0**（285.5s）+ phase9 **OK=156/BAD=0**（C62 后历史最佳，工作树口径含 c62 新增套件 1；fp16b launch 套件 profile 目录已随 FPB_DATA_DIR tmp 隔离，消除跨实例 Chrome 锁争用 flaky）
 - **交付 C50 — N-XCONS 双层一致性守护**：native identity.json 驱动下 JS↔HTTP Client Hints 全链实测（test_fp16b_nxcons.js，stock 4/0 + patched 9/0 + 1 边界留痕）——platformVersion 双层承诺实证成立（C2 头层真实跟随）；UA/platform/brands 未驱动面原生同源无断裂；边界 W1（navigator.platform JS 层 vs sec-ch-ua-platform 头 OS 面）显式留痕为 POC #3 冻结单面设计，OS 面联动列为后续扩展。Chrome 151→152 漂移实锤：getHighEntropyValue 单数 API 已移除（存量资产零击穿，全部已用复数）。详见 `.benchmark/C50_NXCONS_CROSS_CONSISTENCY.md`
 - **端点×UI 对账主线完案（C22–C36）**：server 路由与 client 消费差全部闭合或判定不做；遗留端点（/ai/queue、/ai/events、/ai/observability/metrics）已带 RFC 8594 deprecation 标记；/auth/register+login 评估结论 = local 自动身份 + 治理中心建号已闭环 readiness auth 项，不新增登录页
 - **身份架构**：16-B 全家族收口（6 Native ACTIVE + languages CONFIG + brands/screen CLOSED，详见 `.benchmark/PHASE16B_ROI_GATE.md`）
