@@ -110,6 +110,17 @@ function listTasks() {
   return store.read('aiTasks', []);
 }
 
+// C67b：attempt 清理原实现先删 steps 再用 store.find('aiSteps', a.stepId) 反查 —— 被删
+// step 永远查不到（!st → 保留），过滤条件恒真 = 死逻辑；而 attempt 自 v0.2.2 起自带
+// taskId 字段（runtime.js errorHistory 也按 taskId 消费）。改为删除前快照 stepIds：
+// taskId 命中直接删；pre-v0.2.2 的 taskId=null 孤儿经 stepId 命中一并删。
+function _purgeTaskEvidence(taskId) {
+  const stepIds = new Set(store.read('aiSteps', []).filter((s) => s.taskId === taskId).map((s) => s.id));
+  store.write('aiSteps', store.read('aiSteps', []).filter((s) => s.taskId !== taskId));
+  store.write('aiAttempts', store.read('aiAttempts', []).filter((a) => a.taskId !== taskId && !stepIds.has(a.stepId)));
+  return stepIds.size;
+}
+
 function deleteTask(id) {
   const t = getTask(id);
   if (!t) return null;
@@ -118,7 +129,7 @@ function deleteTask(id) {
   }
   if (t.currentExecutionId) lock.releaseAllForExecution(t.currentExecutionId);
   store.remove('aiTasks', id);
-  store.write('aiSteps', store.read('aiSteps', []).filter((s) => s.taskId !== id));
+  _purgeTaskEvidence(id); // C67b：此前只删 steps，aiAttempts 永久孤儿残留
   queue.markDone(id, 'CANCELLED');
   return t;
 }
@@ -344,7 +355,19 @@ function recover(id) {
   const execution = recorder.createExecution(task.id, task.profileId, { recovery: true });
   if (task.profileId) {
     lock.releaseAllForExecution(task.currentExecutionId); // 释放旧锁（可能已随进程消失）
-    lock.acquire(lock.resourceKeyForProfile(task.profileId), { executionId: execution.id, taskId: task.id });
+    // C67b：acquire 返回值此前未检查（start() 有完整失败处理，recover() 没有）——
+    // 崩溃后用户在同一 profile 上启动了新任务时，锁被新 execution 持有，recover 静默
+    // 继续会双开同一 profile（C64 同族）且留下孤儿 RUNNING execution 记录。
+    const res = lock.acquire(lock.resourceKeyForProfile(task.profileId), { executionId: execution.id, taskId: task.id });
+    if (!res.ok) {
+      recorder.markFinished(execution.id, 'FAILED', res.reason);
+      try { _setTaskState(task, 'FAILED', { error: '恢复失败(资源锁): ' + res.reason }); } catch (_) {}
+      task.finishedAt = Date.now();
+      store.upsert('aiTasks', task);
+      queue.markDone(task.id, 'FAILED');
+      events.emit({ taskId: task.id, executionId: execution.id, type: 'task.failed', payload: { error: task.error, stage: 'recover_lock' } });
+      throw new Error(`恢复失败: ${res.reason}`);
+    }
   }
   // B.13：从 checkpoint.restore 重建恢复状态（结构化，含 url/step/lastSuccessfulAction），
   // runtime recover 时只导航回 url 并跳过已 SUCCESS 步骤，不重复已成功动作。
@@ -414,11 +437,7 @@ function retry(id) {
     throw new Error(`任务状态 ${task.status} 不允许重试`);
   }
   // 清理旧计划/尝试，回退到 PLANNING（FAILED→PLANNING 合法），再走一次 start
-  store.write('aiSteps', store.read('aiSteps', []).filter((s) => s.taskId !== id));
-  store.write('aiAttempts', store.read('aiAttempts', []).filter((a) => {
-    const st = store.find('aiSteps', a.stepId);
-    return !st || st.taskId !== id;
-  }));
+  _purgeTaskEvidence(id); // C67b：旧实现引用刚删除的 steps 反查，attempt 清理恒不生效
   _setTaskState(task, 'PLANNING');
   task.error = null;
   task.finishedAt = null;
