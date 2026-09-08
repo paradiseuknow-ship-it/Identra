@@ -35,7 +35,9 @@ export default function App() {
   const [authTick, setAuthTick] = useState(0); // C49：登录成功后重跑启动探测（readiness + 列表）
 
   // 应用内确认弹窗，替代原生 window.confirm（原生框在某些环境下会被静默拦截导致“点击无反应”）
-  const requestConfirm = (message, onConfirm) => setConfirmState({ message, onConfirm });
+  // C74：第三参 okLabel —— 非删除类破坏性操作（如撤销 API Key）可自定义确认按钮文案，
+  //      不再被硬编码的「确认删除」误导；默认保持「确认删除」（现有调用点均为删除语义）。
+  const requestConfirm = (message, onConfirm, okLabel) => setConfirmState({ message, onConfirm, okLabel });
   useEscapeClose(!!confirmState, () => setConfirmState(null)); // C43：Esc 关确认弹窗（取消语义，不触发确认）
   const runConfirm = () => {
     const { onConfirm } = confirmState || {};
@@ -119,7 +121,12 @@ export default function App() {
     try { await api.stop(id); notify('已停止'); await loadProfiles(); }
     catch (e) { notify(e.message, false); }
   };
-  const duplicate = async (id) => { await api.duplicateProfile(id); await loadProfiles(); notify('已复制'); };
+  // C74：duplicate 补 try/catch（C70 D3 同族）——复制失败此前是 unhandled rejection，
+  //      用户零反馈、列表不刷新；对齐 launch/stop 的错误处理口径。
+  const duplicate = async (id) => {
+    try { await api.duplicateProfile(id); await loadProfiles(); notify('已复制'); }
+    catch (e) { notify(e.message, false); }
+  };
   const remove = (id) => {
     requestConfirm('确认删除该配置？删除后无法恢复。', async () => {
       try {
@@ -247,6 +254,7 @@ export default function App() {
               onAdd={addNew} onEdit={setEditing} onLaunch={launch} onStop={stop}
               onDuplicate={duplicate} onRemove={remove} onView={setViewingId}
               onRotate={rotate} onExport={exportProfiles} onImport={importProfiles}
+              onExportCookies={exportCookies}
               notify={notify} onBatch={() => setBatch({ count: 5, namePrefix: '批量配置' })}
             />
           )}
@@ -283,13 +291,43 @@ export default function App() {
       )}
 
       <ToastHost />
+      {/* C74：批量建号弹窗从 ProfilesTab 移回 App —— batch/batching/setBatch/runBatch/loadProfiles
+          全部是 App 作用域，ProfilesTab 从未收到这些标识符 → 弹窗块渲染即 ReferenceError
+          （配置管理 tab 整页被 C40 ErrorBoundary 掩成错误卡，SSR 探针实录 batch is not defined）。
+          「批量」按钮经既有 onBatch prop 打开，状态所有权与渲染位置对齐。 */}
+      {batch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => !batching && setBatch(null)}>
+          <div className="w-96 rounded-lg border border-edge bg-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="font-medium mb-4">批量建号</div>
+            <div className="space-y-3 text-sm">
+              <label className="block">
+                <span className="text-slate-400 text-xs">数量（1-50）</span>
+                <input type="number" min="1" max="50" className="inp w-full mt-1" value={batch.count}
+                  onChange={(e) => setBatch({ ...batch, count: e.target.value })} />
+              </label>
+              <label className="block">
+                <span className="text-slate-400 text-xs">名称前缀</span>
+                <input className="inp w-full mt-1" value={batch.namePrefix}
+                  onChange={(e) => setBatch({ ...batch, namePrefix: e.target.value })} />
+              </label>
+              <div className="text-xs text-slate-500">稳定字段共享基线，噪声字段每号独立派生（「同形不同样」）。</div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setBatch(null)} disabled={batching} className="px-3 py-1.5 rounded bg-edge hover:bg-slate-700 text-slate-200 text-sm">取消</button>
+              <button onClick={runBatch} disabled={batching} className="px-3 py-1.5 rounded bg-sky-600 hover:bg-sky-500 text-white text-sm disabled:opacity-50">
+                {batching ? '创建中…' : '创建'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {confirmState && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="w-80 rounded-lg border border-edge bg-panel p-5 shadow-2xl">
             <div className="text-sm text-slate-200 mb-5">{confirmState.message}</div>
             <div className="flex justify-end gap-2">
               <button onClick={() => setConfirmState(null)} className="px-3 py-1.5 rounded bg-edge hover:bg-slate-700 text-slate-200 text-sm">取消</button>
-              <button onClick={runConfirm} className="px-3 py-1.5 rounded bg-rose-600 hover:bg-rose-500 text-white text-sm">确认删除</button>
+              <button onClick={runConfirm} className="px-3 py-1.5 rounded bg-rose-600 hover:bg-rose-500 text-white text-sm">{confirmState.okLabel || '确认删除'}</button>
             </div>
           </div>
         </div>
@@ -303,7 +341,9 @@ export default function App() {
   );
 }
 
-function ProfilesTab({ profiles, proxies, runtime, onAdd, onEdit, onLaunch, onStop, onDuplicate, onRemove, onView, onRotate, onExport, onImport, onBatch, notify }) {
+// C74：具名导出 ProfilesTab —— 守护测试（test_c74）SSR 探针需零浏览器渲染运行中配置态；
+// 对 Vite 构建零影响（default 导出 App 不变）。
+export function ProfilesTab({ profiles, proxies, runtime, onAdd, onEdit, onLaunch, onStop, onDuplicate, onRemove, onView, onRotate, onExport, onImport, onExportCookies, onBatch, notify }) {
   const [integrity, setIntegrity] = useState(null); // { id, report } | null
   const [checkingId, setCheckingId] = useState(null);
 
@@ -385,7 +425,7 @@ function ProfilesTab({ profiles, proxies, runtime, onAdd, onEdit, onLaunch, onSt
                 <>
                   <button onClick={() => onView(p.id)} className="px-2 py-1 rounded bg-sky-600/80 hover:bg-sky-600 text-white">查看</button>
                   <button onClick={() => onStop(p.id)} className="px-2 py-1 rounded bg-rose-600/80 hover:bg-rose-600 text-white">停止</button>
-                  <button onClick={() => exportCookies(p.id)} className="px-2 py-1 rounded bg-edge hover:bg-slate-700" title="导出运行中浏览器的全部 Cookie（JSON）">Cookie</button>
+                  <button onClick={() => onExportCookies(p.id)} className="px-2 py-1 rounded bg-edge hover:bg-slate-700" title="导出运行中浏览器的全部 Cookie（JSON）">Cookie</button>
                 </>
               ) : (
                 <button onClick={() => onLaunch(p.id)} className="px-2 py-1 rounded bg-emerald-600/80 hover:bg-emerald-600 text-white">启动</button>
@@ -405,33 +445,6 @@ function ProfilesTab({ profiles, proxies, runtime, onAdd, onEdit, onLaunch, onSt
           </div>
         ))}
       </div>
-
-      {batch && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => !batching && setBatch(null)}>
-          <div className="w-96 rounded-lg border border-edge bg-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="font-medium mb-4">批量建号</div>
-            <div className="space-y-3 text-sm">
-              <label className="block">
-                <span className="text-slate-400 text-xs">数量（1-50）</span>
-                <input type="number" min="1" max="50" className="inp w-full mt-1" value={batch.count}
-                  onChange={(e) => setBatch({ ...batch, count: e.target.value })} />
-              </label>
-              <label className="block">
-                <span className="text-slate-400 text-xs">名称前缀</span>
-                <input className="inp w-full mt-1" value={batch.namePrefix}
-                  onChange={(e) => setBatch({ ...batch, namePrefix: e.target.value })} />
-              </label>
-              <div className="text-xs text-slate-500">稳定字段共享基线，噪声字段每号独立派生（「同形不同样」）。</div>
-            </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => setBatch(null)} disabled={batching} className="px-3 py-1.5 rounded bg-edge hover:bg-slate-700 text-slate-200 text-sm">取消</button>
-              <button onClick={runBatch} disabled={batching} className="px-3 py-1.5 rounded bg-sky-600 hover:bg-sky-500 text-white text-sm disabled:opacity-50">
-                {batching ? '创建中…' : '创建'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {integrity && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setIntegrity(null)}>

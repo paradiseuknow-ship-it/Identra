@@ -41,11 +41,13 @@ const guide = read('docs/USER_GUIDE.md');
 
 (async () => {
   // ---- P1 confirmIt callback 桥接 ----
-  chk('P1a confirmIt 为 callback 式定义 (msg, onConfirm)',
-    /const\s+confirmIt\s*=\s*\(\s*msg\s*,\s*onConfirm\s*\)\s*=>/.test(gov),
+  // C74：confirmIt/requestConfirm 增加可选第三参 okLabel（撤销 API Key 自定义按钮文案），
+  // 桥接契约是超集扩展 —— 正则放宽为允许尾部可选参数。
+  chk('P1a confirmIt 为 callback 式定义 (msg, onConfirm[, okLabel])',
+    /const\s+confirmIt\s*=\s*\(\s*msg\s*,\s*onConfirm\s*,?\s*(okLabel)?\s*\)\s*=>/.test(gov),
     'confirmIt 未改为 (msg, onConfirm) => 形式');
-  chk('P1b confirmIt 桥接 requestConfirm(msg, onConfirm)',
-    /requestConfirm\s*\(\s*msg\s*,\s*onConfirm\s*\)/.test(gov),
+  chk('P1b confirmIt 桥接 requestConfirm(msg, onConfirm[, okLabel])',
+    /requestConfirm\s*\(\s*msg\s*,\s*onConfirm\s*(,\s*okLabel)?\s*\)/.test(gov),
     '未桥接应用内确认弹窗');
   chk('P1c 不再存在 confirm 式调用（await confirmIt）',
     !/await\s+confirmIt\s*\(/.test(gov),

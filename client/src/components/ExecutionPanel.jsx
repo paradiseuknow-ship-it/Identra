@@ -66,12 +66,18 @@ export default function ExecutionPanel({ notify }) {
   };
 
   // C29：提交任务到执行引擎（Scheduler 运行中入队；未运行则走唯一执行链直接启动，绝不卡 QUEUED）
+  // C74：优先级输入先行校验——非数字此前经 Number() 变 NaN，JSON 序列化成 null 静默发给服务器。
   const submitTask = async () => {
     if (!submitForm.taskId.trim()) return notify('请填写 taskId', false);
+    let priorityOverride;
+    if (submitForm.priorityOverride !== '') {
+      priorityOverride = Number(submitForm.priorityOverride);
+      if (!Number.isFinite(priorityOverride)) return notify('优先级必须是数字', false);
+    }
     setBusy(true);
     try {
       const body = { taskId: submitForm.taskId.trim() };
-      if (submitForm.priorityOverride !== '') body.priorityOverride = Number(submitForm.priorityOverride);
+      if (priorityOverride !== undefined) body.priorityOverride = priorityOverride;
       const r = await api.executionSubmit(body);
       setSubmitResult(r);
       notify(r.mode === 'scheduled' ? '已入队（调度器派遣）' : '已直接启动（调度器未运行）');

@@ -28,8 +28,8 @@ export default function GovernancePanel({ notify, requestConfirm }) {
   // 撤销 API Key / 删除凭据引用确认后永远静默 return（按钮点了没反应）。
   // 改为 callback 桥接：有 requestConfirm 走应用内确认弹窗；否则回退原生 confirm
   // （仅组件单测/独立渲染场景可达，正常 App 挂载恒走应用内弹窗）。
-  const confirmIt = (msg, onConfirm) => {
-    if (requestConfirm) requestConfirm(msg, onConfirm);
+  const confirmIt = (msg, onConfirm, okLabel) => {
+    if (requestConfirm) requestConfirm(msg, onConfirm, okLabel);
     else if (window.confirm(msg)) onConfirm();
   };
 
@@ -114,12 +114,13 @@ export default function GovernancePanel({ notify, requestConfirm }) {
   };
 
   const revokeKey = (k) => {
+    // C74：撤销 ≠ 删除 —— okLabel 第三参自定义确认按钮文案（此前硬编码「确认删除」误导）。
     confirmIt(`撤销 API Key「${k.name}」？使用该 Key 的客户端将立即失效（不可恢复）。`, async () => {
       setBusy(true);
       try { await api.revokeApiKey(k.id); notify('已撤销'); await loadKeys(); await loadAudit(); }
       catch (e) { notify(e.message, false); }
       finally { setBusy(false); }
-    });
+    }, '确认撤销');
   };
 
   const exportAudit = async () => {
