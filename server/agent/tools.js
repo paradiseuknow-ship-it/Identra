@@ -62,12 +62,8 @@ function assertPageAlive(page) {
     err.code = 'BROWSER_CONTEXT_LOST';
     throw err;
   }
-  // session 已从 browserManager 移除（disconnected 守卫会 delete）→ 视为失效
-  try {
-    const sess = page && page._browser && page._browser._userDataDir
-      ? null // 不可靠，跳过
-      : null;
-  } catch (e) {}
+  // C71 D3：原此处有一段不可靠 session 探测死代码（const sess = ... 求值后即弃），
+  // 求值恒 null 且无副作用 —— 删除；session 失效检测由 disconnected 守卫在 browserManager 层负责。
   return true;
 }
 
@@ -267,7 +263,13 @@ async function execute(input) {
       obs.fresh = true; // 动作完成后立即采集，确为 fresh
     }
   };
-  _enrich(toolOut.beforeObservation, 'before_action');
+  // C71 D4：inspect/开合标签类工具把同一 observation 对象同时作为 before/after 返回
+  //（同引用）。此时 before enrich 会先写入 source='before_action'，随后 after enrich 的
+  // `obs.source || 'after_action'` 不再覆盖 —— 最终血缘矛盾（source=before_action 但 fresh=true）。
+  // 同引用时只做 after enrich（该对象本质就是动作后的 fresh 观察）。
+  if (toolOut.beforeObservation && toolOut.beforeObservation !== observationRes) {
+    _enrich(toolOut.beforeObservation, 'before_action');
+  }
   _enrich(observationRes, 'after_action');
   toolOut.finishedAt = (observationRes && (observationRes.capturedAt || observationRes.timestamp)) || Date.now();
 
@@ -652,10 +654,17 @@ async function runTool(action, resolved, meta) {
       try { fs.mkdirSync(downloadDir, { recursive: true }); } catch (e) {}
       const timeout = Math.min(action.timeoutMs || 30000, TOOL_OP_TIMEOUT_MS);
       const downloadEvent = page.waitForEvent('download', { timeout });
+      // C71 D2（B 类）：入口抛错守卫 —— 若外层 withBrowserOp('download.wait') 在入口就被
+      // 拒绝（任务 CANCELLED / 页面已死），下方 taskFn 永不执行 → Promise.all 从未创建，
+      // 这两个 promise 成浮动拒绝（Node 15+ unhandledRejection 默认崩溃整个 server 进程）。
+      // 此处只挂「观察者 catch」打标已处理；原 promise 传入 Promise.all 的语义不变
+      //（Promise.all 仍会收到真实拒绝并走 DOWNLOAD_FAILED 错误路径）。
+      downloadEvent.catch(() => {});
       const trigger = withBrowserOp('download.trigger', page, meta.taskId, () => {
         if (sel.selector.indexOf(' >> ') >= 0) return makeLocator(page, sel.selector).click();
         return browserManager.humanClick(page, sel.selector, {});
       });
+      trigger.catch(() => {});
       let download;
       try {
         [ download ] = await withBrowserOp('download.wait', page, meta.taskId, () => Promise.all([downloadEvent, trigger]));
@@ -666,6 +675,8 @@ async function runTool(action, resolved, meta) {
       try {
         const suggested = download.suggestedFilename ? download.suggestedFilename() : 'download';
         fileName = String(suggested).replace(/[^\w.\-]+/g, '_');
+        // C71 D5（hardening）：清洗后残留 '..' / '.' 会把 saveAs 指到下载目录外或目录本身
+        if (!fileName || fileName === '.' || fileName === '..') fileName = 'download-' + Date.now();
         filePath = path.join(downloadDir, fileName);
         await withBrowserOp('download.save', page, meta.taskId, () => download.saveAs(filePath));
       } catch (e) {
@@ -851,7 +862,10 @@ async function resolveFill(action, ctx) {
   const f = String(field).toLowerCase();
   if (f.includes('email')) return { value: s.email || null, kind: 'email', missingPaymentField: null };
   if (f.includes('password')) return { value: s.password || null, kind: 'password', missingPaymentField: null };
-  return { value: s.email || s.password || null, kind: null, missingPaymentField: null };
+  // C71 D1（B 类·凭据卫生）：非 email/password 字段绝不回退到密码 —— 只存密码无 email 的凭据
+  // 会把明文密码打进 username/phone 等 type=text 明文输入框（回显/浏览器自动保存/页面脚本皆可读取）。
+  // 未知字段只回退 email（用户名语义的安全上界）；密码唯一出口 = field 含 'password'。
+  return { value: s.email || null, kind: null, missingPaymentField: null };
 }
 
 // v0.2.3（Engineering Phase P1）：凭据不可用诊断（绝不打印明文/敏感信息）。
