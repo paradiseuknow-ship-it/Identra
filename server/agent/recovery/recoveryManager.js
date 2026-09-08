@@ -183,7 +183,6 @@ function scanStaleTasks(staleMs) {
     const last = t.lastActivityAt || t.startedAt || t.createdAt || 0;
     const age = now - last;
     if (age <= ms) continue;
-    if (t.status === 'RUNNING' && age <= ms) continue; // 双保险（已在上面判断）
     try {
       taskManager.recover(t.id);
       recovered.push({ id: t.id, status: t.status, ageMs: age });

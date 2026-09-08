@@ -50,7 +50,9 @@ function classify(error, ctx = {}) {
     evidence.push('导航失败: ' + msg.slice(0, 80));
     return result('NAVIGATION_FAILED', MED);
   }
-  if (/403|forbidden|access denied/i.test(msg) || /403|forbidden/i.test(url)) {
+  // C76 D2：403 匹配收紧为独立 token（\b403\b）——URL 路径/参数中任意含「403」的数字
+  // 子串（/item/40321、?price=1403）此前都会被误分类为 NAVIGATION_FAILED。
+  if (/\b403\b|forbidden|access denied/i.test(msg) || /\b403\b|forbidden/i.test(url)) {
     evidence.push('服务端返回禁止访问');
     return result('NAVIGATION_FAILED', LOW);
   }

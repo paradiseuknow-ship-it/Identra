@@ -10,6 +10,11 @@ const STRATEGY_MAP = {
   PAGE_NOT_READY: 'timeout',
   NETWORK_ERROR: 'timeout',
   NAVIGATION_FAILED: 'navigation',
+  // C76 D1：SERVER_ERROR（5xx）此前未映射 → resolve 返回 null → runtime 只退避重试
+  // 原动作，永远拿不到 timeout 策略的 wait/waitLong/reload 序列（recoveryManager 注释
+  // 自述 waitLong 为「限流/5xx/异步一致性」设计，却路由不到 5xx，自相矛盾）。
+  // 与 NETWORK_ERROR 同路（等待+重载），亦与 repairPlanner 的 SERVER_ERROR 映射对齐。
+  SERVER_ERROR: 'timeout',
   VERIFICATION_FAILED: 'verify',
   BROWSER_CRASH: 'relaunch',
   CREDENTIAL_MISSING: null,   // 不可自动恢复

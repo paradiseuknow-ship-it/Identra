@@ -27,11 +27,19 @@ const elementChanged = require('./elementChanged');
 const _verifyFailCount = new Map();
 
 // 提交结果落点是否明确指向错误页（供 SUBMIT_RESULT_UNKNOWN 分支判别）。
+// C76 D3：收紧判定——旧版在页面全文上跑 /(error|failed|invalid|...|500)/i，正常页面的
+// footer/导航（"Report error"）、价格数字（500）都会命中，把「结果未知」误判为「明确
+// 错误页」→ 违反本分支「绝不盲目重提交」红线，对非敏感动作重执行提交（重复下单/发帖风险）。
+// 收紧后只在强信号上判错误页：结构化 errors 数组、URL 错误路径段、文本中的独立状态码
+// token 或明确拒绝短语；弱信号一律走「不确定 → 升级人工」（安全侧）。
 function looksLikeErrorPage(obs) {
   if (!obs) return false;
   if (Array.isArray(obs.errors) && obs.errors.length) return true;
-  const t = ((obs.visibleText || obs.textSummary || '') + ' ' + (obs.url || '')).toLowerCase();
-  return /(error|failed|invalid|forbidden|denied|try again|captcha|oops|exception|404|500|错误|失败|无效)/i.test(t);
+  const u = String(obs.url || '');
+  if (/\/(error|errors|403|404|429|500|502|503)(\/|\?|$)/i.test(u) || /\b(code|status)=(403|404|429|500|502|503)\b/i.test(u)) return true;
+  const t = String(obs.visibleText || obs.textSummary || '').toLowerCase();
+  if (/\b(403|404|429|500|502|503)\b/.test(t)) return true;
+  return /(access denied|forbidden|请求被拒绝|已被注册|already exists|已存在|操作失败|提交失败)/i.test(t);
 }
 
 // 凭证/支付/登录类动作（需人工，不可自动重规划）
@@ -46,6 +54,8 @@ function isCredentialAction(step) {
 }
 
 // Plan 是否已过期（需 REPLAN）：连续 DOM_CHANGED / ACTION_REAL_FAILURE 且常规重定位/重试已失败。
+// C76 D4：REPLAN 触发后重置该 step 计数——新一轮修复从 0 计；旧版 Map 永不清理，
+// 任务恢复（recover）后同一 step 第二次 DOM_CHANGED 就会过早 REPLAN。
 function isStalePlan(step, ctx) {
   const e = ctx && ctx.error;
   if (e && e.stalePlan) return true;   // 测试/显式标记
@@ -54,7 +64,7 @@ function isStalePlan(step, ctx) {
   if (sid) {
     const n = (_verifyFailCount.get(sid) || 0) + 1;
     _verifyFailCount.set(sid, n);
-    if (n >= 2) return true;
+    if (n >= 2) { _verifyFailCount.delete(sid); return true; }
   }
   return false;
 }
