@@ -769,6 +769,8 @@ browserRouter.post('/browser/:id/navigate', async (req, res) => {
   if (!p) return res.status(404).json({ error: 'not found' });
   if (!guardProfile(res, req.identityUser, p, 'profile:use')) return;
   try {
+    // C83：会话驱动面审计（launch/stop 同族对齐；URL 截断防环形缓冲膨胀）
+    auditReq(req, 'browser.navigate', 'profile', p.id, { url: String(req.body.url || '').slice(0, 300) });
     await browserManager.navigate(req.params.id, req.body.url);
     res.json({ ok: true });
   } catch (e) {
@@ -793,6 +795,8 @@ browserRouter.post('/browser/:id/evaluate', async (req, res) => {
   try {
     const page = await browserManager.getPage(req.params.id);
     const script = String(req.body.script || '');
+    // C83：RCE 等价面必审计（只记长度，永不见脚本内容——凭据明文红线同族）
+    auditReq(req, 'browser.evaluate', 'profile', p.id, { scriptLen: script.length });
     const result = await page.evaluate((s) => {
       // eslint-disable-next-line no-new-func
       const fn = new Function('return (' + s + ')');
@@ -804,6 +808,9 @@ browserRouter.post('/browser/:id/evaluate', async (req, res) => {
   }
 });
 // 行为层：拟人化鼠标/键盘/滚动（对抗 Google reCAPTCHA / Cloudflare 行为审计）
+// C83 审计策略：click/type/search 是低频人工介入动作 → 逐次审计（只记长度，文本可能携带
+// vault 解密后的凭据，永不见内容——C81 红线同族）；move/scroll 高频流 → 不逐次审计
+//（环形缓冲会被单次拟人滚动冲刷掉关键安全事件），归为边界记录。
 // C65：五条 human-* 路由此前零 profile 检查（兄弟路由 navigate/screenshot/stream 全有守卫）
 // —— 跨工作区用户可驱动任意运行中会话。统一补 profile 存在性 + 归属守卫。
 browserRouter.post('/browser/:id/human-move', async (req, res) => {
@@ -825,6 +832,8 @@ browserRouter.post('/browser/:id/human-click', async (req, res) => {
   try {
     const page = await browserManager.getPage(req.params.id);
     await browserManager.humanClick(page, req.body.selector, req.body.options || {});
+    // C83：人工点击审计（selector 只记长度）
+    auditReq(req, 'browser.human_click', 'profile', p.id, { selectorLen: String(req.body.selector || '').length });
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -837,6 +846,8 @@ browserRouter.post('/browser/:id/human-type', async (req, res) => {
   try {
     const page = await browserManager.getPage(req.params.id);
     await browserManager.humanType(page, req.body.selector, req.body.text, req.body.options || {});
+    // C83：人工输入审计（text 可能是 vault 解密凭据 → 只记长度）
+    auditReq(req, 'browser.human_type', 'profile', p.id, { selectorLen: String(req.body.selector || '').length, textLen: String(req.body.text || '').length });
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -893,6 +904,8 @@ browserRouter.post('/browser/:id/human-google-search', async (req, res) => {
     await browserManager.humanClick(page, 'textarea[name="q"], input[name="q"]');
     await browserManager.humanType(page, 'textarea[name="q"], input[name="q"]', req.body.query || 'fingerprint browser', { baseDelay: 50, randomDelay: 120 });
     await page.keyboard.press('Enter');
+    // C83：人工搜索审计（query 只记长度）
+    auditReq(req, 'browser.human_search', 'profile', p.id, { queryLen: String(req.body.query || '').length });
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e) });
@@ -1152,8 +1165,12 @@ automationRouter.post('/automation/run', async (req, res) => {
   // 否则请求悬挂至客户端超时（UI 零反馈死等）。
   try {
     const result = await runWorkflow(p, steps, { vars: opts?.vars, freshPage: opts?.freshPage !== false });
+    // C83：业务关键 mutation 必审计（注册/下单工作流的完整执行轨迹；launch 有审计而 run 无 = 审计链断裂）
+    auditReq(req, 'automation.run', 'profile', p.id, { taskId: taskId || null, stepCount: steps.length });
     res.json(result);
   } catch (e) {
+    // C83：失败路径同样落审计（人工排查/合规取证两侧都要）
+    auditReq(req, 'automation.run.fail', 'profile', p.id, { taskId: taskId || null, stepCount: steps ? steps.length : 0, reason: String(e.message || e).slice(0, 200) });
     res.status(e.status || 500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
   }
 });
@@ -1177,7 +1194,10 @@ cookieRouter.get('/cookies/:id/export', async (req, res) => {
   try {
     const s = browserManager.getSession(req.params.id);
     if (!s) return res.status(409).json({ error: 'profile 未运行' });
-    res.json(await s.context.cookies());
+    // C83：会话凭据出站面必审计（export = 完整 cookie exfil 面，含登录态；只记数量永不记内容）
+    const cookies = await s.context.cookies();
+    auditReq(req, 'cookie.export', 'profile', p.id, { count: cookies.length });
+    res.json(cookies);
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e) });
   }
@@ -1192,6 +1212,8 @@ cookieRouter.post('/cookies/:id/import', async (req, res) => {
     const s = browserManager.getSession(req.params.id);
     if (!s) return res.status(409).json({ error: 'profile 未运行' });
     await s.context.addCookies(cookies);
+    // C83：会话认证态注入面必审计（登录态置换 = 安全敏感操作；只记数量）
+    auditReq(req, 'cookie.import', 'profile', p.id, { count: cookies.length });
     res.json({ ok: true, count: cookies.length });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e) });
