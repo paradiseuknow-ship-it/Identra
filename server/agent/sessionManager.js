@@ -8,7 +8,7 @@ const store = require('./store');
 
 function uid(p) { return p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
-function createSession({ userMessage, context } = {}) {
+function createSession({ userMessage, context, workspaceId, createdBy } = {}) {
   const session = {
     id: uid('session_'),
     userMessages: userMessage ? [{ role: 'user', content: String(userMessage).slice(0, 2000), timestamp: Date.now() }] : [],
@@ -17,6 +17,10 @@ function createSession({ userMessage, context } = {}) {
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
+  // C79：归属章（可选传入；由路由层从身份层取，模块不感知身份）。有章 = workspace-scoped
+  // 资源（GET /sessions 按工作区过滤、/chat 复用时守卫）；无章 = legacy → 仅 local 用户可见。
+  if (workspaceId) session.workspaceId = workspaceId;
+  if (createdBy) session.createdBy = createdBy;
   store.insert('aiSessions', session);
   return session;
 }

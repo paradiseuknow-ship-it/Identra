@@ -63,10 +63,13 @@ function guardAiTask(req, res, t) {
   }
 }
 // 取任务并守卫。任务不存在 → 返回 null（调用方保持各自原有 404/抛错语义，此处不代答）。
-function aiTaskGuarded(req, res) {
-  const t = taskManager.getTask(req.params.id);
+function aiTaskGuardedBy(req, res, id) {
+  const t = taskManager.getTask(id);
   if (t && !guardAiTask(req, res, t)) return false;
   return t || null;
+}
+function aiTaskGuarded(req, res) {
+  return aiTaskGuardedBy(req, res, req.params.id);
 }
 
 // ---------------- Task ----------------
@@ -432,6 +435,9 @@ router.get('/observability/metrics', (req, res) => {
   catch (e) { res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
 });
 router.get('/observability/trace/:taskId', (req, res) => {
+  // C79：执行轨迹含完整 steps/observations（动作序列+页面内容），是任务级证据——
+  // C65 补守卫时漏了这条读取面，跨工作区可读他人任务轨迹。与任务路由同地板 task:read。
+  if (aiTaskGuardedBy(req, res, req.params.taskId) === false) return;
   try {
     const t = observability.trace(req.params.taskId);
     if (!t) return res.status(404).json({ ok: false, error: 'task 不存在' });
@@ -471,7 +477,19 @@ router.post('/chat', async (req, res) => {
 
     // 1) Session（复用或新建）
     let session = sessionId ? sessionManager.getSession(sessionId) : null;
-    if (!session) session = sessionManager.createSession({ userMessage: message, context: { profileId: profileId || '' } });
+    // C79：复用他人 session = 跨工作区读写他人对话内容（与 GET /sessions 列表同族缺口）。
+    // 有归属章的 session 按 task:read 地板守卫（与 C65 AI 任务地板一致）；legacy 无章 session
+    // 不代答，维持既有行为。
+    if (session && session.workspaceId && !guardAiTask(req, res, session)) return;
+    if (!session) {
+      session = sessionManager.createSession({
+        userMessage: message,
+        context: { profileId: profileId || '' },
+        // CAP-O1 §10 同款：归属章由身份层提供，不接受调用方伪造
+        workspaceId: req.identityUser ? req.identityUser.currentWorkspaceId : undefined,
+        createdBy: req.identityUser ? req.identityUser.id : undefined,
+      });
+    }
     else sessionManager.addMessage(session.id, 'user', message);
 
     // 2) Parser → 结构化任务输入
@@ -562,7 +580,9 @@ router.post('/chat', async (req, res) => {
   }
 });
 
-router.get('/sessions', (req, res) => res.json(sessionManager.listSessions()));
+// C79：session 携带用户聊天明文（每条至多 4000 字符）+ 挂载任务 id——按 workspace 过滤，
+// 与 /tasks 列表同语义。legacy 无归属章 session（历史数据）→ 仅 local 用户可见（identity 层规则）。
+router.get('/sessions', (req, res) => res.json(identity.filterByWorkspace(sessionManager.listSessions(), req.identityUser)));
 
 // ---------------- LLM Cost Dashboard（Phase 1.4）----------------
 // 价格估算（USD / 1M tokens），仅统计用；成本字段默认 0 由 recorder 记录
@@ -612,6 +632,10 @@ router.get('/tasks/:id/snapshots', (req, res) => {
 });
 
 router.get('/snapshots/:taskId/:file', (req, res) => {
+  // C79：文件证据（截图）与列表路由 /tasks/:id/snapshots 同归属语义——C65 补守卫时
+  // 只补了列表面，漏了文件下载面（跨工作区可读他人任务截图证据）。任务存在且不归属
+  // 当前工作区 → 403；无归属章的遗留快照目录保持可读（C65 已记录边界）。
+  if (aiTaskGuardedBy(req, res, req.params.taskId) === false) return;
   let f;
   try {
     f = evidence.filePath(req.params.taskId, req.params.file);
