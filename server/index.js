@@ -673,7 +673,9 @@ browserRouter.post('/browser/:id/stop', async (req, res) => {
   res.json({ ok: true, running: false });
 });
 browserRouter.get('/browser/status', (req, res) => {
-  const all = db.getProfiles().map((p) => ({ id: p.id, running: browserManager.isRunning(p.id) }));
+  // C65：workspace 过滤（此前回显全部 profile 的 id+running 状态 = 跨工作区存在性泄漏）
+  const all = identity.filterByWorkspace(db.getProfiles(), req.identityUser)
+    .map((p) => ({ id: p.id, running: browserManager.isRunning(p.id) }));
   res.json(all);
 });
 // 网页"云查看"：当前页面截图（base64）
@@ -746,6 +748,11 @@ browserRouter.post('/browser/:id/navigate', async (req, res) => {
 // 在当前页面执行一段 JS（STEP 0.5 §2.3：默认关闭，需 FPB_ALLOW_EVALUATE=1）。
 // 此端点等价于对浏览器会话的无鉴权远程代码执行（new Function），不得默认可用。
 browserRouter.post('/browser/:id/evaluate', async (req, res) => {
+  // C65：归属守卫补齐（此前 evaluate 绕过 profile 存在性/归属检查，开启 FPB_ALLOW_EVALUATE 时
+  // 等于跨工作区任意代码执行；守卫在开关判断之前，身份不过关不暴露端点状态）
+  const p = db.getProfile(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  if (!guardProfile(res, req.identityUser, p, 'profile:use')) return;
   if (!EVALUATE_ENABLED) {
     return res.status(403).json({
       ok: false,
@@ -767,7 +774,12 @@ browserRouter.post('/browser/:id/evaluate', async (req, res) => {
   }
 });
 // 行为层：拟人化鼠标/键盘/滚动（对抗 Google reCAPTCHA / Cloudflare 行为审计）
+// C65：五条 human-* 路由此前零 profile 检查（兄弟路由 navigate/screenshot/stream 全有守卫）
+// —— 跨工作区用户可驱动任意运行中会话。统一补 profile 存在性 + 归属守卫。
 browserRouter.post('/browser/:id/human-move', async (req, res) => {
+  const p = db.getProfile(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  if (!guardProfile(res, req.identityUser, p, 'profile:use')) return;
   try {
     const page = await browserManager.getPage(req.params.id);
     await browserManager.humanMove(page, Number(req.body.x), Number(req.body.y), req.body.options || {});
@@ -777,6 +789,9 @@ browserRouter.post('/browser/:id/human-move', async (req, res) => {
   }
 });
 browserRouter.post('/browser/:id/human-click', async (req, res) => {
+  const p = db.getProfile(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  if (!guardProfile(res, req.identityUser, p, 'profile:use')) return;
   try {
     const page = await browserManager.getPage(req.params.id);
     await browserManager.humanClick(page, req.body.selector, req.body.options || {});
@@ -786,6 +801,9 @@ browserRouter.post('/browser/:id/human-click', async (req, res) => {
   }
 });
 browserRouter.post('/browser/:id/human-type', async (req, res) => {
+  const p = db.getProfile(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  if (!guardProfile(res, req.identityUser, p, 'profile:use')) return;
   try {
     const page = await browserManager.getPage(req.params.id);
     await browserManager.humanType(page, req.body.selector, req.body.text, req.body.options || {});
@@ -795,6 +813,9 @@ browserRouter.post('/browser/:id/human-type', async (req, res) => {
   }
 });
 browserRouter.post('/browser/:id/human-scroll', async (req, res) => {
+  const p = db.getProfile(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  if (!guardProfile(res, req.identityUser, p, 'profile:use')) return;
   try {
     const page = await browserManager.getPage(req.params.id);
     await browserManager.humanScroll(page, Number(req.body.deltaY) || 300, req.body.options || {});
@@ -806,6 +827,9 @@ browserRouter.post('/browser/:id/human-scroll', async (req, res) => {
 // 一键拟人 Google 搜索：先处理 EU Cookie 同意 -> 聚焦搜索框 -> 输入 -> 回车
 // 用于验证“指纹+网络+行为”三层对齐后，Google 是否仍弹 reCAPTCHA。
 browserRouter.post('/browser/:id/human-google-search', async (req, res) => {
+  const p = db.getProfile(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  if (!guardProfile(res, req.identityUser, p, 'profile:use')) return; // C65：归属守卫补齐
   try {
     const page = await browserManager.getPage(req.params.id);
     await page.goto('https://www.google.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
@@ -1051,12 +1075,18 @@ taskRouter.delete('/tasks/:id', (req, res) => {
 
 // 兼容别名：AI 任务生命周期也暴露到 /api/tasks/:id/*（与 /api/ai/tasks/:id/* 等价），
 // 避免客户端按列表路径调用 404（Phase 12B § API2）。仅代理 AI TaskManager，不影响遗留自动化工作流。
+// C65：补归属守卫（任务存在时校验 workspace 归属，与 /api/ai 原生路由同地板 task:read；
+// 任务不存在时保持原语义 —— fn 内部抛错 → 400，不在此处新增 404 改变既有契约）。
 (() => {
   let aiTaskManager;
   try { aiTaskManager = require('./agent/taskManager'); } catch (e) { aiTaskManager = null; }
   if (!aiTaskManager) return;
   const proxy = (fn) => (req, res) => {
-    try { res.json(fn(req.params.id, req.body || {})); }
+    try {
+      const t = aiTaskManager.getTask(req.params.id);
+      if (t && !guardResource(res, req.identityUser, t, 'task:read')) return;
+      res.json(fn(req.params.id, req.body || {}));
+    }
     catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) }); }
   };
   taskRouter.post('/tasks/:id/start', proxy((id) => { const r = aiTaskManager.start(id); return { task: r.task, executionId: r.execution.id }; }));
@@ -1084,10 +1114,7 @@ automationRouter.post('/automation/run', async (req, res) => {
       : (task.type === 'registration' ? registrationTemplate(task.config)
         : task.type === 'checkout' ? checkoutTemplate(task.config) : []);
   }
-  if (taskId && !rawSteps) {
-    const task = db.getTask(taskId);
-    if (task) { p.id = profileId; /* keep */ }
-  }
+  // C65：删除原死代码块（taskId 二次重查 + 对 p.id 的恒等无操作赋值 —— p 本就来自 getProfile(profileId)）
   if (!steps || !steps.length) return res.status(400).json({ error: 'no steps' });
 
   const result = await runWorkflow(p, steps, { vars: opts?.vars, freshPage: opts?.freshPage !== false });
@@ -1103,24 +1130,35 @@ automationRouter.post('/automation/preview', (req, res) => {
 });
 
 // 简单 Cookie 导入/导出（需该 profile 浏览器正在运行）
+// C65：两路由此前零 try/catch（Express 4 不接 async rejection → 恶意/异常输入挂起请求直至超时）；
+// import 还不校验数组类型（addCookies(undefined) 必然抛错）。改为先校验后执行 + 失败回 400 JSON。
 const cookieRouter = express.Router();
 cookieRouter.get('/cookies/:id/export', async (req, res) => {
   const p = db.getProfile(req.params.id);
   if (!p) return res.status(404).json({ error: 'not found' });
   if (!guardProfile(res, req.identityUser, p, 'profile:use')) return; // CAP-O2
-  const s = browserManager.getSession(req.params.id);
-  if (!s) return res.status(409).json({ error: 'profile 未运行' });
-  res.json(await s.context.cookies());
+  try {
+    const s = browserManager.getSession(req.params.id);
+    if (!s) return res.status(409).json({ error: 'profile 未运行' });
+    res.json(await s.context.cookies());
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e.message || e) });
+  }
 });
 cookieRouter.post('/cookies/:id/import', async (req, res) => {
   const p = db.getProfile(req.params.id);
   if (!p) return res.status(404).json({ error: 'not found' });
   if (!guardProfile(res, req.identityUser, p, 'profile:use')) return; // CAP-O2
-  const s = browserManager.getSession(req.params.id);
-  if (!s) return res.status(409).json({ error: 'profile 未运行' });
-  const cookies = Array.isArray(req.body) ? req.body : req.body.cookies;
-  await s.context.addCookies(cookies);
-  res.json({ ok: true, count: cookies.length });
+  const cookies = Array.isArray(req.body) ? req.body : (req.body && req.body.cookies);
+  if (!Array.isArray(cookies)) return res.status(400).json({ ok: false, error: 'cookies 必须是数组' });
+  try {
+    const s = browserManager.getSession(req.params.id);
+    if (!s) return res.status(409).json({ error: 'profile 未运行' });
+    await s.context.addCookies(cookies);
+    res.json({ ok: true, count: cookies.length });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e.message || e) });
+  }
 });
 
 // STEP 0.5 §2.1：所有业务 API 之前插入身份边界。静态前端与 SPA fallback 不在此列。

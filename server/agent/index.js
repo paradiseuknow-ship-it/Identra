@@ -49,6 +49,26 @@ setImmediate(() => {
 
 const router = express.Router();
 
+// C65：AI 任务是 workspace-scoped 资源（创建时 CAP-O1 §10 盖章 workspaceId），但此前
+// 生命周期/读取路由全部零归属守卫——跨工作区用户可读取并控制他人任务（与遗留 taskRouter
+// 的 guardResource 纪律矛盾）。守卫地板 = task:read（只做工作区隔离，不改变工作区内既有
+// 权限语义）；legacy 任务（无 workspaceId）走 identity 层规则 = 仅 local 用户可见。
+function guardAiTask(req, res, t) {
+  try {
+    identity.assertCanAccessResource(req.identityUser, t, 'task:read');
+    return true;
+  } catch (e) {
+    res.status(e.status || 403).json({ ok: false, error: e.status === 401 ? 'UNAUTHORIZED' : String(e.message || e) });
+    return false;
+  }
+}
+// 取任务并守卫。任务不存在 → 返回 null（调用方保持各自原有 404/抛错语义，此处不代答）。
+function aiTaskGuarded(req, res) {
+  const t = taskManager.getTask(req.params.id);
+  if (t && !guardAiTask(req, res, t)) return false;
+  return t || null;
+}
+
 // ---------------- Task ----------------
 router.post('/tasks', (req, res) => {
   try {
@@ -69,16 +89,18 @@ router.post('/tasks', (req, res) => {
 });
 
 router.get('/tasks', (req, res) => {
-  res.json(taskManager.listTasks());
+  res.json(identity.filterByWorkspace(taskManager.listTasks(), req.identityUser)); // C65：workspace 过滤
 });
 
 router.get('/tasks/:id', (req, res) => {
   const t = taskManager.getTask(req.params.id);
   if (!t) return res.status(404).json({ error: 'not found' });
+  if (!guardAiTask(req, res, t)) return; // C65
   res.json(t);
 });
 
 router.post('/tasks/:id/start', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65
   try {
     const r = taskManager.start(req.params.id);
     res.json({ ok: true, task: r.task, executionId: r.execution.id });
@@ -88,6 +110,7 @@ router.post('/tasks/:id/start', (req, res) => {
 });
 
 router.post('/tasks/:id/cancel', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65
   try {
     res.json(taskManager.cancel(req.params.id));
   } catch (e) {
@@ -96,6 +119,7 @@ router.post('/tasks/:id/cancel', (req, res) => {
 });
 
 router.post('/tasks/:id/resume', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65
   try {
     res.json(taskManager.resume(req.params.id));
   } catch (e) {
@@ -104,6 +128,7 @@ router.post('/tasks/:id/resume', (req, res) => {
 });
 
 router.post('/tasks/:id/pause', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65
   try {
     const reason = (req.body && req.body.reason) || 'manual pause';
     const t = taskManager.pauseForHuman(req.params.id, reason, { manual: true });
@@ -114,6 +139,7 @@ router.post('/tasks/:id/pause', (req, res) => {
 });
 
 router.post('/tasks/:id/retry', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65
   try {
     const r = taskManager.retry(req.params.id);
     res.json({ ok: true, task: r.task, executionId: r.execution.id });
@@ -123,6 +149,7 @@ router.post('/tasks/:id/retry', (req, res) => {
 });
 
 router.delete('/tasks/:id', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65
   try {
     res.json(taskManager.deleteTask(req.params.id));
   } catch (e) {
@@ -134,6 +161,7 @@ router.delete('/tasks/:id', (req, res) => {
 router.get('/tasks/:id/execution', (req, res) => {
   const t = taskManager.getTask(req.params.id);
   if (!t) return res.status(404).json({ error: 'not found' });
+  if (!guardAiTask(req, res, t)) return; // C65
   if (!t.currentExecutionId) return res.json(null);
   res.json(recorder.get(t.currentExecutionId));
 });
@@ -141,6 +169,7 @@ router.get('/tasks/:id/execution', (req, res) => {
 router.get('/tasks/:id/diagnosis', (req, res) => {
   const t = taskManager.getTask(req.params.id);
   if (!t) return res.status(404).json({ error: 'not found' });
+  if (!guardAiTask(req, res, t)) return; // C65
   // Phase 2.2：返回最后的结构化诊断（含 FailureSnapshot 引用）
   const snapshots = (() => { try { return require('./recovery/failureSnapshot').listForTask(t.id); } catch (e) { return []; } })();
   res.json({
@@ -155,6 +184,7 @@ router.get('/tasks/:id/diagnosis', (req, res) => {
 router.get('/tasks/:id/replay', (req, res) => {
   const t = taskManager.getTask(req.params.id);
   if (!t) return res.status(404).json({ error: 'not found' });
+  if (!guardAiTask(req, res, t)) return; // C65
   res.json(require('./recovery/replay').buildTaskReplay(t));
 });
 
@@ -162,6 +192,7 @@ router.get('/tasks/:id/replay', (req, res) => {
 router.get('/tasks/:id/repairs', (req, res) => {
   const t = taskManager.getTask(req.params.id);
   if (!t) return res.status(404).json({ error: 'not found' });
+  if (!guardAiTask(req, res, t)) return; // C65
   const ra = require('./repair/repairAttempts');
   res.json({ repairs: ra.listForTask(t.id), stats: ra.statsByStrategy() });
 });
@@ -315,6 +346,7 @@ router.post('/execution/submit', (req, res) => {
 
 // 手动恢复（进程重启后 / 崩溃后调用）
 router.post('/tasks/:id/recover', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65
   try { res.json(taskManager.recover(req.params.id)); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
 });
 
@@ -570,6 +602,7 @@ router.get('/llm/stats', (req, res) => {
 
 // ---------------- Snapshot（Phase 1.4）----------------
 router.get('/tasks/:id/snapshots', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65（库外遗留快照目录无归属章，走 identity legacy 规则之外的部分为记录边界）
   try {
     res.json(evidence.listForTask(req.params.id));
   } catch (e) {
@@ -591,12 +624,15 @@ router.get('/snapshots/:taskId/:file', (req, res) => {
 
 // ---------------- Approval（Phase 1.4）----------------
 router.post('/tasks/:id/approve', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65
   try { res.json(taskManager.approve(req.params.id)); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
 });
 router.post('/tasks/:id/reject', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65
   try { res.json(taskManager.reject(req.params.id)); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
 });
 router.post('/tasks/:id/modify', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65
   try { res.json(taskManager.modify(req.params.id, req.body || {})); } catch (e) { res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 200) }); }
 });
 
@@ -625,10 +661,12 @@ router.get('/events', (req, res) => {
 });
 
 router.get('/tasks/:id/events', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65：任务事件流同样按归属隔离
   handleSse(req, res, { taskId: req.params.id });
 });
 
 router.get('/tasks/:id/recent-events', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65
   res.json(events.recent(req.params.id, Number(req.query.limit) || 200));
 });
 
