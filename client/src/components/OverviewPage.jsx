@@ -34,8 +34,10 @@ export default function OverviewPage({ profiles, readiness, onNewTask, onNavigat
   const todayCount = tasks.filter(isToday).length;
   const attention = paused.length + failed.length;
 
+  // createdAt 可能是 ISO 字符串或数字时间戳（服务端形状未契约化）——统一 String 归一后再比较，
+  // 否则数字类型调 localeCompare 直接 TypeError（C88 实录：整页 ErrorBoundary 兜底）。
   const recent = [...tasks]
-    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
     .slice(0, 7);
 
   // Browser Profiles 分组：group 字段聚合，运行态计数
