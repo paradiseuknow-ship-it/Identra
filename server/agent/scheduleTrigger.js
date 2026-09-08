@@ -21,6 +21,7 @@ const store = require('./store');
 const events = require('./events');
 const taskManager = require('./taskManager');
 const identity = require('../identity');
+const audit = require('../audit'); // C85：与 C84 aiAudit 同源（audit.logRequest 共享原语，唯一事实源）
 const { cronNext } = require('./cronExpr'); // C21：cron 模式（可选，优先于 intervalMs）
 
 const MIN_INTERVAL_MS = 1000;       // 理论下限；产品建议 >= 60s
@@ -285,6 +286,10 @@ function stopTriggerLoop() {
 }
 
 // ---- HTTP 路由（挂 /api/ai/schedules；req.identityUser 由全局 identityResolver 提供） ----
+// C85 审计口径（C84 意图归因同款）：审计只记「谁在何时对哪个 schedule 做了什么」，
+// 运行细节归 events（schedule.* 事件流）/ trace 不重复；tick 自动触发是高频自动化事件
+// → 不逐次审计（环形缓冲冲刷边界，events.emit('schedule.triggered') 已覆盖），仅手动
+// trigger（用户意图）落审计；detail 只记标识/数量（凭据明文红线，redact 兜底第二层）。
 const router = require('express').Router();
 router.use((req, res, next) => { req._user = req.identityUser; next(); });
 
@@ -294,7 +299,14 @@ function _send(res, fn) {
 }
 
 router.post('/', (req, res) => {
-  _send(res, () => ({ ok: true, schedule: createSchedule(req.body || {}, req._user) }));
+  _send(res, () => {
+    const s = createSchedule(req.body || {}, req._user);
+    // C85：意图审计（校验失败 400 不落 —— 无实体产生即无意图实现）
+    audit.logRequest(req, 'ai.schedule.create', 'ai_schedule', s.id, {
+      name: s.name, profileCount: s.profileIds.length, cron: !!s.cron, intervalMs: s.intervalMs || null, autoStart: s.autoStart,
+    });
+    return { ok: true, schedule: s };
+  });
 });
 router.get('/', (req, res) => {
   _send(res, () => ({ ok: true, schedules: listSchedules(req._user) }));
@@ -308,13 +320,27 @@ router.get('/:id', (req, res) => {
   });
 });
 router.put('/:id', (req, res) => {
-  _send(res, () => ({ ok: true, schedule: updateSchedule(req.params.id, req.body || {}, req._user) }));
+  _send(res, () => {
+    const s = updateSchedule(req.params.id, req.body || {}, req._user);
+    audit.logRequest(req, 'ai.schedule.update', 'ai_schedule', s.id, { name: s.name, status: s.status }); // C85
+    return { ok: true, schedule: s };
+  });
 });
 router.delete('/:id', (req, res) => {
-  _send(res, () => ({ ok: true, deleted: deleteSchedule(req.params.id, req._user).id }));
+  _send(res, () => {
+    const s = deleteSchedule(req.params.id, req._user);
+    audit.logRequest(req, 'ai.schedule.delete', 'ai_schedule', s.id, { name: s.name }); // C85
+    return { ok: true, deleted: s.id };
+  });
 });
 router.post('/:id/trigger', (req, res) => {
-  _send(res, () => triggerOnce(req.params.id, req._user, 'manual'));
+  _send(res, () => {
+    const r = triggerOnce(req.params.id, req._user, 'manual');
+    audit.logRequest(req, 'ai.schedule.trigger', 'ai_schedule', r.scheduleId, {
+      taskCount: r.taskIds.length, errorCount: r.errors.length, runCount: r.runCount,
+    }); // C85：手动触发 = 用户意图；批量维度（profileIds 数）决定创建的任务数
+    return r;
+  });
 });
 
 module.exports = {
