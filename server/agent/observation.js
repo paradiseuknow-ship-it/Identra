@@ -340,6 +340,8 @@ const COLLECT_JS = `(() => {
         out.elements.push({
           id: el.id || null, role, tag, type, name: name || null,
           autocomplete: ac ? String(ac).trim().toLowerCase().slice(0, 60) : null,
+          // C105 M2：data-testid 站点自声明的测试权威身份（业界事实标准，稳定性高于构建哈希化 id）
+          testId: (el.getAttribute('data-testid') || el.getAttribute('data-test') || el.getAttribute('data-qa') || null),
           cls: (el.getAttribute('class') || '').trim().slice(0, 60) || null,
           text: redact(text).slice(0, 200),
           placeholder: ph ? redact(ph).slice(0, 100) : null,
@@ -372,8 +374,21 @@ const COLLECT_JS = `(() => {
         if (tag === 'a' || tag === 'button' || tag === 'summary' || roleAttr
             || tag === 'form' || tag === 'label' || tag === 'h1' || tag === 'h2' || tag === 'h3') {
           const box = bboxObj(el);
+          // C105 M2：testId 同输入分支；href 只存 pathname（剥 query/hash —— query 可携带
+          // token/session 等敏感参数不进上下文，pathname 已足够做 a[href*=] 结构接地）。
+          let hrefPath = null;
+          if (tag === 'a') {
+            try {
+              const raw = el.getAttribute('href') || '';
+              if (raw && !/^(javascript|mailto|tel):/i.test(raw)) {
+                hrefPath = new URL(raw, location.href).pathname || '/';
+              }
+            } catch (e) { hrefPath = null; }
+          }
           out.elements.push({
             id: el.id || null, role, tag, type: tag, name: null,
+            testId: (el.getAttribute('data-testid') || el.getAttribute('data-test') || el.getAttribute('data-qa') || null),
+            href: hrefPath,
             cls: (el.getAttribute('class') || '').trim().slice(0, 60) || null,
             text: redact(text).slice(0, 200),
             placeholder: null, label: null, ariaLabel: redact(el.getAttribute('aria-label') || '').slice(0, 100) || null,

@@ -103,21 +103,24 @@ function wordIncludes(haystack, needle) {
 // { semantic, text, attribute, fallback }。仅提升可观测性，**不改变选择算法/评分**。
 function canonicalMatchedBy(by) {
   if (by === 'semantic' || by === 'text') return by;
-  if (['id', 'name', 'aria', 'placeholder', 'label', 'cls', 'field'].includes(by)) return 'attribute';
+  if (['id', 'name', 'aria', 'placeholder', 'label', 'cls', 'field', 'testid'].includes(by)) return 'attribute';
   if (by === 'tag') return 'attribute'; // P1.2 bare-tag 属元素结构身份信号，与 id/name 同类
   if (['nearby_text', 'dom_relationship'].includes(by)) return 'text';
   if (['role', 'role-button'].includes(by)) return 'fallback';
   return 'fallback';
 }
 
-// Signal 1：field key 匹配元素的 name/id/placeholder/aria-label/label/cls。
+// Signal 1：field key 匹配元素的 testid/name/id/placeholder/aria-label/label/cls。
 // 权重分层（Phase 10.4）：field > aria/name > placeholder > label/cls；
+// C105 M2：data-testid 是站点自声明的「测试权威身份」（W3C 无关但业界事实标准），
+// 稳定性高于 id（id 常被构建工具哈希化），置于 TIER 顶层。
 // 同时记录 matchedBy，便于诊断"命中了哪个信号"。
 function scoreField(field, el) {
   if (!field) return { score: 0, reason: '', matchedBy: null };
   const f = normalize(field);
   const cands = [f, ...(FIELD_TOKENS[f] || [])].filter(Boolean);
   const ef = [
+    { v: el.testId, by: 'testid' },
     { v: el.id, by: 'id' },
     { v: el.name, by: 'name' },
     { v: el.ariaLabel, by: 'aria' },
@@ -125,7 +128,7 @@ function scoreField(field, el) {
     { v: el.label, by: 'label' },
     { v: el.cls, by: 'cls' },
   ].map((x) => ({ v: x.v ? normalize(x.v) : '', by: x.by }));
-  const TIER = { id: 1.0, name: 0.98, aria: 0.96, placeholder: 0.9, label: 0.85, cls: 0.8 };
+  const TIER = { testid: 1.0, id: 1.0, name: 0.98, aria: 0.96, placeholder: 0.9, label: 0.85, cls: 0.8 };
   let best = 0, reason = '', matchedBy = null;
   for (const c of cands) {
     if (!c) continue;
@@ -159,7 +162,8 @@ function scoreSemantic(semantic, el) {
 function scoreSemanticOnce(semantic, el) {
   if (!semantic) return { score: 0, reason: '', matchedBy: null };
   const text = el.text ? String(el.text) : '';
-  const pool = [text, el.placeholder, el.ariaLabel, el.label, el.innerText, el.roleText]
+  // C105 M2：testid 是站点自声明的测试权威身份，进语义匹配池（命中归 'semantic'）
+  const pool = [text, el.testId, el.placeholder, el.ariaLabel, el.label, el.innerText, el.roleText]
     .map((x) => (x ? String(x) : ''))
     .join(' ');
   const pn = normalize(pool);
@@ -326,7 +330,7 @@ function resolve(target, observation, opts = {}) {
       const sem = semantic || roleHint || '';
       if (el.role === 'button' && sem && /submit|continue|next|proceed|sign|login|search|agree|accept|cancel|登录|搜索|提交|继续|确认/i.test(sem)) {
         const semTokens = tokenize(sem);
-        const identity = [el.text, el.ariaLabel, el.id, el.cls, el.placeholder, el.label, el.innerText, el.roleText]
+        const identity = [el.text, el.ariaLabel, el.id, el.testId, el.cls, el.placeholder, el.label, el.innerText, el.roleText]
           .map((x) => (x ? String(x) : '')).join(' ');
         const idTokens = new Set(tokenize(identity));
         const lexical = semTokens.some((tk) => idTokens.has(tk));
@@ -408,7 +412,10 @@ function escapeCss(s) {
 }
 
 // 由元素生成可用的 CSS 选择器（Playwright 兼容）
+// C105 M2：testid 是构建工具哈希化 id 之外的稳定权威身份，优先级最高；
+// a[href] 是无文本锚点的结构身份兜底（相对路径截断，避免把 token query 写进 selector）。
 function selectorFor(el, index) {
+  if (el.testId) return '[data-testid="' + String(el.testId).replace(/"/g, '\\"') + '"]';
   if (el.id) return '#' + escapeCss(el.id);
   if (el.tag === 'input') {
     if (el.name) return 'input[name="' + String(el.name).replace(/"/g, '\\"') + '"]';
@@ -421,7 +428,11 @@ function selectorFor(el, index) {
     if (t) return 'text="' + t.slice(0, 30).replace(/"/g, '\\"') + '"';
     return 'button';
   }
-  if (el.tag === 'a' && el.text) return 'a:has-text("' + String(el.text).slice(0, 30).replace(/"/g, '\\"') + '")';
+  if (el.tag === 'a') {
+    if (el.text) return 'a:has-text("' + String(el.text).slice(0, 30).replace(/"/g, '\\"') + '")';
+    // href 存的是 pathname（observation 侧剥 query/hash，防 token 泄漏），用 *= 子串形态匹配
+    if (el.href) return 'a[href*="' + String(el.href).replace(/"/g, '\\"') + '"]';
+  }
   if (el.tag === 'textarea') return 'textarea';
   if (el.tag === 'select') return 'select';
   return '#' + escapeCss(el.id || 'el-' + index);
@@ -443,7 +454,12 @@ function selectorGrounded(selector, observation) {
   const idOnly = sel.match(/^#([A-Za-z0-9_-]+)$/);
   const nameOnly = sel.match(/^[a-z][a-z0-9-]*\[name=["']?([^\]"']+)["']?\]$/i);
   const textOnly = sel.match(/^(?:text=|a:has-text\()\s*["'](.+)["']\s*\)?$/);
+  // C105 M2：testid / href 形态快路（selectorFor 同源；href 为 *= 子串形态）
+  const testIdOnly = sel.match(/^\[data-testid=["']([^\]"']+)["']\]$/);
+  const hrefOnly = sel.match(/^a\[href\*?=["']([^\]"']+)["']\]$/);
   for (const el of elems) {
+    if (testIdOnly) { if (el.testId === testIdOnly[1]) return true; continue; }
+    if (hrefOnly) { if (el.tag === 'a' && el.href && String(el.href).indexOf(hrefOnly[1]) >= 0) return true; continue; }
     if (idOnly) { if (el.id === idOnly[1]) return true; continue; }
     if (nameOnly) { if (el.name === nameOnly[1]) return true; continue; }
     if (textOnly) {
@@ -471,7 +487,8 @@ function cssGroundedInObs(sel, el) {
   if (idM && el.id !== idM[1]) return false;
   if (!/\[/.test(sel)) return tagM ? true : false; // 纯 tag selector 已由 tagM 判定
   const attrRe = /\[([a-zA-Z-]+)(?:=["']?([^\]"']*)["']?)?\]/g;
-  const byAttr = { name: el.name, id: el.id, placeholder: el.placeholder, type: el.type, 'aria-label': el.ariaLabel };
+  // C105 M2：data-testid / href 进静态身份属性面（复合 CSS 粗接地）
+  const byAttr = { name: el.name, id: el.id, placeholder: el.placeholder, type: el.type, 'aria-label': el.ariaLabel, 'data-testid': el.testId, href: el.href };
   let m; let saw = false;
   while ((m = attrRe.exec(sel))) {
     saw = true;
