@@ -108,7 +108,8 @@ function verify(v, after, before) {
       return { success: ok, confidence: ok ? Math.min(0.95, 0.6 + cands[0].score * 0.4) : 0.7, evidence };
     }
     case 'element_absent': {
-      const cands = expect ? semanticResolver.resolve(expect, after) : [];
+      // C105 M3：同 element_present，存在性通道不施加可操作性否决。
+      const cands = expect ? semanticResolver.resolve(expect, after, { requireActionable: false }) : [];
       const ok = cands.length === 0;
       evidence.push(ok ? `元素 "${expect}" 不存在` : `元素 "${expect}" 仍存在`);
       return { success: ok, confidence: ok ? 0.85 : 0.6, evidence };

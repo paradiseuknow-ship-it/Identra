@@ -232,6 +232,23 @@ const COLLECT_JS = `(() => {
   };
   // 结构化包围盒（同时保留 bbox 兼容旧字段）
   const bboxObj = (el) => { const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; };
+  // C105 M3：中心点命中测试（hit-test）。语义评分只能回答「像不像目标」，回答不了
+  // 「此刻点不点得到」——被 overlay / cookie banner / sticky 层覆盖的按钮与正常按钮同分，
+  // 点下去打在遮挡层上：要么静默无效果，要么 30s 超时后走恢复链烧预算。
+  // 只判可交互元素（elementFromPoint 有布局成本，且只有动作目标需要这个信号）。
+  // 取值：clear（命中自身/自身后代/自身祖先）| occluded（中心被他元素覆盖）|
+  //       offscreen（中心在视口外，scroll 后仍可点，不做否决）| zero-area | unknown。
+  const occlusionOf = (el, box) => {
+    try {
+      if (!box || !(box.w > 0) || !(box.h > 0)) return 'zero-area';
+      const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+      if (cx < 0 || cy < 0 || cx > (window.innerWidth || 0) || cy > (window.innerHeight || 0)) return 'offscreen';
+      const hit = document.elementFromPoint(cx, cy);
+      if (!hit) return 'unknown';
+      if (hit === el || el.contains(hit) || hit.contains(el)) return 'clear';
+      return 'occluded';
+    } catch (e) { return 'unknown'; }
+  };
   // 为元素构造 CSS 选择器（主要用于 iframe 内元素定位）；主文档元素不强制带 selector。
   const cssFor = (el) => {
     const tag = el.tagName.toLowerCase();
@@ -337,7 +354,11 @@ const COLLECT_JS = `(() => {
         const ac = el.getAttribute('autocomplete') || '';
         text = [lbl, ph, aria, name].filter(Boolean).join(' | ');
         const box = bboxObj(el);
+        const hit = occlusionOf(el, box);
         out.elements.push({
+          // C105 M3：hit-test 三字段（occluded 是 semanticResolver F8 的否决开关；
+          // hitTest 原始取值保留供诊断 —— offscreen/unknown 一律不否决）
+          hitTest: hit, occluded: hit === 'occluded',
           id: el.id || null, role, tag, type, name: name || null,
           autocomplete: ac ? String(ac).trim().toLowerCase().slice(0, 60) : null,
           // C105 M2：data-testid 站点自声明的测试权威身份（业界事实标准，稳定性高于构建哈希化 id）
@@ -374,6 +395,7 @@ const COLLECT_JS = `(() => {
         if (tag === 'a' || tag === 'button' || tag === 'summary' || roleAttr
             || tag === 'form' || tag === 'label' || tag === 'h1' || tag === 'h2' || tag === 'h3') {
           const box = bboxObj(el);
+          const hit = occlusionOf(el, box);
           // C105 M2：testId 同输入分支；href 只存 pathname（剥 query/hash —— query 可携带
           // token/session 等敏感参数不进上下文，pathname 已足够做 a[href*=] 结构接地）。
           let hrefPath = null;
@@ -387,6 +409,8 @@ const COLLECT_JS = `(() => {
           }
           out.elements.push({
             id: el.id || null, role, tag, type: tag, name: null,
+            // C105 M3：hit-test 三字段（同输入分支）
+            hitTest: hit, occluded: hit === 'occluded',
             testId: (el.getAttribute('data-testid') || el.getAttribute('data-test') || el.getAttribute('data-qa') || null),
             href: hrefPath,
             cls: (el.getAttribute('class') || '').trim().slice(0, 60) || null,

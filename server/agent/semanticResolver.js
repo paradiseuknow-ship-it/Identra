@@ -163,7 +163,8 @@ function scoreSemanticOnce(semantic, el) {
   if (!semantic) return { score: 0, reason: '', matchedBy: null };
   const text = el.text ? String(el.text) : '';
   // C105 M2：testid 是站点自声明的测试权威身份，进语义匹配池（命中归 'semantic'）
-  const pool = [text, el.testId, el.placeholder, el.ariaLabel, el.label, el.innerText, el.roleText]
+  // C105 M3：href（pathname）进语义池 —— 无文本锚点（图标链接、图片包锚点）的唯一身份来源。
+  const pool = [text, el.testId, el.href, el.placeholder, el.ariaLabel, el.label, el.innerText, el.roleText]
     .map((x) => (x ? String(x) : ''))
     .join(' ');
   const pn = normalize(pool);
@@ -396,13 +397,45 @@ function resolve(target, observation, opts = {}) {
     });
   }
 
+  // ── C105 M3：可操作性地面守卫（F7 零面积 / F8 遮挡）──
+  // 评分只回答「语义像不像目标」，回答不了「此刻点不点得到」：
+  //   ① 零面积元素（折叠容器 / display 残留隐藏控件）与正常控件同分 → fill/click 打在
+  //      不可交互元素上 → 超时或静默无效果（observation 的 visible 恒 true 兜不住这一面）；
+  //   ② 被 overlay / cookie banner / sticky 层覆盖的按钮与正常按钮同分 → 点击打到遮挡层
+  //      → 30s 超时 → 恢复链烧预算。Negative Test 面的正确行为是「不点」，而不是点了再修。
+  // 只否决**有明确判定信号**的候选：hitTest=unknown/offscreen 一律放行 —— M1 F2 实证教训：
+  // 单次快照无法区分「永久不可用」与「此刻不在视口」，视口外元素 scroll 后仍可点。
+  // 存在性语义（element_present / element_absent / field_value）走 requireActionable:false
+  // 通道：这些验证问的是「在不在 / 值是什么」，不问「能不能点」，否决会造成假阴性。
+  const requireActionable = !opts || opts.requireActionable !== false;
+  let pool = out;
+  if (requireActionable) {
+    const blockedEntries = [];
+    const usable = out.filter((c) => {
+      const bb = (c.el && (c.el.bbox || c.el.boundingBox)) || null;
+      if (bb && typeof bb.w === 'number' && typeof bb.h === 'number' && (bb.w <= 0 || bb.h <= 0)) {
+        blockedEntries.push({ c, why: 'zero-area' }); return false;
+      }
+      if (c.el && c.el.occluded === true) { blockedEntries.push({ c, why: 'occluded' }); return false; }
+      return true;
+    });
+    // 全阻断保护：过滤空池时回落保留被阻断候选并打标记 —— 空集会让上层误判「页面上没有
+    // 这个元素」，而真实语义是「元素在但点不到」，两者恢复策略不同（前者该重规划，
+    // 后者该先关遮挡层/等动画）。
+    if (usable.length) pool = usable;
+    else blockedEntries.forEach((b) => {
+      b.c.blockedBy = b.why;
+      b.c.reason += ' | 可操作性阻断：' + b.why + '（无未阻断候选，保留供恢复链判定）';
+    });
+  }
+
   // (3) 同分时控件优先：descriptive 元素（form/label/h1~h3/img）本就不是动作目标，
   //     只是候选发现与 element_present 的载体，同分下必须让位给真正的控件。
   const CLASS_RANK = { control: 0, passive: 1, descriptive: 2 };
-  out.sort((a, b) => (b.score - a.score)
+  pool.sort((a, b) => (b.score - a.score)
     || (CLASS_RANK[a.elementClass] - CLASS_RANK[b.elementClass])
     || (a.index - b.index));
-  return out.slice(0, (opts && opts.limit) || 8);
+  return pool.slice(0, (opts && opts.limit) || 8);
 }
 
 // 简易 CSS 选择器转义
