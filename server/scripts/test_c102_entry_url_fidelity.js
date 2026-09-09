@@ -75,6 +75,52 @@ chk('A1 mock provider 计划首个 NAVIGATE 被强制改写为用户 target', as
     assert.ok(/enforceEntryUrl\(vr\.plan, target\)/.test(src), '成功路径未接线');
   });
 
+  // ---- D. C103：302 型入口 URL 验证修正 ----
+  chk('D1 relaxEntryUrlVerification 接线成功路径', () => {
+    const src = fs.readFileSync(require.resolve('../agent/planner'), 'utf-8');
+    assert.ok(src.includes('function relaxEntryUrlVerification'), '函数缺失');
+    assert.ok(/relaxEntryUrlVerification\(vr\.plan, target\)/.test(src), '成功路径未接线');
+  });
+  // 端到端：mock provider 给入口 NAVIGATE 写 url_contains=入口 URL 片段 → 必须被置 none
+  const provider302 = {
+    kind: 'test',
+    async plan() {
+      return [
+        { action: 'navigate', target: { url: 'https://www.webflow.com' }, semantic: '打开 Webflow 首页', expectedResult: '页面加载', verification: { type: 'url_contains', expect: 'try.webflow.com/t0wz830c5n4y' } },
+        { action: 'inspect', target: { semantic: '页面主体' }, semantic: '观察页面', expectedResult: '快照', verification: { type: 'none' } },
+      ];
+    },
+  };
+  const r302 = await planner.planObjective({
+    objective: '联盟链接注册', target: 'https://try.webflow.com/t0wz830c5n4y',
+    constraints: [], credentialRefs: [], executionMode: 'SIMULATION', provider: provider302, ctx: { taskId: 'task_c103_a' },
+  });
+  chk('D2 302 型入口的 url_contains 入口验证被置 none', () => {
+    assert.ok(r302.ok, r302.error || 'not ok');
+    const nav = r302.plan.steps.find((s) => s.type === 'NAVIGATE');
+    assert.strictEqual(nav.action.verification.type, 'none');
+    assert.strictEqual(r302.plan.entryVerifyAdjusted, true);
+  });
+  // 反向：非深链接入口（根路径）不放宽
+  const providerRoot = {
+    kind: 'test',
+    async plan() {
+      return [
+        { action: 'navigate', target: { url: 'https://example.com/other' }, semantic: '打开首页', expectedResult: '加载', verification: { type: 'url_contains', expect: 'example.com' } },
+        { action: 'inspect', target: { semantic: '页面主体' }, semantic: '观察', expectedResult: '快照', verification: { type: 'none' } },
+      ];
+    },
+  };
+  const rRoot = await planner.planObjective({
+    objective: '根路径任务', target: 'https://example.com',
+    constraints: [], credentialRefs: [], executionMode: 'SIMULATION', provider: providerRoot, ctx: { taskId: 'task_c103_b' },
+  });
+  chk('D3 根路径入口的 URL 验证不放宽', () => {
+    assert.ok(rRoot.ok, rRoot.error || 'not ok');
+    const nav = rRoot.plan.steps.find((s) => s.type === 'NAVIGATE');
+    assert.strictEqual(nav.action.verification.type, 'url_contains');
+  });
+
   console.log(`\nRESULT: PASS=${pass} FAIL=${fail}`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error('fatal:', e); process.exit(1); });

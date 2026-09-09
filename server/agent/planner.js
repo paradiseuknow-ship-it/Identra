@@ -277,6 +277,33 @@ function enforceEntryUrl(plan, target) {
   return plan;
 }
 
+// C103：302 型入口的 URL 字符串验证恒假 —— 联盟/推广深链接（如 try.webflow.com/t0wz830c5n4y）
+// 服务端 302 落地后 URL 必然变成目标域（webflow.com/?utm_...），LLM 给入口 NAVIGATE 写的
+// url_contains「入口 URL 片段」验证在 302 场景下永不满足（实录 task_mttralr4v11m7：重试 4 次
+// 耗尽升级人工）。这不是验证阈值问题而是验证语义错误：入口步的完成契约 = 「导航执行成功」，
+// goto 本身加载失败即报错；落地页业务验证由后续 OBSERVE/ACT 的元素/文案证据承担。
+// 确定性修正：入口为深链接（路径型）且入口步验证是「入口 URL 字符串类」→ 置 none 并落标记。
+function relaxEntryUrlVerification(plan, target) {
+  if (!target || !plan || !Array.isArray(plan.steps)) return plan;
+  let deepLink = false;
+  try { deepLink = new URL(target).pathname !== '/' && new URL(target).pathname.length > 1; } catch (e) { return plan; }
+  if (!deepLink) return plan;
+  const idx = plan.steps.findIndex((s) => s && s.type === 'NAVIGATE');
+  if (idx < 0) return plan;
+  const step = plan.steps[idx];
+  const v = step.action && step.action.verification;
+  if (!v || (v.type !== 'url_contains' && v.type !== 'url_pattern')) return plan;
+  const expect = String(v.expect || v.pattern || '');
+  let host = '', path = '';
+  try { host = new URL(target).hostname; path = new URL(target).pathname; } catch (e) { return plan; }
+  // 仅当验证期望指向「入口 URL 本身」（host 或深路径片段）才放宽；指向落地业务特征的不动
+  if (expect.includes(host) || (path && expect.includes(path))) {
+    step.action.verification = { type: 'none' };
+    plan.entryVerifyAdjusted = true;
+  }
+  return plan;
+}
+
 async function planObjective({ objective, target, constraints, credentialRefs, executionMode, provider, ctx }) {
   const taskLike = {
     objective: objective || '',
@@ -458,8 +485,9 @@ async function planObjective({ objective, target, constraints, credentialRefs, e
           capability: usedCapability,
         });
       } catch (e) {}
-      // C102：入口地址保真强制（成功路径统一收口）
+      // C102/C103：入口地址保真 + 302 型入口验证语义修正（成功路径统一收口）
       enforceEntryUrl(vr.plan, target);
+      relaxEntryUrlVerification(vr.plan, target);
       return { ok: true, plan: vr.plan, capability: usedCapability };
     }
 
