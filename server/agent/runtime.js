@@ -59,6 +59,45 @@ function getTask(taskId) {
   return taskManager.getTask(taskId);
 }
 
+// C102：联盟/推广入口归因保新 —— 当 targetUrl 为深链接或带归因参数（utm_*/gclid/fbclid/ref）
+// 时，若环境此前直接访问过目标域名（已种下无归因的 cookie），再经联盟链接 302 落地也不会
+// 重新写归因 cookie，联盟收入无法确认（用户实录场景）。在全新执行（无已完成步骤且非恢复
+// 续跑）首次导航前，清除目标注册域的 cookies，让归因链接以干净会话落地。
+// 安全边界：只清 targetUrl 的注册域，不碰其他域；续跑/恢复绝不触发；FPB_KEEP_ENTRY_COOKIES=1 可关。
+function entryDomainOf(u) {
+  try {
+    const h = new URL(u).hostname.split('.');
+    return h.length > 2 ? h.slice(-2).join('.') : h.join('.');
+  } catch (e) { return null; }
+}
+function isTrackedEntry(u) {
+  try {
+    const x = new URL(u);
+    if (/[?&](utm_|gclid|fbclid)/i.test(x.search || '')) return true;
+    if (/[?&](ref|affiliate|aff)=/i.test(x.search || '')) return true;
+    return !!(x.pathname && x.pathname !== '/' && x.pathname.length > 1);
+  } catch (e) { return false; }
+}
+async function refreshAttributionCookies(task) {
+  try {
+    if (!task || !task.targetUrl || !task.profileId) return;
+    if (process.env.FPB_KEEP_ENTRY_COOKIES === '1') return;
+    if (!isTrackedEntry(task.targetUrl)) return;
+    if (task.recoveryUrl) return; // 恢复续跑不清
+    const steps = stepManager.listSteps(task.id);
+    if (steps.some((s) => s.status === 'SUCCESS')) return; // 已有进度 → 续跑，不清
+    const page = await browserManager.getPage(task.profileId);
+    const ctx = page && page.context ? page.context() : null;
+    if (!ctx || typeof ctx.clearCookies !== 'function') return;
+    const domain = entryDomainOf(task.targetUrl);
+    if (!domain) return;
+    await ctx.clearCookies({ domain });
+    console.log('[runtime] 归因保新: 已清除入口注册域 cookies:', domain, '(target=', task.targetUrl, ')');
+  } catch (e) {
+    console.warn('[runtime] 归因保新失败(忽略):', String((e && e.message) || e).slice(0, 120));
+  }
+}
+
 // 重试退避（Phase 12B §T14）：指数退避，避免高频重试对站点/浏览器造成压力。
 function backoffSleep(attempt) {
   const base = 300;
@@ -497,6 +536,9 @@ async function run(taskId) {
     finalizeOrphans(taskId);
     return taskManager.fail(taskId, new Error(b.error));
   }
+
+  // C102：全新执行的联盟归因保新（深链接/带归因参数的入口 → 清目标注册域 cookies）
+  await refreshAttributionCookies(task);
 
   // 恢复场景：从 checkpoint URL 导航回现场再继续（避免 relaunch 后页面空白）
   if (task.recoveryUrl) {

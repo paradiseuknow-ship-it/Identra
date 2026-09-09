@@ -5,13 +5,17 @@
 // { objective, constraints[], target, credentialRefs[] }
 // 真实 Provider 存在时用 LLM 结构化输出；否则用确定性启发式（保证无 key 也可用）。
 
-const URL_RE = /https?:\/\/[^\s"']+/i;
+// C102：URL 边界排除 CJK 字符/标点/全角形式 —— 中文无空格分词，
+// 「打开https://xxx.com。注册」这类输入不再把整个中文尾巴吃进 URL。
+const URL_RE = /https?:\/\/[^\s"'\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]+/i;
 const REF_RE = /cred_\w+/gi;
 const CONSTRAINT_RE = /(不要|不能|禁止|必须|避免|不超过|确保|不要用)/;
 
 function heuristicParse(text) {
   const t = String(text || '').trim();
-  const target = (t.match(URL_RE) || [null])[0];
+  // C102：剥掉 URL 尾部的中英文标点 —— 中文分词无空格，「https://xxx.com。」会把句号吃进 URL，
+  // 导致导航到不存在的地址且联盟归因参数被截断。
+  const target = ((t.match(URL_RE) || [null])[0] || '').replace(/[。，、；！？）」』】》.,;!?)\]]+$/, '') || null;
   const credentialRefs = (t.match(REF_RE) || []).map((x) => x.trim());
   const constraints = t.split(/[。\n；;]+/).filter((s) => CONSTRAINT_RE.test(s)).map((s) => s.trim()).slice(0, 5);
   let objective = t.replace(URL_RE, '').replace(REF_RE, '').replace(/\s+/g, ' ').trim();

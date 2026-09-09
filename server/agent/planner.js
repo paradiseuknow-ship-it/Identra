@@ -256,6 +256,27 @@ function urlOnlyEvidenceViolations(steps) {
 // 函数调用发生在模块初始化后才未爆雷），消除未来重构触发 ReferenceError 的隐患。
 const SENSITIVE_GATE_RE = /是敏感字段，必须用 credentialRef/;
 
+// C102：入口地址保真 —— 用户提供的 target（联盟链接/推广链接等带归因参数的深链接）是
+// 业务归因入口，LLM 规划时常按语义「规范化」为域名根（try.webflow.com/xxx → webflow.com），
+// 或在消息含多个 URL 时选中错误的那个，导致联盟归因丢失（实录：task_mttpxi1bc61hf）。
+// 确定性强制：计划中首个 NAVIGATE 的 action.target.url 必须等于用户 target，不做语义判断、
+// 不回灌重试（LLM 已被给过目标 URL，再给一次同样会漂移）——直接改写并落事件标记。
+function enforceEntryUrl(plan, target) {
+  if (!target || !plan || !Array.isArray(plan.steps)) return plan;
+  const idx = plan.steps.findIndex((s) => s && s.type === 'NAVIGATE');
+  if (idx < 0) return plan;
+  const step = plan.steps[idx];
+  const cur = step.action && step.action.target && step.action.target.url;
+  if (cur === target) return plan;
+  step.action = {
+    ...(step.action || {}),
+    type: (step.action && step.action.type) || 'navigate',
+    target: { ...((step.action && step.action.target) || {}), url: target },
+  };
+  plan.entryUrlEnforced = true;
+  return plan;
+}
+
 async function planObjective({ objective, target, constraints, credentialRefs, executionMode, provider, ctx }) {
   const taskLike = {
     objective: objective || '',
@@ -437,6 +458,8 @@ async function planObjective({ objective, target, constraints, credentialRefs, e
           capability: usedCapability,
         });
       } catch (e) {}
+      // C102：入口地址保真强制（成功路径统一收口）
+      enforceEntryUrl(vr.plan, target);
       return { ok: true, plan: vr.plan, capability: usedCapability };
     }
 

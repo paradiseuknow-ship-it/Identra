@@ -66,6 +66,25 @@ export default function NewTaskModal({ profiles, notify, onClose, onCreated }) {
             />
             <div className="mt-2 text-[11px] text-slate-600">⌘/Ctrl + Enter 生成计划</div>
 
+            {/* C102：入口地址显式化 —— 检测到 URL 时明示「第一个 URL = 唯一入口」，
+                联盟链接/推广链接不会被绕过；多 URL 时提醒顺序即优先级。 */}
+            {(() => {
+              const urls = goal.match(/https?:\/\/[^\s"']+/gi) || [];
+              if (!urls.length) return null;
+              const tracked = (() => { try { const u = new URL(urls[0]); return (u.pathname && u.pathname !== '/') || /[?&](utm_|gclid|fbclid|ref=|affiliate=)/i.test(u.search); } catch (e) { return false; } })();
+              return (
+                <div className="mt-3 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-xs space-y-1">
+                  <div className="text-sky-200 font-medium">入口地址（已锁定）</div>
+                  <div className="text-slate-200 break-all font-mono text-[11px]">{urls[0]}</div>
+                  <div className="text-slate-500">
+                    {urls.length > 1
+                      ? <>检测到 {urls.length} 个网址，只有第一个会作为入口；如需更换请把它放到句子最前面。</>
+                      : <>AI 将严格从该地址进入，{tracked ? '联盟/推广归因参数会被保留，不会直接访问域名根。' : '不会绕过直接访问其域名。'}</>}
+                  </div>
+                </div>
+              );
+            })()}
+
             {busy && (
               <div className="mt-4 flex items-center gap-2 text-xs text-sky-300">
                 <span className="inline-block w-3 h-3 rounded-full border-2 border-sky-400/40 border-t-sky-300 animate-spin" />
