@@ -63,9 +63,10 @@ function chk(name, ok, detail) {
     aiPanel.includes('api.aiResumeTask(') && aiPanel.includes('resumeTask'),
     'aiResumeTask 调用缺失');
 
-  const dead = ['getProfile:', 'status: () =>', 'getVault:', 'importCookies:', 'aiCreateTask:'];
+  // C98: getVault 已有真实消费（ProfileEditor 掩码回显），移出死方法清单
+  const dead = ['getProfile:', 'status: () =>', 'importCookies:', 'aiCreateTask:'];
   const remaining = dead.filter((m) => apijs.includes(m));
-  chk('P4 api.js 已删除 5 个零消费死方法', remaining.length === 0, '仍存在: ' + remaining.join(','));
+  chk('P4 api.js 已删除 4 个零消费死方法', remaining.length === 0, '仍存在: ' + remaining.join(','));
 
   chk('P5 server 端 PUT /proxies/:id 与 check-geo 路由真实存在',
     serverIndex.includes("proxyRouter.put('/proxies/:id'") && serverIndex.includes("/proxies/:id/check-geo"),

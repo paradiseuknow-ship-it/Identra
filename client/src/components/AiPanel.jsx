@@ -135,6 +135,13 @@ export default function AiPanel({ profiles, notify, onViewDetail, onGoToSettings
                 <span className="text-[11px] text-slate-500 inline-flex items-center gap-1.5">
                   <StatusDot tone={statusTone(taskDetail.status)} live={isLive} />
                   {humanStatus(taskDetail.status)}
+                  {/* C101：常驻急停 —— 重试/自愈循环时不必翻详情页，此处直接暂停 */}
+                  {['RUNNING', 'PREPARING'].includes(taskDetail.status) && (
+                    <button onClick={() => pauseTask(taskDetail.id)} className="btn btn-ghost text-[11px] !px-1.5 !py-0.5 text-amber-300 hover:text-amber-200" title="暂停执行">⏸ 暂停</button>
+                  )}
+                  {taskDetail.status === 'PAUSED_FOR_HUMAN' && (
+                    <button onClick={() => resumeTask(taskDetail.id)} className="btn btn-ghost text-[11px] !px-1.5 !py-0.5 text-emerald-300 hover:text-emerald-200" title="从暂停点继续执行">▶ 继续</button>
+                  )}
                 </span>
               </div>
               <div className="text-sm text-slate-200 leading-snug">{taskDetail.objective || taskDetail.name}</div>
@@ -251,7 +258,7 @@ export default function AiPanel({ profiles, notify, onViewDetail, onGoToSettings
                   {taskDetail && (taskDetail.status === 'PENDING' || taskDetail.status === 'PLANNING' || taskDetail.status === 'FAILED') && (
                     <button onClick={() => startTask(taskDetail.id)} className="btn btn-primary text-xs">开始执行</button>
                   )}
-                  {taskDetail && taskDetail.status === 'RUNNING' && <button onClick={() => pauseTask(taskDetail.id)} className="btn btn-outline text-xs">暂停</button>}
+                  {taskDetail && ['RUNNING', 'PREPARING'].includes(taskDetail.status) && <button onClick={() => pauseTask(taskDetail.id)} className="btn btn-outline text-xs">暂停</button>}
                   {taskDetail && taskDetail.status === 'PAUSED_FOR_HUMAN' && <button onClick={() => resumeTask(taskDetail.id)} className="btn btn-primary text-xs" title="从暂停点继续执行（不重新规划）">继续执行</button>}
                   {taskDetail && taskDetail.status === 'PAUSED_FOR_HUMAN' && <button onClick={() => retryTask(taskDetail.id)} className="btn btn-outline text-xs" title="放弃当前进度重新规划执行">重新规划</button>}
                   {taskDetail && ['PENDING', 'PLANNING', 'RUNNING', 'PREPARING', 'PAUSED_FOR_HUMAN'].includes(taskDetail.status) && (
@@ -313,10 +320,22 @@ export default function AiPanel({ profiles, notify, onViewDetail, onGoToSettings
           </div>
           {tasks.map((t) => {
             const tone = statusTone(t.status);
+            const liveCtl = ['RUNNING', 'PREPARING'].includes(t.status);
+            const pausedCtl = t.status === 'PAUSED_FOR_HUMAN';
             return (
-              <button key={t.id} onClick={() => setSelectedTask(t.id === selectedTask ? null : t.id)}
-                className={`w-full text-left card card-hover p-3 ${t.id === selectedTask ? 'border-slate-500/70' : ''}`}>
-                <div className="text-[13px] text-slate-200 truncate">{t.name}</div>
+              // C101：div 而非 button —— 行内需要嵌套暂停/恢复急停按钮（button 嵌套 button 非法）
+              <div key={t.id} onClick={() => setSelectedTask(t.id === selectedTask ? null : t.id)} role="button" tabIndex={0}
+                onKeyDown={(e) => { if (e.key === 'Enter') setSelectedTask(t.id === selectedTask ? null : t.id); }}
+                className={`w-full text-left card card-hover p-3 cursor-pointer ${t.id === selectedTask ? 'border-slate-500/70' : ''}`}>
+                <div className="flex items-center gap-2">
+                  <div className="text-[13px] text-slate-200 truncate flex-1 min-w-0">{t.name}</div>
+                  {liveCtl && (
+                    <button onClick={(e) => { e.stopPropagation(); pauseTask(t.id); }} className="btn btn-ghost text-[11px] !px-1.5 !py-0.5 text-amber-300 hover:text-amber-200 shrink-0" title="暂停执行">⏸</button>
+                  )}
+                  {pausedCtl && (
+                    <button onClick={(e) => { e.stopPropagation(); resumeTask(t.id); }} className="btn btn-ghost text-[11px] !px-1.5 !py-0.5 text-emerald-300 hover:text-emerald-200 shrink-0" title="继续执行">▶</button>
+                  )}
+                </div>
                 <div className="flex items-center gap-2 mt-1.5 text-xs">
                   <span className={`inline-flex items-center gap-1.5 ${tone.text}`}>
                     <StatusDot tone={tone} live={tone.live} />{humanStatus(t.status)}
@@ -325,7 +344,7 @@ export default function AiPanel({ profiles, notify, onViewDetail, onGoToSettings
                   {t.scheduleId && <span className="ml-auto text-[10px] text-slate-500 border border-edge rounded px-1 py-px" title="来自定时调度">定时</span>}
                 </div>
                 {t.error && <div className="text-xs text-rose-400/90 mt-1.5 truncate">{t.error}</div>}
-              </button>
+              </div>
             );
           })}
           {tasks.length === 0 && <div className="text-xs text-slate-600 px-1 py-3">暂无任务。在左侧给 AI 第一个目标。</div>}
