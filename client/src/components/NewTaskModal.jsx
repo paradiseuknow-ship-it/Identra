@@ -17,6 +17,7 @@ export default function NewTaskModal({ profiles, notify, onClose, onCreated }) {
   const [profileId, setProfileId] = useState('');
   const [mode, setMode] = useState('AUTONOMOUS');
   const [preview, setPreview] = useState(null); // { taskId, plan, status, sessionId }
+  const [planError, setPlanError] = useState(''); // C97：规划失败持久化内联展示（toast 闪逝导致用户以为无响应）
   const [starting, setStarting] = useState(false);
   const guardedClose = useCallback(
     () => { if (!busy && !starting) onClose(); },
@@ -30,10 +31,14 @@ export default function NewTaskModal({ profiles, notify, onClose, onCreated }) {
   const plan = async () => {
     if (!goal.trim()) return;
     setBusy(true);
+    setPlanError('');
     try {
       const r = await api.aiChat({ message: goal.trim(), profileId: profileId || undefined, executionMode: mode });
       setPreview(r);
-    } catch (e) { notify('规划失败: ' + e.message, false); }
+    } catch (e) {
+      setPlanError(e.message || String(e)); // C97：错误常驻弹层，直到下一次重试
+      notify('规划失败: ' + e.message, false);
+    }
     finally { setBusy(false); }
   };
 
@@ -60,6 +65,20 @@ export default function NewTaskModal({ profiles, notify, onClose, onCreated }) {
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) plan(); }}
             />
             <div className="mt-2 text-[11px] text-slate-600">⌘/Ctrl + Enter 生成计划</div>
+
+            {busy && (
+              <div className="mt-4 flex items-center gap-2 text-xs text-sky-300">
+                <span className="inline-block w-3 h-3 rounded-full border-2 border-sky-400/40 border-t-sky-300 animate-spin" />
+                正在规划中，通常需要几秒到半分钟，请勿关闭弹层…
+              </div>
+            )}
+            {!busy && planError && (
+              <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+                <div className="text-xs font-medium text-amber-300 mb-1">规划失败</div>
+                <div className="text-xs text-slate-300 leading-relaxed break-words">{planError}</div>
+                <div className="text-[11px] text-slate-500 mt-1.5">可修改目标或环境后重新点击「生成计划」重试。</div>
+              </div>
+            )}
 
             <button onClick={() => setAdvanced(!advanced)} className="mt-4 inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300">
               <span style={{ display: 'inline-flex', transform: advanced ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}><IconChevron size={12} /></span>

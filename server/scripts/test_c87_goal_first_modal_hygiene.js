@@ -108,6 +108,9 @@ function walkJs(dir, out) {
   chk('P3c NewTaskModal props 含 notify', /function NewTaskModal\(\{\s*profiles,\s*notify/.test(ntm), 'notify prop required');
   chk('P3d App.jsx 传 notify={notify} 给 NewTaskModal', /<NewTaskModal[\s\S]{0,200}notify=\{notify\}/.test(app), 'App wiring');
   chk('P3e notify 模式与 C41 toastBus 同源（App notify 定义存在）', /toastBus\.emit/.test(app), 'App notify -> toastBus');
+  // C97：规划失败除 toast 外必须持久化内联展示（toast 闪逝 → 用户以为点击无响应）
+  chk('P3f NewTaskModal 含 planError 持久化状态', /planError/.test(ntm), 'planError state required');
+  chk('P3g plan 失败路径同时 setPlanError + notify', /setPlanError\([^)]*\);?\s*\/\/[^\n]*|setPlanError\((e\.message|\+)\)?[\s\S]{0,80}notify\('规划失败/.test(ntm) || (/setPlanError/.test(ntm) && /notify\('规划失败[^\n]*false/.test(ntm)), 'dual error surface');
 
   // P4 Escape 守卫一致性
   chk('P4a guardedClose 引用 busy/starting 守卫', /const guardedClose = useCallback\([\s\S]{0,200}!busy && !starting/.test(ntm), 'useCallback guard');
