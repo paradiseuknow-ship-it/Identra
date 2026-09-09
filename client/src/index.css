@@ -17,9 +17,9 @@
 }
 
 @layer components {
-  /* —— 面板原语：空间产生层级，边框极弱 —— */
-  .card { @apply bg-panel border border-edge rounded-xl; }
-  .card-hover { @apply transition-colors duration-150 hover:border-slate-600/60; }
+  /* —— 面板原语：空间产生层级，边框极弱（C93 PREMIUM：进一步降密度/降噪，用排版与留白分层）—— */
+  .card { @apply bg-panel/80 border border-edge/60 rounded-xl; }
+  .card-hover { @apply transition-colors duration-150 hover:border-edge; }
 
   /* —— 按钮族 —— */
   .btn { @apply inline-flex items-center justify-center gap-1.5 rounded-lg text-sm px-3 py-1.5 transition-colors duration-150 select-none whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed; }

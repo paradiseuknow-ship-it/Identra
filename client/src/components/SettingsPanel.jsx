@@ -1,12 +1,15 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import api from '../api';
+import ProxyPanel from './ProxyPanel';
+import { t } from '../lib/i18n';
 
 // C14: 系统设置中心。LLM 配置（key 打码 / 保存 / 清除 / 连通测试）+ env 对账表。
 // apiKey 永不明文展示（服务端只回 last4 掩码）；保存后立即生效（无需重启）。
+// C93：Proxy 退出一级导航后收敛至此 —— Network 小节内嵌 ProxyPanel（数据面/操作零改动）。
 
 const inputCls = 'w-full bg-[#0F172A] border border-edge rounded px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-sky-500';
 
-export default function SettingsPanel({ notify }) {
+export default function SettingsPanel({ notify, requestConfirm, proxies = [], onReloadProxies }) {
   const [data, setData] = useState(null);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [model, setModel] = useState('');
@@ -224,6 +227,17 @@ export default function SettingsPanel({ notify }) {
           </div>
         )}
         <div className="text-xs text-slate-600 mt-2">恢复前旧数据自动快照到 data/backups/pre-restore-*；恢复后建议重启服务。</div>
+      </div>
+
+      {/* C93 IA：Network 小节 —— Proxy 的唯一一级入口（原侧栏 Proxies 项收敛至此） */}
+      <div className="pt-4 border-t border-edge/60">
+        <h3 className="text-sm font-medium text-slate-200 mb-3">{t('set.network')}</h3>
+        <ProxyPanel
+          proxies={proxies}
+          onChange={onReloadProxies}
+          notify={notify}
+          requestConfirm={requestConfirm}
+        />
       </div>
     </div>
   );

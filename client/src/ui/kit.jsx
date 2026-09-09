@@ -1,18 +1,14 @@
 import React from 'react';
+import { t } from '../lib/i18n';
 
 // 设计系统共享原语 + 领域语言映射（Progressive Disclosure 第一层：普通用户语言）。
 // 工程字段（executionId/checkpointId/provider 等）一律留在各面板「查看详情」第二层。
 
-/** 状态 → 普通用户语言 */
-export const humanStatus = (s) => ({
-  PENDING: '排队中', PLANNING: '规划中', PREPARING: '准备中', PROFILE_READY: '环境就绪',
-  BROWSER_READY: '浏览器就绪', RUNNING: '执行中', PAUSED_FOR_HUMAN: '需要你确认',
-  HEALING: 'AI 自修复中', RECOVERING: '恢复中', SUCCESS: '已完成', FAILED: '失败',
-  CANCELLED: '已取消',
-}[s] || s);
+/** 状态 → 普通用户语言（i18n：zh/en 随顶栏切换） */
+export const humanStatus = (s) => t('st.' + s, s);
 
 /** 执行模式 → 普通用户语言 */
-export const humanMode = (m) => ({ ASSIST: '协助模式', AUTONOMOUS: '自主模式', SIMULATION: '演练模式', DEBUG: '调试模式' }[m] || m);
+export const humanMode = (m) => t('mode.' + m, m);
 
 /** 状态 → { 文字色, 点色, 极轻背景 }（状态色只用于点/文字/极轻背景，不染整卡） */
 export const statusTone = (s) => ({

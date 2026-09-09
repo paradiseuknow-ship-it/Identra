@@ -172,7 +172,8 @@ const stripComments = (src) => src.split('\n')
     /const\s+requestConfirm\s*=\s*\(message\s*,\s*onConfirm\s*,\s*okLabel\)/.test(app),
     'requestConfirm 签名未含 okLabel');
   chk('B3b 确认按钮渲染 confirmState.okLabel（默认「确认删除」兼容既有删除语义）',
-    /\{confirmState\.okLabel\s*\|\|\s*'确认删除'\}/.test(app), '按钮仍硬编码文案');
+    // C93 i18n：默认文案可回落字典 t('c.confirmDelete')（zh 语义不变），或保留字面量
+    /\{confirmState\.okLabel\s*\|\|\s*(t\('c\.confirmDelete'\)|'确认删除')\}/.test(app), '按钮仍硬编码文案');
   chk('B3c GovernancePanel.confirmIt 透传 okLabel',
     /const\s+confirmIt\s*=\s*\(msg\s*,\s*onConfirm\s*,\s*okLabel\)/.test(gp)
     && /requestConfirm\(msg\s*,\s*onConfirm\s*,\s*okLabel\)/.test(gp),

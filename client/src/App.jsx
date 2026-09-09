@@ -21,12 +21,14 @@ import AuthGate from './components/AuthGate';
 import TaskDetail from './components/TaskDetail';
 import OverviewPage from './components/OverviewPage';
 import NewTaskModal from './components/NewTaskModal';
+import { useLocale, t, tFn } from './lib/i18n';
 import { IconLogo, IconOverview, IconTasks, IconRuns, IconWindow, IconAI, IconClock, IconLayers, IconPulse, IconMemory, IconGlobe, IconShield, IconSettings, IconPlus } from './ui/icons';
 
-// —— 导航信息架构（UI 高级化重构）——
+// —— 导航信息架构（C86 AI Workspace 壳层 + C93 PREMIUM REFINEMENT）——
 // 四分组：WORKSPACE / AUTOMATION / INSIGHTS / SYSTEM。
 // tab key 全部保持与后端无关的历史 key（panels 数据面零改动）；
 // readiness 不进导航 —— 降级为 Workspace Health，从顶栏健康 pill 与 SETUP_REQUIRED 自动引导进入。
+// C93：Proxy 退出一级导航 —— 收敛到 Settings → Network 小节（tab key 'proxies' 与路由保留）。
 const NAV = [
   {
     group: 'Workspace', items: [
@@ -51,7 +53,6 @@ const NAV = [
   },
   {
     group: 'System', items: [
-      ['proxies', 'Proxies', <IconGlobe />],
       ['governance', 'Governance', <IconShield />],
       ['settings', 'Settings', <IconSettings />],
     ],
@@ -90,6 +91,7 @@ export default function App() {
   const [authTick, setAuthTick] = useState(0); // C49：登录成功后重跑启动探测（readiness + 列表）
   const [newTaskOpen, setNewTaskOpen] = useState(false); // Goal-first 创建流
   const [focusTaskId, setFocusTaskId] = useState(null); // New Task 成功后跳转 AI Operator 并选中该任务
+  const [locale, setLocale] = useLocale(); // C93 中英文切换（订阅在 App 根，切换即全树重渲染）
 
   // 应用内确认弹窗，替代原生 window.confirm（原生框在某些环境下会被静默拦截导致“点击无反应”）
   // C74：第三参 okLabel —— 非删除类破坏性操作（如撤销 API Key）可自定义确认按钮文案，
@@ -293,12 +295,12 @@ export default function App() {
         <nav className="flex-1 space-y-0.5">
           {NAV.map((g) => (
             <div key={g.group}>
-              <div className="navgroup">{g.group}</div>
+              <div className="navgroup">{t('navGroup.' + g.group, g.group)}</div>
               {g.items.map(([k, label, icon]) => (
                 <button key={k} onClick={() => setTab(k)}
                   className={`navitem ${tab === k ? 'navitem-active' : ''}`}>
                   <span className="text-slate-500 shrink-0 [&>svg]:block">{icon}</span>
-                  {label}
+                  {t('nav.' + k, label)}
                 </button>
               ))}
             </div>
@@ -313,24 +315,29 @@ export default function App() {
         {/* —— 顶栏：页标题 + Workspace Health pill + New Task + 会话 —— */}
         <header className="h-14 shrink-0 flex items-center gap-3 px-8 border-b border-edge/70 bg-ink/80 backdrop-blur sticky top-0 z-30">
           <div className="min-w-0">
-            <span className="text-sm font-medium text-slate-200">{title}</span>
-            <span className="text-xs text-slate-600 ml-2.5 hidden md:inline">{desc}</span>
+            <span className="text-sm font-medium text-slate-200">{t('title.' + tab, title)}</span>
+            <span className="text-xs text-slate-600 ml-2.5 hidden md:inline">{t('desc.' + tab, desc)}</span>
           </div>
           <div className="ml-auto flex items-center gap-2.5">
+            <button onClick={() => setLocale(locale === 'zh' ? 'en' : 'zh')}
+              title="中文 / English"
+              className="btn btn-ghost text-xs px-2 w-8 justify-center">
+              {t('c.lang')}
+            </button>
             {readiness && (
               <button onClick={() => setTab('readiness')}
                 title={failedChecks ? `点击查看：${readiness.checks.filter((c) => !c.ok && !c.optional).map((c) => c.label).join('、')}` : '全部必需项就绪'}
                 className={`pill ${readiness.ok ? 'text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/15' : 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/15'} transition-colors`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${readiness.ok ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                {readiness.ok ? 'All systems operational' : `${failedChecks} 项需要配置`}
+                {readiness.ok ? 'All systems operational' : tFn('top.healthIssues', failedChecks)}
               </button>
             )}
             <button onClick={() => setNewTaskOpen(true)} className="btn btn-primary px-3.5 py-1.5 text-[13px]">
-              <IconPlus size={13} /> New Task
+              <IconPlus size={13} /> {t('top.newTask', 'New Task')}
             </button>
             {hasSession && (
               <button onClick={doLogout} title="结束当前会话并返回登录页"
-                className="btn btn-ghost text-xs">退出</button>
+                className="btn btn-ghost text-xs">{t('top.logout', '退出')}</button>
             )}
           </div>
         </header>
@@ -375,6 +382,16 @@ export default function App() {
               {tab === 'readiness' && <ReadinessPanel notify={notify} onNavigate={setTab} onRefresh={setReadiness} />}
               {tab === 'governance' && <GovernancePanel notify={notify} requestConfirm={requestConfirm} />}
               {tab === 'observability' && <ObservabilityPanel onViewDetail={setDetailId} />}
+              {/* C93 修复：settings tab 此前从未挂载（C86 重构遗漏，点击 Settings 渲染空白）；
+                  C93 IA：Proxy 收敛进 Settings → Network 小节（proxies 数据面与 loadProxies 复用） */}
+              {tab === 'settings' && (
+                <SettingsPanel
+                  notify={notify}
+                  requestConfirm={requestConfirm}
+                  proxies={proxies}
+                  onReloadProxies={loadProxies}
+                />
+              )}
             </ErrorBoundary>
           </div>
         </main>
@@ -415,24 +432,24 @@ export default function App() {
       {batch && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => !batching && setBatch(null)}>
           <div className="w-96 card p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="font-medium mb-4 text-slate-100">批量创建 Profiles</div>
+            <div className="font-medium mb-4 text-slate-100">{t('c.batchTitle')}</div>
             <div className="space-y-3 text-sm">
               <label className="block">
-                <span className="label">数量（1-50）</span>
+                <span className="label">{t('c.count')}</span>
                 <input type="number" min="1" max="50" className="inp w-full" value={batch.count}
                   onChange={(e) => setBatch({ ...batch, count: e.target.value })} />
               </label>
               <label className="block">
-                <span className="label">名称前缀</span>
+                <span className="label">{t('c.prefix')}</span>
                 <input className="inp w-full" value={batch.namePrefix}
                   onChange={(e) => setBatch({ ...batch, namePrefix: e.target.value })} />
               </label>
-              <div className="text-xs text-slate-500">稳定字段共享基线，噪声字段每号独立派生（「同形不同样」）。</div>
+              <div className="text-xs text-slate-500">{t('c.batchNote')}</div>
             </div>
             <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => setBatch(null)} disabled={batching} className="btn btn-outline">取消</button>
+              <button onClick={() => setBatch(null)} disabled={batching} className="btn btn-outline">{t('c.cancel')}</button>
               <button onClick={runBatch} disabled={batching} className="btn btn-primary">
-                {batching ? '创建中…' : '创建'}
+                {batching ? t('c.creating') : t('c.create')}
               </button>
             </div>
           </div>
@@ -443,8 +460,8 @@ export default function App() {
           <div className="w-80 card p-5 shadow-2xl">
             <div className="text-sm text-slate-200 mb-5">{confirmState.message}</div>
             <div className="flex justify-end gap-2">
-              <button onClick={() => setConfirmState(null)} className="btn btn-outline">取消</button>
-              <button onClick={runConfirm} className="btn btn-danger">{confirmState.okLabel || '确认删除'}</button>
+              <button onClick={() => setConfirmState(null)} className="btn btn-outline">{t('c.cancel')}</button>
+              <button onClick={runConfirm} className="btn btn-danger">{confirmState.okLabel || t('c.confirmDelete')}</button>
             </div>
           </div>
         </div>
