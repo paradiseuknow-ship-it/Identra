@@ -17,7 +17,7 @@ function obs(elems) { return { url: 'https://x/y', textSummary: '', elements: el
 
 const TAXONOMY = ['semantic', 'text', 'attribute', 'fallback'];
 
-section('Resolver matchedBy 四类归一');
+section('Resolver matchedBy 分类归一');
 {
   // 1) attribute：field=email + 元素 id=email（field 信号命中属性）
   const c1 = semanticResolver.resolve({ field: 'email' }, obs([{ id: 'email', tag: 'input', type: 'email', text: '', visible: true, role: '' }]));
@@ -31,9 +31,16 @@ section('Resolver matchedBy 四类归一');
   const c3 = semanticResolver.resolve({ semantic: 'login' }, obs([{ id: 'b2', tag: 'button', text: '', ariaLabel: 'login', visible: true, role: 'button' }]));
   ok(c3.length > 0 && c3[0].matchedBy === 'semantic', 'semantic 经 aria-label 命中（非自身文本）→ matchedBy=semantic (got ' + (c3[0] && c3[0].matchedBy) + ')');
 
-  // 4) fallback：动作语义按钮兜底（无 field/文本/属性命中，仅 role+动作语义）
-  const c4 = semanticResolver.resolve({ semantic: 'submit' }, obs([{ id: 'b3', tag: 'button', text: '', visible: true, role: 'button' }]));
-  ok(c4.length > 0 && c4[0].matchedBy === 'fallback', '动作语义按钮兜底 → matchedBy=fallback (got ' + (c4[0] && c4[0].matchedBy) + ')');
+  // 4a) fallback（C105 F1 修订契约）：动作语义 + 元素身份词法关联成立（cls 含 submit token，
+  //     cls 不在主信号池 → score 0 → 兜底分支；出口 canonicalMatchedBy 归一为 'fallback'）。
+  const c4 = semanticResolver.resolve({ semantic: 'submit' }, obs([{ id: 'b3', tag: 'button', text: '', cls: 'btn-submit-primary', visible: true, role: 'button' }]));
+  ok(c4.length > 0 && c4[0].matchedBy === 'fallback', '动作语义按钮兜底（词法关联成立）→ matchedBy=fallback (got ' + (c4[0] && c4[0].matchedBy) + ')');
+
+  // 4b) 零证据拒点（C105 F1 新契约，D-A 误点机器根因）：动作语义 + 无任何身份信号
+  // （文本/aria/id 全空）的 button 不得再被 0.4 catch-all 兜底命中 —— C105 实锤：
+  // 页面所有 button 同分 0.4、DOM 顺序决胜 → 第一个 button「Plateforme」被误点。
+  const c4b = semanticResolver.resolve({ semantic: 'submit' }, obs([{ id: 'b3x', tag: 'button', text: '', visible: true, role: 'button' }]));
+  ok(c4b.length === 0, '零词法关联的动作语义兜底出局（零证据拒点），实际候选 ' + c4b.length);
 
   // 5) 所有返回值均落在统一分类内
   const all = [].concat(c1, c2, c3, c4);

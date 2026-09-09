@@ -35,6 +35,8 @@ const EVENT_TYPES = [
   'task.created', 'task.planned', 'task.started', 'task.step_started',
   'agent.observing', 'agent.planning', 'agent.tool_called', 'agent.tool_result',
   'agent.diagnosing', 'agent.repairing', 'agent.retrying', 'agent.recovered',
+  // C105 F4/F5：replan selector 接地净化与同签名 flapping 熔断观测
+  'agent.replan_sanitized', 'agent.flapping_detected',
   // STEP 3/4：统一诊断与升级观测（agent.diagnosed 带 rootCause/retryPolicy；
   // agent.escalating 表示诊断判定「不可重试」，已停止消耗剩余重试次数）
   'agent.diagnosed', 'agent.escalating',

@@ -17,6 +17,38 @@ const VERIFICATION_TYPES = [
   'storage', 'action_success', 'none',
 ];
 
+// C105 F3：URL 恒真判定的「表面键」——只取 host + pathname，query 一律不参与。
+// 背景（C105 实锤）：联盟落地页 before.url = webflowmarketingmain.com/fr?...&pscd=try.webflow.com
+// 旧实现整串 includes(expect) → query 参数 pscd=try.webflow.com 命中 expect「webflow.com」
+// → 真实点击 CTA 后成功导航到 webflow.com 的证据被 P2 守卫误判「动作前已成立」而拒绝，
+// 任务被拖入重试泥潭。query 是可被第三方注入的污染面，不构成「URL 表面已存在」的证据。
+function urlSurfaceKey(u) {
+  const s = String(u || '');
+  try {
+    const p = new URL(s);
+    return ((p.hostname || '').toLowerCase()) + (p.pathname || '/');
+  } catch (e) {
+    // 回归修订（R-F3）：URL 解析失败（如测试伪端口 http://127.0.0.1:PORT0/...）不得让
+    // P2 恒真守卫静默失效（返回 null → surfaceContains 恒 false → 守卫永远不触发）。
+    // 回退为「剥掉 query/hash 的原始串」——保持 F3 的核心语义（query 是可被第三方注入的
+    // 污染面，不参与恒真判定），同时对任意字符串都能给出确定性表面键。
+    return s.split('?')[0].split('#')[0];
+  }
+}
+
+// expect 在 URL 表面（host+pathname）上是否成立。expect 为完整 URL 时取其 host+path 再比对。
+function surfaceContains(url, expect) {
+  const surface = urlSurfaceKey(url);
+  if (!surface) return false;
+  const e = String(expect || '');
+  if (!e) return false;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(e)) {
+    const es = urlSurfaceKey(e);
+    return !!es && surface.includes(es);
+  }
+  return surface.includes(e);
+}
+
 // 输入：{ verification: {type, expect}, after: observation, before?: observation }
 // 输出：{ success, confidence, evidence[] }
 function verify(v, after, before) {
@@ -50,8 +82,10 @@ function verify(v, after, before) {
       // 则它是「恒真证据」——与本次动作的因果无关，不能单独作为本动作成功的证明。
       // 背景（2026-08-31 run6 实证）：/saas/login.html 上 url_contains "saas" 恒真，
       // 错误凭据也被判 SUCCESS（假阳性）。守卫只拒绝「无效证据」，不改变 Success Definition。
-      if (ok && before && before.url && String(before.url).includes(String(expect))) {
-        evidence.push('P2 无效证据守卫: url 条件在动作执行前已成立（before url=' + String(before.url) + ' 已包含 "' + String(expect) + '"，恒真证据与本次动作无因果），不能作为本动作成功的证明');
+      // C105 F3：恒真判定只在 URL 表面（host+pathname）上进行，query 不参与 ——
+      // pscd=try.webflow.com 这类第三方注入的 query 参数不能把真导航证据误判为恒真。
+      if (ok && before && before.url && surfaceContains(before.url, expect)) {
+        evidence.push('P2 无效证据守卫: url 条件在动作执行前已成立（before url 表面=' + (urlSurfaceKey(before.url) || String(before.url)) + ' 已包含 "' + String(expect) + '"，恒真证据与本次动作无因果），不能作为本动作成功的证明');
         return { success: false, confidence: 0.8, evidence, invalidEvidence: 'precondition_true' };
       }
       evidence.push(`url=${url} ${ok ? '包含' : '不包含'} "${expect}"`);
@@ -178,11 +212,14 @@ function verify(v, after, before) {
       let ok = false;
       try { ok = re.test(url); } catch (e) { ok = false; }
       // P2 无效证据守卫（与 url_contains 同理）：pattern 在 before url 上已匹配 = 恒真证据。
+      // C105 F3：匹配只在 URL 表面（host+pathname）上进行 —— query 注入（如 pscd=域名）
+      // 不构成「动作前已成立」的证据。
       if (ok && before && before.url && pat) {
         let preHit = false;
-        try { preHit = re.test(String(before.url)); } catch (e) { preHit = false; }
+        const preSurface = urlSurfaceKey(before.url);
+        try { preHit = preSurface ? re.test(preSurface) : false; } catch (e) { preHit = false; }
         if (preHit) {
-          evidence.push('P2 无效证据守卫: url_pattern 在动作执行前已匹配（before url=' + String(before.url) + '，恒真证据与本次动作无因果），不能作为本动作成功的证明');
+          evidence.push('P2 无效证据守卫: url_pattern 在动作执行前已匹配（before url 表面=' + (preSurface || String(before.url)) + '，恒真证据与本次动作无因果），不能作为本动作成功的证明');
           return { success: false, confidence: 0.7, evidence, invalidEvidence: 'precondition_true' };
         }
       }

@@ -15,6 +15,8 @@
 
 const fs = require('fs');
 const { validatePlan, INSTRUCTIONS, normalizeStrictToCanonical } = require('./schema/plan');
+// C105 F4：replan 产出步骤的 selector 接地判定与 semanticResolver 同源
+const semanticResolver = require('./semanticResolver');
 // UPLOAD_ROOT：提示里要列出可上传文件，与 schema 的白名单必须同源（否则提示与校验会漂移）
 const { ACTION_TYPES, VERIFICATION_TYPES, UPLOAD_ROOT } = require('./schema/action');
 // 注意：plannerEvidence.js 导出名为 record（非 recordPlannerEvidence），此处用别名绑定，
@@ -123,7 +125,10 @@ function contextBlock(ctx) {
     if (c.page.textSummary) lines.push('页面可见文本：' + c.page.textSummary);
     if (Array.isArray(c.page.elements) && c.page.elements.length) {
       lines.push('页面元素清单（写 verification.expect 与 expectedBusinessState.requiredEvidence 时，'
-        + '必须从中选取真实存在的 id / name / text / ariaLabel，禁止臆造页面上不存在的标识）：'
+        + '必须从中选取真实存在的 id / name / text / ariaLabel，禁止臆造页面上不存在的标识；'
+        + 'C104b：click/fill 等 target.semantic 同样必须逐字使用清单中元素的真实 text/ariaLabel/placeholder'
+        + '（保留页面原语言，不做翻译或改写，例如按钮原文是 Commencer 就写 Commencer），'
+        + '禁止发明清单中不存在的按钮/输入框标签——臆造标签会让语义定位必然失败）：'
         + JSON.stringify(c.page.elements));
     }
   }
@@ -541,6 +546,31 @@ async function planObjective({ objective, target, constraints, credentialRefs, e
   return { ok: false, error: lastError || '规划失败（已重试耗尽）' };
 }
 
+// C105 F4：replan 产出步骤的程序性接地净化 —— replan 上下文里的页面观察是新鲜的，但
+// provider 仍可能产出过期/幻觉 selector（C105 实锤：replan 计划携带 #continue-nav，而
+// 该元素在导航后页面已不存在 → 执行期死循环）。对每个携带显式 selector 且同时拥有语义键
+// （semantic/field/text）的 target：selector 未在 replan 时的 fresh observation 中接地 →
+// 剥离 selector、保留语义键，交执行期新鲜解析（tools.resolveSelector F2 守卫同源判定）。
+// selector-only target 不动（无回退键，保持既有 CSS fallback 行为）；不做整计划拒绝——
+// 后续步骤可能作用于尚未导航到的页面，按「当前页」一刀切会误杀合法多页计划（边界登记）。
+function groundReplannedSteps(steps, observation) {
+  if (!Array.isArray(steps)) return 0;
+  let stripped = 0;
+  for (const s of steps) {
+    const t = s && s.action && s.action.target;
+    if (!t || !t.selector) continue;
+    if (!t.semantic && !t.field && !t.text) continue;
+    if (semanticResolver.selectorGrounded(t.selector, observation)) continue;
+    const keep = {};
+    for (const k of ['semantic', 'field', 'text', 'role']) { if (t[k]) keep[k] = t[k]; }
+    if (!Object.keys(keep).length) continue;
+    s.action.target = keep;
+    s.action.reason = (s.action.reason ? s.action.reason + ' ' : '') + 'C105 F4: replan selector 未在当前页面观察中接地，已剥离交语义新鲜解析';
+    stripped += 1;
+  }
+  return stripped;
+}
+
 // 重规划（REPLAN）：当 Plan 本身过期（DOM 结构变化 / 真实动作失败，且常规重定位与重试已耗尽）时，
 // 基于【当前浏览器观察】与【已完成步骤】让 provider 重新生成「剩余步骤」。
 // 防御：
@@ -580,7 +610,9 @@ async function replan(task, observation, remainingSteps, provider) {
       ctx,
     });
     if (!pr.ok) return { ok: false, error: pr.error };
-    return { ok: true, steps: pr.plan.steps };
+    // C105 F4：程序性接地净化（新鲜观察驱动）
+    const strippedSelectors = groundReplannedSteps(pr.plan.steps, observation);
+    return { ok: true, steps: pr.plan.steps, strippedSelectors };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e).slice(0, 200) };
   }
@@ -588,6 +620,8 @@ async function replan(task, observation, remainingSteps, provider) {
 
 module.exports = {
   planObjective, replan, PLANNER_PROVIDER_CAPABILITY_ERROR,
+  // C105 F4：导出供测试断言（replan 产出接地净化）
+  groundReplannedSteps,
   // 导出供测试断言：提示里的动作参数契约、以及「可上传文件」与 schema 白名单是否同源
   PLANNER_INSTRUCTIONS, ACTION_CONSTRAINTS, uploadHint, plannerInstructions,
   // CAP-K2：导出供测试断言（第一序列化点；第二点在 deepseek.buildContextSection）

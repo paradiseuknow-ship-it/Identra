@@ -749,7 +749,23 @@ async function resolveSelector(action, obs, meta, page, opts) {
     }
     return cands[0];
   };
-  if (t.selector) { if (meta) { meta.selFromMemory = false; meta.matchedBy = 'explicit_selector'; } return { selector: t.selector, pattern: null, semantic: t.selector, fromMemory: false }; } // 显式 selector 为 fallback
+  // C105 F2（回归修订 R-F2，step22 Scenario E 实证）：显式 selector 新鲜度判定降级为
+  // 【可观测标记，不做弃用】。原设计「不接地即弃用、落语义新鲜解析」存在架构性误伤：
+  // 观察快照无法区分「selector 过期（永不存在）」与「目标尚未挂载（延时出现）」——
+  // step22 Scenario E 延时按钮在 step 起始观察中不存在 → #continue 被误判过期弃用 →
+  // 语义兜底解析出 observation 合成 id（#el-N，不在真实 DOM）→ locator 30s 超时 →
+  // TIMEOUT 诊断 → reload → BLANK 页 → CONTEXT_NOT_READY 死亡螺旋 → HUMAN_ESCALATION。
+  // D-B 死循环的真正防护由 F5（同签名熔断阈值 4）+ F5b（reload 每 step 上限 1 次）
+  // + repair/escalate 有界收口承担；此处只留接地疑点标记供诊断与可观测性。
+  // selector-only target（无语义键可回退）保持既有行为：交 Phase 6.3 CSS fallback 路径。
+  if (t.selector) {
+    const hasSemanticKey = !!(t.semantic || t.field || t.text);
+    if (hasSemanticKey && !semanticResolver.selectorGrounded(t.selector, obs)) {
+      if (meta) { meta.staleSelectorSuspected = true; } // 接地疑点：目标可能过期或尚未挂载（诊断标记，不弃用）
+    }
+    if (meta) { meta.selFromMemory = false; meta.matchedBy = 'explicit_selector'; }
+    return { selector: t.selector, pattern: null, semantic: t.selector, fromMemory: false };
+  }
   const semantic = t.semantic || t.field || t.text;
   if (!semantic) return null;
   const site = siteFromUrl(obs && obs.url);

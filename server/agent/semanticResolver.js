@@ -318,10 +318,19 @@ function resolve(target, observation, opts = {}) {
     cands.forEach((c) => { if (c.s > score) { score = c.s; reason = c.r; matchedBy = c.by; } });
 
     // 纯图标/无文本按钮兜底：动作语义 + role=button 进入候选，交给 verification 把关（不伪造高置信度）
+    // C105 F1（误点机器根因修复）：兜底候选必须与元素**自身身份信号**（text/aria/id/cls/placeholder/label）
+    // 存在词法关联（token 相交），零关联直接出局。旧实现对页面上**所有** button 一律给 0.4 同分，
+    // DOM 顺序决胜 → 语义「continue/submit」命中第一个按钮（法语站实锤：Plateforme 菜单被点开，
+    // 真实 CTA a#continue-nav "Commencez gratuitement" 一直在列表 index 40）。
     if (score <= 0) {
       const sem = semantic || roleHint || '';
       if (el.role === 'button' && sem && /submit|continue|next|proceed|sign|login|search|agree|accept|cancel|登录|搜索|提交|继续|确认/i.test(sem)) {
-        score = 0.4; reason = 'role=button + 动作语义兜底（需 verification 确认）'; matchedBy = 'role-button';
+        const semTokens = tokenize(sem);
+        const identity = [el.text, el.ariaLabel, el.id, el.cls, el.placeholder, el.label, el.innerText, el.roleText]
+          .map((x) => (x ? String(x) : '')).join(' ');
+        const idTokens = new Set(tokenize(identity));
+        const lexical = semTokens.some((tk) => idTokens.has(tk));
+        if (lexical) { score = 0.4; reason = 'role=button + 动作语义兜底（词法关联成立，需 verification 确认）'; matchedBy = 'role-button'; }
       }
     }
     if (score <= 0) return;
@@ -418,4 +427,58 @@ function selectorFor(el, index) {
   return '#' + escapeCss(el.id || 'el-' + index);
 }
 
-module.exports = { resolve, normalize, synonymSet, semanticVariants, selectorFor, escapeCss, SYNONYMS, CJK_ABBREVIATIONS, scoreNearbyText, scoreSemantic, scoreField, BARE_TAGS, bareTagHint, scoreBareTag };
+// ── C105 F2/F4 共享原语：selector 接地判定 ────────────────────────────────
+// 判定一个显式 selector 是否能在当前 observation 的元素身份中找到对应元素
+// （与 selectorFor 同源：id / name / text / 复合属性 CSS 形态）。
+// 背景（C105 D-B 死循环）：页面导航后复用过期 selector（#continue-nav）→ humanClick 找不到
+// → reload ×3 → 同错 20+ 次 → HUMAN_ESCALATION。任何「携带语义键的 target」其 selector
+// 必须能在新鲜观察中接地，否则弃用、交语义新鲜解析。
+// 宽松边界：observation 缺失/无元素时不否定（无反证，保持既有行为）；selector-only target
+// （无 semantic/field/text 可回退）由调用方决定不弃用，保持 Phase 6.3 CSS fallback 行为。
+function selectorGrounded(selector, observation) {
+  const sel = String(selector || '');
+  if (!sel) return true;
+  const elems = (observation && observation.elements) || [];
+  if (!Array.isArray(elems) || !elems.length) return true;
+  const idOnly = sel.match(/^#([A-Za-z0-9_-]+)$/);
+  const nameOnly = sel.match(/^[a-z][a-z0-9-]*\[name=["']?([^\]"']+)["']?\]$/i);
+  const textOnly = sel.match(/^(?:text=|a:has-text\()\s*["'](.+)["']\s*\)?$/);
+  for (const el of elems) {
+    if (idOnly) { if (el.id === idOnly[1]) return true; continue; }
+    if (nameOnly) { if (el.name === nameOnly[1]) return true; continue; }
+    if (textOnly) {
+      const t = String(el.text || '').trim();
+      // selectorFor 生成 text="前 30 字符" → 捕获串应是元素 text 的前缀
+      if (t && (t === textOnly[1] || t.indexOf(textOnly[1]) === 0)) return true;
+      continue;
+    }
+    // 通用形态：selectorFor 同源生成比对 + 复合属性 CSS 粗接地
+    try { if (selectorFor(el, 0) === sel) return true; } catch (e) {}
+    if (el.id && '#' + escapeCss(el.id) === sel) return true;
+    if (cssGroundedInObs(sel, el)) return true;
+  }
+  return false;
+}
+
+// 复合属性 CSS 粗接地：提取 tag / #id / [attr=value] 逐项与元素身份比对（全部命中才算接地）。
+// 只认静态身份属性（name/id/placeholder/type/aria-label），不解析伪类/结构关系（宽松向：
+// 无法判定的属性跳过 —— 本原语只负责「否决确定过期的 selector」，不负责证明完美匹配）。
+function cssGroundedInObs(sel, el) {
+  if (!/^[a-z#.\[]/i.test(sel)) return false;
+  const tagM = sel.match(/^([a-z][a-z0-9-]*)/i);
+  if (tagM && el.tag && el.tag.toLowerCase() !== tagM[1].toLowerCase()) return false;
+  const idM = sel.match(/#([A-Za-z0-9_-]+)/);
+  if (idM && el.id !== idM[1]) return false;
+  if (!/\[/.test(sel)) return tagM ? true : false; // 纯 tag selector 已由 tagM 判定
+  const attrRe = /\[([a-zA-Z-]+)(?:=["']?([^\]"']*)["']?)?\]/g;
+  const byAttr = { name: el.name, id: el.id, placeholder: el.placeholder, type: el.type, 'aria-label': el.ariaLabel };
+  let m; let saw = false;
+  while ((m = attrRe.exec(sel))) {
+    saw = true;
+    const v = byAttr[m[1].toLowerCase()];
+    if (m[2] !== undefined && v !== m[2]) return false;
+  }
+  return saw;
+}
+
+module.exports = { resolve, normalize, synonymSet, semanticVariants, selectorFor, escapeCss, SYNONYMS, CJK_ABBREVIATIONS, scoreNearbyText, scoreSemantic, scoreField, BARE_TAGS, bareTagHint, scoreBareTag, selectorGrounded };

@@ -41,6 +41,21 @@ const STRATEGY_MODS = {
 const STATE_RESET_REPAIR_LIMIT = 5000;
 const stateResetRepairs = new Set();
 
+// C105 F5b：reload 每 step 上限 1 次。C105 实锤：同错重试环里 reload ×3 循环既不修复失败
+// 也持续重置页面状态。计数按 executionId::stepId 记账（back+reload 同样消耗预算），
+// 超限后跳过 reload（等待类前置不受影响），Map 超上限整体清空（与 stateResetRepairs 同策略）。
+const RELOAD_CAP_PER_STEP = 1;
+const reloadCounters = new Map();
+
+function consumeReloadBudget(task, step) {
+  const k = resetRepairKey(task, step);
+  if (reloadCounters.size >= STATE_RESET_REPAIR_LIMIT) reloadCounters.clear();
+  const used = reloadCounters.get(k) || 0;
+  if (used >= RELOAD_CAP_PER_STEP) return false;
+  reloadCounters.set(k, used + 1);
+  return true;
+}
+
 function resetRepairKey(task, step) {
   return String((task && (task.currentExecutionId || task.id)) || '?') + '::' + String((step && step.id) || '?');
 }
@@ -64,16 +79,21 @@ async function runPreAction(task, step, attempts, sequence) {
   // waitLong：限流/5xx/异步一致性场景下的实质等待（800ms 对 429 退避毫无意义）
   else if (seq === 'waitLong') { try { await exec('wait', { timeoutMs: 3000 }); } catch (e) {} }
   else if (seq === 'reload') {
-    try { await exec('reload'); } catch (e) {}
-    markStateResetRepair(task, step);
+    if (consumeReloadBudget(task, step)) {
+      try { await exec('reload'); } catch (e) {}
+      markStateResetRepair(task, step);
+    }
   }
   else if (seq === 'back') {
     try { await exec('back'); } catch (e) {}
     markStateResetRepair(task, step);
   }
   else if (seq === 'back+reload') {
-    try { await exec('back'); } catch (e) {} try { await exec('reload'); } catch (e) {}
-    markStateResetRepair(task, step);
+    try { await exec('back'); } catch (e) {}
+    if (consumeReloadBudget(task, step)) {
+      try { await exec('reload'); } catch (e) {}
+      markStateResetRepair(task, step);
+    }
   }
   events.emit({ taskId: task.id, executionId: task.currentExecutionId, stepId: step.id, type: 'agent.repairing', payload: { strategy: seq } });
 }
@@ -142,7 +162,10 @@ async function attempt(task, step, error, ctx) {
   }
 
   const mod = STRATEGY_MODS[strategyName] || generic;
-  const strategyCtx = { diagnosis };
+  // C105 F6：把现场观察透传给策略 —— elementMissing 的同义词变体必须先在当前观察中
+  // 可解析（resolve 非空）才值得消耗一次重试；凭空词源（页面根本没有对应元素）只会
+  // 产出必然失败的探测动作（旧实证：法语页面上轮播 continue/submit/next 英文词）。
+  const strategyCtx = { diagnosis, observation: (ctx && ctx.observation) || null };
   let action = step.action;
   if (mod.getAction) {
     action = mod.getAction(step, attempts, strategyCtx) || step.action;

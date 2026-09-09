@@ -580,6 +580,16 @@ async function run(taskId) {
   // replan 重置 retries 后新步骤从头消费全部预算，无跨轮记忆 → 3 轮 × 7 attempts 烧满 deadline）。
   let lastReplanSig = null;   // 上一次 replan 前的失败签名
   let sameSigReplanRun = 0;   // 连续同签名 replan 计数
+  // C105 F5（anti-flapping 熔断状态）：同一 step 内连续相同失败签名计数。
+  // 签名 = 错误码 + 尝试动作 target（恢复变体时取变体 target）。连续同签名失败 ≥FLAP_THRESHOLD 次
+  // 说明重试只是在重放同一失败（C105 实锤：#continue-nav ELEMENT_NOT_FOUND 连续 20+ 次
+  // → reload ×3 循环 → HUMAN_ESCALATION），不再消耗确定性重试预算，直接落修复/升级收口。
+  // 阈值修订（R-F5，step22 Scenario E 回归实证）：原阈值 2 会截断「合法瞬时失败重试窗口」——
+  // 延时按钮契约要求允许 3 次连续同签名失败、第 4 次成功；阈值 2 在第 2 次失败即熔断进
+  // repair → mock GENERIC_RETRY 耗尽 → HUMAN_ESCALATION（假阴性）。阈值 4 = 保留默认
+  // maxRetries 3 内的全部合法重试窗口，仍能截断 C105 式 20+ 长循环（配合 F5b reload 上限）。
+  const FLAP_THRESHOLD = 4;
+  let _flapStepId = null, _lastFailSig = null, _sameFailCount = 0;
 
   // Phase 12B §T13：任务级整体墙钟超时（默认关；policy.taskTimeoutMs 可开启）。
   // 防止「每步都很快但总步数无穷」导致任务永不终态。超时即收口为 FAILED。
@@ -691,7 +701,29 @@ async function run(taskId) {
     const attemptNo = retries;
     const retriesLeft = stepMax - retries;
     const canRetry = !!step.retryable && retries <= stepMax && retriesLeft >= 0;
-    if (canRetry) {
+    // C105 F5：失败签名记账 + 熔断判定（换步重置）。签名字符串化对 target 键排序，
+    // 保证 {semantic,selector} 与 {selector,semantic} 恒等。
+    {
+      const _att = (pendingAction && pendingAction.target) || (step.action && step.action.target) || null;
+      let _tk = '';
+      try {
+        const _keys = _att && typeof _att === 'object' ? Object.keys(_att).sort() : [];
+        _tk = JSON.stringify(_att, _keys);
+      } catch (e) { _tk = String(_att); }
+      const _sig = ((r.error && r.error.code) || 'UNKNOWN') + '|' + _tk;
+      if (_flapStepId !== step.id) { _flapStepId = step.id; _lastFailSig = null; _sameFailCount = 0; }
+      _sameFailCount = (_sig === _lastFailSig) ? _sameFailCount + 1 : 1;
+      _lastFailSig = _sig;
+    }
+    const flapping = _sameFailCount >= FLAP_THRESHOLD;
+    if (flapping && _sameFailCount === FLAP_THRESHOLD) {
+      events.emit({
+        taskId: task.id, executionId: task.currentExecutionId, stepId: step.id,
+        type: 'agent.flapping_detected',
+        payload: { signature: _lastFailSig, consecutive: _sameFailCount, strategy: 'skip_deterministic_retry_to_repair' },
+      });
+    }
+    if (canRetry && !flapping) {
       // Phase 7 防御：若 step 在 store 中已为终态（如 repair 已置 SUCCESS），不再尝试 HEALING（会触发非法状态转换），
       // 直接推进到下一 step，避免把已成功的 step 二次处理并崩溃整个 task。
       const _live = (stepManager.getStep(step.id) || {}).status;
@@ -808,11 +840,37 @@ async function run(taskId) {
     } catch (repairHang) {
       if (_diagId) console.warn('[E3.1-DIAG] RACE_REJECT', JSON.stringify({ repairAttemptId: _diagId, taskId: task.id, stepId: step.id, reason: String(repairHang.message || repairHang).slice(0, 120) }));
       if (_wd) { try { clearInterval(_wd); } catch (e) {} }
-      // 修复编排挂起/抛错：明确终态 FAILED（带重试上下文），绝不回到 RUNNING。
-      console.warn('[runtime][5.9-E3] repair 编排超时/异常，收口 FAILED:', String(repairHang.message || repairHang).slice(0, 160));
-      const err = new Error(`${step.description || step.id} 修复编排超时/异常（重试${attemptNo}次耗尽）: ${String(repairHang.message || repairHang).slice(0, 200)} [${r.error && r.error.code}]`);
-      finalizeOrphans(taskId);
-      return taskManager.fail(taskId, err);
+      // 修复编排挂起/抛错：E3 语义 = 绝不静默回 RUNNING。
+      // C104（task_mttsa3a6bzlzm 实证）：REPAIR_TIMEOUT ≠ 计划不可满足——修复链自身超预算时，
+      // 「计划缺一步前置导航」这类 plan-stale 失败会被误收口 FAILED。若底层错误是 replan 候选
+      // （元素定位族/非凭证类）且 replan 预算未耗尽 → 与正常路径同门走 tryReplan
+      // （R5 同签名熔断 + maxReplans 约束）；replan 不可用/失败 → 维持原语义明确终态 FAILED。
+      let _replanned = false;
+      if (r && r.error && isReplanCandidate(r.error, step) && (task.replanCount || 0) < maxReplansFor(task)) {
+        const _r5sig = stepFailureSignature(step, r.error);
+        const _r5cnt = sameSigReplanCount(_r5sig, lastReplanSig, sameSigReplanRun);
+        if (!shouldFuseSameSigReplan(_r5cnt)) {
+          lastReplanSig = _r5sig;
+          sameSigReplanRun = _r5cnt;
+          const rp = await tryReplan(task, beforeObs, steps, index);
+          if (rp && rp.ok) {
+            task.replanCount = (task.replanCount || 0) + 1;
+            try { store.upsert('aiTasks', task); } catch (e) {}
+            steps = stepManager.listSteps(task.id);
+            if (steps[index]) { try { stepManager.setStepState(steps[index].id, 'PENDING'); } catch (e) {} }
+            retries = 0;
+            _replanned = true;
+            events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'agent.replan', payload: { replanCount: task.replanCount, reason: 'repair orchestration timeout → regenerate remaining steps (C104)', errorCode: (r.error && r.error.code) || null } });
+            continue;
+          }
+        }
+      }
+      if (!_replanned) {
+        console.warn('[runtime][5.9-E3] repair 编排超时/异常，收口 FAILED:', String(repairHang.message || repairHang).slice(0, 160));
+        const err = new Error(`${step.description || step.id} 修复编排超时/异常（重试${attemptNo}次耗尽）: ${String(repairHang.message || repairHang).slice(0, 200)} [${r.error && r.error.code}]`);
+        finalizeOrphans(taskId);
+        return taskManager.fail(taskId, err);
+      }
     }
     // REPLAN 续跑：Plan 本身已过期（DOM 结构变化 / 真实动作失败 / 证据契约家族
     // VERIFICATION_FAILED·VERIFICATION_TOO_STRICT·STATE_UNKNOWN 的证据契约错配，
@@ -937,6 +995,15 @@ function isCredentialishStep(step) {
 //     notRetriable（验证码/OTP/支付被拒等 STEP 4 诊断）仍被主循环短路。
 //   - 显式标记（verifyFailed 返回 error.needsReplan）
 const EVIDENCE_CONTRACT_FAMILY = ['VERIFICATION_FAILED', 'VERIFICATION_TOO_STRICT', 'STATE_UNKNOWN'];
+// C104（task_mttsa3a6bzlzm 实证）：动作工具失败的 error 只带 code（无 failureType），
+// 而 failureDiagnoser.POLICY / RETRY_POLICY_BY_CATEGORY 对元素定位族声明均为 'replan'——
+// isReplanCandidate 此前只认 failureType/needsReplan，导致该族永远到不了 replan 门（B 类不一致）。
+// 与 diagnoser 声明对齐；凭证/支付/登录类仍被 isCredentialishStep 挡在自动重规划之外。
+const REPLAN_CANDIDATE_CODES = [
+  'ELEMENT_NOT_FOUND', 'ELEMENT_NOT_INTERACTABLE', 'ELEMENT_CHANGED',
+  'NAVIGATION_FAILED', 'DOM_CHANGED', 'SUBMIT_RESULT_UNKNOWN',
+  'NO_OBSERVABLE_EFFECT', 'JS_RUNTIME_ERROR',
+];
 function isReplanCandidate(err, step) {
   if (!err) return false;
   if (err.needsReplan) return true;
@@ -944,6 +1011,12 @@ function isReplanCandidate(err, step) {
   if (ft === 'DOM_CHANGED') return true;
   if (ft === 'ACTION_REAL_FAILURE') return !isCredentialishStep(step);
   if (EVIDENCE_CONTRACT_FAMILY.includes(ft)) return !isCredentialishStep(step);
+  if (REPLAN_CANDIDATE_CODES.includes(err.code)) return !isCredentialishStep(step);
+  // C104b（task_mttszhds5q1jd 实证）：VERIFY_FAILED 到达 replan 门时修复链已耗尽，
+  // 「验证契约与真实页面状态系统性错配」（如联盟流程比计划多一跳：落地页→首页→signup），
+  // 继续重观察/重验证只会再次烧满预算。非凭证类验证失败 → 允许基于实况重规划剩余步骤；
+  // 凭证/支付/登录类红线不变，notRetriable（验证码/OTP/支付被拒）仍在主循环上游短路。
+  if (err.code === 'VERIFY_FAILED') return !isCredentialishStep(step);
   return false;
 }
 
@@ -977,6 +1050,9 @@ async function tryReplan(task, observation, steps, index) {
     const pr = await planner.replan(task, observation, steps.slice(index), provider);
     if (!pr || !pr.ok || !Array.isArray(pr.steps) || !pr.steps.length) {
       return { ok: false, error: (pr && pr.error) || 'replan 无步骤' };
+    }
+    if (pr.strippedSelectors > 0) {
+      events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'agent.replan_sanitized', payload: { strippedSelectors: pr.strippedSelectors } });
     }
     // 删除旧剩余步骤（index 起），写入新生成的剩余步骤
     steps.slice(index).forEach((s) => { try { store.remove('aiSteps', s.id); } catch (e) {} });

@@ -44,10 +44,14 @@ const CASES = [
     expectId: 'ariaBtn',
   },
   {
-    name: '7. 纯 icon button（无文本/aria）',
+    // C105 F1 契约修订（D-A 误点机器根因）：纯 icon button 无任何身份信号（text/aria/id/cls
+    // 全空）时，动作语义兜底不得再命中（零证据拒点）。旧 catch-all 对页面所有 button 同分 0.4、
+    // DOM 顺序决胜 → 语义「continue/submit」误点第一个无关按钮（法语站 Plateforme 实锤）。
+    // 有身份信号的 icon button（aria-label）仍由 case 6 覆盖：命中路径不变。
+    name: '7. 纯 icon button（无文本/aria）→ 零证据拒点',
     html: '<div><button id="iconBtn"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button></div>',
     targets: [{ semantic: '提交' }, { semantic: 'submit' }],
-    expectId: 'iconBtn',
+    expectNoCandidate: true,
   },
 ];
 
@@ -66,7 +70,8 @@ const CASES = [
       const top = cands[0];
       const gotId = top ? (top.elementId || top.selector) : '(none)';
       let ok = false;
-      if (c.expectId) ok = !!top && top.elementId === c.expectId;
+      if (c.expectNoCandidate) ok = !top;
+      else if (c.expectId) ok = !!top && top.elementId === c.expectId;
       else if (c.expectSel) ok = !!top && c.expectSel.test(top.selector);
       if (ok) pass++;
       rows.push({

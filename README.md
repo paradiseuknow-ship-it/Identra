@@ -34,7 +34,7 @@ npm run dev     # 开发模式（后端 8787 + 前端 5173 热更新）
 npm start       # 仅后端（生产/长跑；自动服务 client/dist 静态前端）
 npm run build   # 前端构建（client/dist）
 FPB_NO_EMPTY_OUT_DIR=1 npm run build   # 零删除构建（dist 累积后清空动作会被 safe-delete 守卫拦截时用）
-npm test        # 全量回归（runRegression.js 189 项 + phase9 182 项双护栏）
+npm test        # 全量回归（runRegression.js 194 项 + phase9 187 项双护栏）
 ```
 
 **一键启动（Windows，推荐）**：双击仓库根 `start.bat` —— 自动完成 Node 检查 → 服务端依赖 → 客户端依赖 → 前端构建 → 生成并写入 `FPB_MASTER_KEY` → 起服务并打开 `http://127.0.0.1:8787`。发布包解压后同样是双击 `start.bat`。
@@ -65,7 +65,7 @@ npm test        # 全量回归（runRegression.js 189 项 + phase9 182 项双护
 | 智能记忆 | 站点画像 / 元素记忆 / 流记忆 / 失败知识只读面板 + 经验包导出导入（跨环境迁移）+ Router 决策试算 / 环境推荐 / 经验健康看板（准确率、LLM 节省、Memory ROI、站点×环境矩阵） |
 | 治理与合规 | API Keys 自管（明文仅创建时出现一次、只读标记、撤销即失效）、凭据引用注册表（credentialRef 脱敏视图 + 明文就绪状态现算）、安全审计日志（只写不可篡改 + 过滤查询 + JSON 导出）、工作空间与成员 RBAC |
 | 任务取证 | 单任务详情：结构化诊断（根因/置信/重试策略/证据/失败快照）、修复尝试与策略成功率、执行记录、动作链重放 |
-| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（190/0 + OK=183/BAD=0） |
+| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（193/1 + OK=186/BAD=1，唯一失败=并行 C94 在途半成品） |
 
 ## 发布包（portable）
 ```bash
@@ -101,7 +101,7 @@ data/                 # 运行时存储（gitignore）
 
 ## 当前基线（2026-09-09）
 - **可靠性**：v2 池 100 任务 × 真实 deepseek：run3b→run6 = 95% → 97% → 98% → **99% SUCCESS**（唯一非 SUCCESS = CREDIBLE_BUSINESS 可信升级，按设计工作）
-- **回归护栏**：runRegression **190/0**（320.1s）+ phase9 **OK=183/BAD=0**（C92 后历史最佳；**C92 custom geolocation 非对称校验缺陷修复**：generate.js custom 分支原只校验 lat——ProfileEditor 地理位置选 custom、填纬度未填经度的自然中途输入态下 fp.geolocation.lng=undefined 直通 preview → 预览行 `undefined.toFixed(2)` TypeError → 编辑器整页渲染崩溃，保存后 launch 则 inject.js getCurrentPosition longitude: undefined 坐标伪装静默失效、NaN 透传；修复 = custom 分支对称 Number.isFinite(lat/lng)，坐标不成形回退 random 并如实改标 mode（对齐 ip 回退既有语义）+ client ProfileEditor 预览行改用 ui/kit fmtGeo 共享原语逐字段兜底；test_c92 21/0——P1 行为杀手真实模块实跑（lat-only/lng=NaN 两 killer 修复前实测产出畸形指纹+虚标 mode、修复后形状永远完整 + both-valid 精确保真/block/default 三态语义保留）、P2 fmtGeo 从实际源码提取 new Function 实跑（null/缺字段/NaN/正常四态零抛零泄漏）、P3 结构锚点（fmtGeo 消费+裸 toFixed 禁入+对称校验源码锚定），双向验证 stash 实测 pre-fix 7 fail / post-fix 21/0；前一交付 C91：test_c88 7/0 + test_c89 7/0 守护回填与 C90 数据清理收口，.benchmark 回归日志双落盘）
+- **回归护栏**：runRegression **193/1**（383.5s）+ phase9 **OK=186/BAD=1**（唯一失败 test_c94_safe_port = 并行 C94 批次 listenSafe 在途半成品，未跟踪新文件+18 处测试迁移 M 状态、其实现与自身 B2/B3 契约矛盾，非本批归属；C105 后口径；**C105 REAL-WEB AGENT RELIABILITY M1：F1-F6 落地 + 双回归归因修复**——F1 语义兜底词法关联收紧（零证据拒点，C105 法语站 Plateforme 误点机器根因）、F2 selector 接地判定降级为可观测标记 staleSelectorSuspected 不弃用（首轮回归实证：观察快照无法区分「selector 过期」与「目标尚未挂载」，弃用导致 step22 Scenario E 延时按钮被误判 → 语义兜底解析出合成 id #el-N → 30s 超时 → reload → BLANK 页死亡螺旋 → HUMAN_ESCALATION；D-B 死循环防护由 F5+F5b+repair 有界收口承担）、F3 P2 恒真判定表面化（host+pathname，query 不参与——pscd=try.webflow.com query 注入不再把真导航证据误判恒真）+ urlSurfaceKey 非法 URL 回退剥 query/hash 原始串（守卫不再静默失效，test_verification_invalid_evidence 28/28）、F4 replan 产出 selector 接地净化剥离留痕、F5 anti-flapping 同签名熔断 FLAP_THRESHOLD=4（阈值 2 会截断延时按钮「3 败 1 成」合法瞬时窗口——step22 63/0 实证修订）+ F5b reload 每 step 上限 1 次、F6 恢复词源接地（elementMissing 变体须在当前观察可解析）；test_c105_reliability 19/19 回放 fixture 守护 + matchedby 6/6 + 根目录 test_resolver 17/17（case7 改零证据拒点新契约）+ variant_cap 8/8；C104b replan gate unlock（runtime/planner 悬挂改动）随本批一并收口。前一交付 C92：custom geolocation 非对称校验缺陷修复（test_c92 21/0，详见 git 历史 e027450 后日志））
 - **交付 C83 — 审计覆盖对账（server/index.js 面）**：37 条 mutation 路由全量枚举，6 条真实审计链断裂补埋点 —— browser.evaluate（RCE 等价面）/ navigate / human-click/type/google-search（会话驱动面）/ cookies import（认证态注入）/ export（cookie exfil 面）/ automation/run 成功+失败双路径（业务关键 mutation）；detail 只记长度/数量（凭据明文红线），冻结 allowlist 豁免 5 条无状态预览/诊断面 + 2 条高频拟人流（环形缓冲冲刷边界），test_c83 72/0
 - **交付 C85 — /schedules 子路由审计闭环（scheduleTrigger.js 面，C84 登记的收尾候选）**：C84 闭环 agent/index.js 34 面后，/schedules 独立子路由（自带守卫也自带审计盲区）create/update/delete/trigger 四面零审计；补 4 处 audit.logRequest 埋点（ai.schedule.*），意图归因同款（resourceId=scheduleId，运行细节归 events/trace）；tick 高频自动触发不逐次审计（环形缓冲冲刷边界，events.emit('schedule.triggered') 已覆盖）仅手动 trigger 落审计，P2c 结构断言固化「审计只在 HTTP 意图层、模块层禁调」；objective/targetUrl 明文不入 detail（C81 红线），无效创建 400 不落审计（无实体即无意图实现），跨工作区 403 守卫先于埋点，test_c85 41/0
 - **交付 C84 — AI 面审计闭环（agent/index.js 面，C83 登记的后续批次）**：/api/ai/* 全部 34 条 mutation 路由此前零审计（AI 任务全生命周期在安全审计链不可见），补 28 处埋点 + 2 既有 secrets + 4 冻结豁免 = 34 面闭环；意图归因设计——审计只补「谁在何时对哪个任务做了什么」（resourceId=taskId），运行细节仍归 trace/aiSteps 证据链；/chat 审计点锚在任务创建：mock 规划恒失败（C79 已证边界）→ 400 响应但意图审计落盘（行为面最强实证）；聊天/暂停原因明文只记 *Len，modify 只记 patch 字段名（C81 红线）；audit.logRequest 共享原语提升（index.js auditReq 与 agent aiAudit 同源，C62 fsSafe 纪律），test_c84 102/0
