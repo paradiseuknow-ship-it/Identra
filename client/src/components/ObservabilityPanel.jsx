@@ -74,7 +74,7 @@ function TaskDashboard({ dash, tasks, onSelect, onViewDetail }) {
         <div className="text-[11px] text-gray-400">* 验证率为基于成功率的客户端估算值（后端未直接提供 verificationRate）。</div>
       )}
       <DeprecationView dash={dash} />
-      <div className="bg-white dark:bg-gray-800 rounded shadow">
+      <div className="card">
         <div className="px-4 py-2 border-b font-medium">任务列表</div>
         <table className="w-full text-sm">
           <thead>
@@ -88,7 +88,7 @@ function TaskDashboard({ dash, tasks, onSelect, onViewDetail }) {
           </thead>
           <tbody>
             {(tasks || []).map((tk) => (
-              <tr key={tk.id} className="border-t hover:bg-gray-50 dark:hover:bg-gray-700">
+              <tr key={tk.id} className="border-t border-edge/60 hover:bg-white/[0.03]">
                 <td className="px-4 py-2 font-mono text-xs">{tk.id}</td>
                 <td className="px-4 py-2">{tk.objective || tk.targetUrl || '-'}</td>
                 <td className="px-4 py-2">
@@ -115,7 +115,7 @@ function TaskDashboard({ dash, tasks, onSelect, onViewDetail }) {
 
 function Stat({ label, value, approx }) {
   return (
-    <div className="bg-white dark:bg-gray-800 rounded shadow p-3">
+    <div className="card p-3">
       <div className="text-xs text-gray-500">{label}{approx ? ' *' : ''}</div>
       <div className="text-2xl font-semibold">{value}</div>
     </div>
@@ -156,7 +156,7 @@ function ExecutionTimeline({ trace }) {
   const tl = (trace && trace.timeline) || [];
   if (!tl.length) return <div className="text-gray-400 text-sm p-4">该任务无时间线数据。</div>;
   return (
-    <div className="space-y-1 bg-white dark:bg-gray-800 rounded shadow p-3 max-h-[480px] overflow-auto">
+    <div className="space-y-1 card p-3 max-h-[480px] overflow-auto">
       {tl.map((n, i) => <TimelineNode key={i} n={n} />)}
     </div>
   );
@@ -168,7 +168,7 @@ function DeprecationView({ dash }) {
   const dep = dash && dash.deprecation;
   if (!dep) return null;
   return (
-    <div className="bg-white dark:bg-gray-800 rounded shadow">
+    <div className="card">
       <div className="px-4 py-2 border-b font-medium flex justify-between items-center">
         <span>遗留端点命中（Deprecation）</span>
         <span className="text-xs text-gray-400">总命中 {dep.total || 0}</span>
@@ -210,7 +210,7 @@ function DeprecationView({ dash }) {
 function CheckpointView({ trace }) {
   const cps = (trace && trace.timeline || []).filter((n) => n.kind === 'CHECKPOINT');
   return (
-    <div className="bg-white dark:bg-gray-800 rounded shadow p-3">
+    <div className="card p-3">
       <div className="font-medium mb-2">Checkpoint 恢复状态</div>
       {!cps.length && <div className="text-gray-400 text-sm">无 checkpoint。</div>}
       {cps.map((c, i) => (
@@ -227,7 +227,7 @@ function CheckpointView({ trace }) {
 
 function SnapshotView({ snapshots }) {
   return (
-    <div className="bg-white dark:bg-gray-800 rounded shadow p-3">
+    <div className="card p-3">
       <div className="font-medium mb-2">Browser Session / 失败快照</div>
       {(!snapshots || !snapshots.length) && <div className="text-gray-400 text-sm">无失败快照。</div>}
       {(snapshots || []).map((s) => (

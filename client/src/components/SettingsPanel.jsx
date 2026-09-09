@@ -279,11 +279,11 @@ function StorageView({ notify }) {
     setBusy(false);
   };
   return (
-    <div className="bg-white dark:bg-gray-800 rounded shadow p-4">
+    <div className="card p-4">
       <div className="font-medium mb-2 flex justify-between items-center">
         <span>存储使用</span>
         <span>
-          <button disabled={busy} onClick={preview} className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded mr-2 disabled:opacity-50">清理预览</button>
+          <button disabled={busy} onClick={preview} className="text-xs px-2 py-1 bg-white/[0.06] hover:bg-white/[0.1] rounded mr-2 text-slate-300 border border-edge/60 disabled:opacity-50">清理预览</button>
           {plan && plan.count > 0 && (
             <button disabled={busy} onClick={execute} className="text-xs px-2 py-1 bg-rose-600 text-white rounded disabled:opacity-50">确认清理（{plan.count} 项 / {fmtBytes(plan.freed)}）</button>
           )}
