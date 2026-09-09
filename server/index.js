@@ -997,7 +997,10 @@ settingsRouter.get('/settings/readiness', (req, res) => {
     const proxies = db.getProxies() || [];
     const snapshots = browserManager.runtimeSnapshots() || [];
 
-    const llmReady = !!(llm.provider && llm.provider.set) && !!(llm.apiKey && llm.apiKey.set);
+    // C95：provider 对运行时可选——agent 走 AI_PROVIDER（缺省 auto → 自动解析 DeepSeek），
+    // settings.provider 仅在显式覆盖时落盘；且 SettingsPanel 无 provider 输入项，旧判定
+    // 要求 provider.set 使「配好 Key 仍恒 SETUP_REQUIRED」（用户实录，真实缺陷）。
+    const llmReady = !!(llm.apiKey && llm.apiKey.set);
     const isLocal = !!u && u.status === 'local';
     const kind = !u ? 'none' : (u.__apiKey ? 'apiKey' : (isLocal ? 'local' : 'session'));
     const role = u ? (identity.roleOf(u.id, u.currentWorkspaceId) || null) : null;
@@ -1007,8 +1010,8 @@ settingsRouter.get('/settings/readiness', (req, res) => {
         detail: u ? `${u.username} · ${role || '无角色'} · ${kind === 'apiKey' ? 'API Key' : kind === 'local' ? '本地单机' : '会话登录'}` : '未解析到身份',
         hint: '本机模式自动引导；多用户模式需在治理中心建立账号与角色', panel: 'governance' },
       { key: 'llm', label: 'LLM 凭据', ok: llmReady, optional: false,
-        detail: llmReady ? `${llm.provider.masked} / ${(llm.model && llm.model.masked) || '(默认模型)'} / Key ${(llm.apiKey && llm.apiKey.masked) || ''}` : '缺少 provider 或 API Key',
-        hint: '系统设置 → LLM：填 provider 与 Key 后点「测试连通」', panel: 'settings' },
+        detail: llmReady ? `${(llm.provider && llm.provider.masked) || 'provider: auto (DeepSeek)'} / ${(llm.model && llm.model.masked) || '(默认模型)'} / Key ${(llm.apiKey && llm.apiKey.masked) || ''}` : '缺少 API Key（provider 缺省 auto，自动选择 DeepSeek）',
+        hint: '系统设置 → AI 模型：填 API Key 后点「测试连通」', panel: 'settings' },
       { key: 'profile', label: '浏览器配置', ok: profiles.length > 0, optional: false,
         detail: `${profiles.length} 个配置`, hint: '配置管理 → 新建配置，然后启动浏览器', panel: 'profiles' },
       { key: 'template', label: '指纹模板', ok: templates.length > 0, optional: true,
