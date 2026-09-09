@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import api from '../api';
 import { useEscapeClose } from '../lib/useEscapeClose.mjs';
+import { fmtGeo } from '../ui/kit';
 
 const OS_OPTIONS = ['Windows', 'macOS', 'Linux', 'Android', 'iOS'];
 const BROWSER_OPTIONS = ['Chrome', 'Edge', 'Safari'];
@@ -267,7 +268,7 @@ function SummaryPanel({ fp, form, onRegenerate, regenerating, isNew, onRetry, fp
           <Row label="User-Agent" value={fp.userAgent} multiline />
           <Row label="WebRTC" value={WEBRTC_OPTIONS.find((x) => x.value === (ov.webRtc || 'proxy'))?.label} />
           <Row label="时区" value={`${fp.timezone} (${fp.timezoneOffset >= 0 ? '+' : ''}${fp.timezoneOffset / 60}h)`} />
-          <Row label="地理位置" value={`[${fp.geolocation.mode}] ${fp.geolocation.lat.toFixed(2)}, ${fp.geolocation.lng.toFixed(2)}`} />
+          <Row label="地理位置" value={fmtGeo(fp.geolocation)} />
           <Row label="语言" value={fp.language} />
           <Row label="界面语言" value={fp.interfaceLanguage} />
           <Row label="分辨率" value={`${fp.screen.width}x${fp.screen.height} @ ${fp.screen.pixelRatio}x`} />

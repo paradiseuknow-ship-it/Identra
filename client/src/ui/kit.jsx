@@ -51,6 +51,13 @@ export function StatusPill({ status, tone }) {
   );
 }
 
+/** 地理位置 → 人话（C92：坐标缺失/NaN 逐字段兜底，绝不因对抗性指纹形状崩渲染） */
+export function fmtGeo(geo) {
+  if (!geo || typeof geo !== 'object') return '—';
+  const num = (v) => (Number.isFinite(v) ? v.toFixed(2) : '-');
+  return `[${geo.mode || 'random'}] ${num(geo.lat)}, ${num(geo.lng)}`;
+}
+
 /** 面板内小节标题 */
 export function SectionTitle({ children, action }) {
   return (

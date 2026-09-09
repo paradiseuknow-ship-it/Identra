@@ -164,12 +164,18 @@ function generateFingerprint(seedStr, override = {}, ipGeo = null) {
   let effectiveGeoMode = override.geolocation?.mode || 'random';
   if (ipResolved.geolocation) {
     geo = ipResolved.geolocation;
-  } else if (effectiveGeoMode === 'custom' && override.geolocation && typeof override.geolocation.lat === 'number') {
+  } else if (effectiveGeoMode === 'custom' && override.geolocation
+    && Number.isFinite(override.geolocation.lat) && Number.isFinite(override.geolocation.lng)) {
+    // C92：custom 分支原只校验 lat（typeof number）——lng 缺失/NaN 时 geo.lng=undefined/NaN 直通指纹：
+    // ① ProfileEditor 预览行 `undefined.toFixed(2)` TypeError → 编辑器整页渲染崩溃（填纬度未填经度的
+    //    自然中途输入态即可触发）；② inject.js getCurrentPosition longitude: undefined → 坐标伪装静默失效；
+    // ③ NaN 透传到 UI 与注入层。对称 Number.isFinite 校验：坐标不成形 → 视为 custom 未完成，回退
+    //    random 并把 mode 如实改标 'random'（对齐 ip 回退的既有改标语义，指纹形状永远完整）。
     geo = { lat: override.geolocation.lat, lng: override.geolocation.lng, accuracy: override.geolocation.accuracy || 100 };
   } else if (effectiveGeoMode === 'block') {
     geo = { lat: 0, lng: 0, accuracy: 0 };
   } else {
-    effectiveGeoMode = effectiveGeoMode === 'ip' ? 'random' : effectiveGeoMode;
+    effectiveGeoMode = (effectiveGeoMode === 'ip' || effectiveGeoMode === 'custom') ? 'random' : effectiveGeoMode;
     const picked = pick(rng, D.GEOLOCATIONS);
     geo = { lat: picked.lat, lng: picked.lng, accuracy: picked.accuracy };
   }

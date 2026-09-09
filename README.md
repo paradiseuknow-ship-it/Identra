@@ -65,7 +65,7 @@ npm test        # 全量回归（runRegression.js 189 项 + phase9 182 项双护
 | 智能记忆 | 站点画像 / 元素记忆 / 流记忆 / 失败知识只读面板 + 经验包导出导入（跨环境迁移）+ Router 决策试算 / 环境推荐 / 经验健康看板（准确率、LLM 节省、Memory ROI、站点×环境矩阵） |
 | 治理与合规 | API Keys 自管（明文仅创建时出现一次、只读标记、撤销即失效）、凭据引用注册表（credentialRef 脱敏视图 + 明文就绪状态现算）、安全审计日志（只写不可篡改 + 过滤查询 + JSON 导出）、工作空间与成员 RBAC |
 | 任务取证 | 单任务详情：结构化诊断（根因/置信/重试策略/证据/失败快照）、修复尝试与策略成功率、执行记录、动作链重放 |
-| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（189/0 + OK=182/BAD=0） |
+| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（190/0 + OK=183/BAD=0） |
 
 ## 发布包（portable）
 ```bash
@@ -101,7 +101,7 @@ data/                 # 运行时存储（gitignore）
 
 ## 当前基线（2026-09-09）
 - **可靠性**：v2 池 100 任务 × 真实 deepseek：run3b→run6 = 95% → 97% → 98% → **99% SUCCESS**（唯一非 SUCCESS = CREDIBLE_BUSINESS 可信升级，按设计工作）
-- **回归护栏**：runRegression **189/0**（332.7s）+ phase9 **OK=182/BAD=0**（C91 后历史最佳；并行流 C88/C89 缺陷修复缺守护层的回填批次：test_c88 7/0——A 层 OverviewPage C86 新 IA 下 SSR 运行时冒烟 + B 层行为杀手（从实际源文件提取 .sort 比较器 new Function 实跑混合 createdAt 类型数据集：数字时间戳/ISO 字符串/缺失/null，修复前代码实测 TypeError、修复后零抛且语义保持）+ C 层整类守卫「client/src 全部 .localeCompare 调用点必须 String() 归一两侧操作数」；test_c89 7/0——html 根 color-scheme: dark 锚定 @layer base + select option 显式落色兜底 + 全文件 color-scheme 声明一致性（无 light/冲突覆盖）；另收口 C90 数据清理：c90_cleanup_reset.js 清理脚本入库（KEEP 白名单保留 identity/vault/credentials/settings/aiWorkers）+ .gitignore 增补 _cleanup_backup_*/ 运行时数据备份永不入库，C90 清理后双回归全绿证明空集合基线健康，.benchmark 回归日志双落盘）
+- **回归护栏**：runRegression **190/0**（320.1s）+ phase9 **OK=183/BAD=0**（C92 后历史最佳；**C92 custom geolocation 非对称校验缺陷修复**：generate.js custom 分支原只校验 lat——ProfileEditor 地理位置选 custom、填纬度未填经度的自然中途输入态下 fp.geolocation.lng=undefined 直通 preview → 预览行 `undefined.toFixed(2)` TypeError → 编辑器整页渲染崩溃，保存后 launch 则 inject.js getCurrentPosition longitude: undefined 坐标伪装静默失效、NaN 透传；修复 = custom 分支对称 Number.isFinite(lat/lng)，坐标不成形回退 random 并如实改标 mode（对齐 ip 回退既有语义）+ client ProfileEditor 预览行改用 ui/kit fmtGeo 共享原语逐字段兜底；test_c92 21/0——P1 行为杀手真实模块实跑（lat-only/lng=NaN 两 killer 修复前实测产出畸形指纹+虚标 mode、修复后形状永远完整 + both-valid 精确保真/block/default 三态语义保留）、P2 fmtGeo 从实际源码提取 new Function 实跑（null/缺字段/NaN/正常四态零抛零泄漏）、P3 结构锚点（fmtGeo 消费+裸 toFixed 禁入+对称校验源码锚定），双向验证 stash 实测 pre-fix 7 fail / post-fix 21/0；前一交付 C91：test_c88 7/0 + test_c89 7/0 守护回填与 C90 数据清理收口，.benchmark 回归日志双落盘）
 - **交付 C83 — 审计覆盖对账（server/index.js 面）**：37 条 mutation 路由全量枚举，6 条真实审计链断裂补埋点 —— browser.evaluate（RCE 等价面）/ navigate / human-click/type/google-search（会话驱动面）/ cookies import（认证态注入）/ export（cookie exfil 面）/ automation/run 成功+失败双路径（业务关键 mutation）；detail 只记长度/数量（凭据明文红线），冻结 allowlist 豁免 5 条无状态预览/诊断面 + 2 条高频拟人流（环形缓冲冲刷边界），test_c83 72/0
 - **交付 C85 — /schedules 子路由审计闭环（scheduleTrigger.js 面，C84 登记的收尾候选）**：C84 闭环 agent/index.js 34 面后，/schedules 独立子路由（自带守卫也自带审计盲区）create/update/delete/trigger 四面零审计；补 4 处 audit.logRequest 埋点（ai.schedule.*），意图归因同款（resourceId=scheduleId，运行细节归 events/trace）；tick 高频自动触发不逐次审计（环形缓冲冲刷边界，events.emit('schedule.triggered') 已覆盖）仅手动 trigger 落审计，P2c 结构断言固化「审计只在 HTTP 意图层、模块层禁调」；objective/targetUrl 明文不入 detail（C81 红线），无效创建 400 不落审计（无实体即无意图实现），跨工作区 403 守卫先于埋点，test_c85 41/0
 - **交付 C84 — AI 面审计闭环（agent/index.js 面，C83 登记的后续批次）**：/api/ai/* 全部 34 条 mutation 路由此前零审计（AI 任务全生命周期在安全审计链不可见），补 28 处埋点 + 2 既有 secrets + 4 冻结豁免 = 34 面闭环；意图归因设计——审计只补「谁在何时对哪个任务做了什么」（resourceId=taskId），运行细节仍归 trace/aiSteps 证据链；/chat 审计点锚在任务创建：mock 规划恒失败（C79 已证边界）→ 400 响应但意图审计落盘（行为面最强实证）；聊天/暂停原因明文只记 *Len，modify 只记 patch 字段名（C81 红线）；audit.logRequest 共享原语提升（index.js auditReq 与 agent aiAudit 同源，C62 fsSafe 纪律），test_c84 102/0
