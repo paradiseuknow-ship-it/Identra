@@ -468,7 +468,14 @@ function selectorFor(el, index) {
   }
   if (el.tag === 'textarea') return 'textarea';
   if (el.tag === 'select') return 'select';
-  return '#' + escapeCss(el.id || 'el-' + index);
+  // C105 F10（真实站点实证 task_mtucm6q7dbnin）：旧兜底 `'#el-' + index` 是 observation 的
+  // **逻辑索引**，不是真实 DOM id —— locator('#el-37') 必然 30s boundingBox 超时，把
+  // 「找不到元素」这种快速失败退化成超时螺旋（随后触发 reload/变体，实证吃掉整个任务预算）。
+  // 无真实 DOM 锚点时返回 null：零证据拒点，快速失败，让恢复链走正常的 ELEMENT_NOT_FOUND 路径。
+  if (el.ariaLabel) return '[aria-label="' + String(el.ariaLabel).slice(0, 60).replace(/"/g, '\\"') + '"]';
+  if (el.text) return 'text="' + String(el.text).trim().slice(0, 30).replace(/"/g, '\\"') + '"';
+  if (el.name) return '[name="' + String(el.name).replace(/"/g, '\\"') + '"]';
+  return null;
 }
 
 // ── C105 F2/F4 共享原语：selector 接地判定 ────────────────────────────────

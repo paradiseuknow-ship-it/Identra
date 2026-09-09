@@ -46,7 +46,21 @@ const ACTION_CONSTRAINTS = [
   `action.target 至少提供以下之一: ${TARGET_KEYS.join(', ')}。`,
   'NAVIGATE 动作必须用 action.target.url（字符串，可为相对路径如 "/"），不要用 semantic 占位。',
   'OBSERVE/INSPECT 用 action.target.role="page" 或语义描述。',
-  'target 定位应使用「双键」：field（如 email/username/password/search，用于精确匹配 name/id/placeholder/aria-label/label）+ semantic（中文语义描述，如 "企业邮箱"）。两者都提供时定位最稳。',
+  // C105 F9（真实站点实证 task_mtucbulim7n6a）：旧契约要求 semantic 用「中文语义描述」，
+  // 而 C104b 又要求逐字引用页面原文——两条约束自相矛盾。首步规划时页面尚未打开（无观察清单），
+  // 模型只能遵循本条 → 产出「Get started 按钮」「注册邮箱输入框」等中文意译语义；
+  // 经 F1 零证据拒点后与英文/法文页面零词法交集 → 解析零候选 + element_present 验证恒失败
+  // （实证：4 次 VERIFY_FAILED 同签名 → 熔断升级）。真实信号是页面原文，不是翻译。
+  'target 定位应使用「双键」：field（如 email/username/password/search，用于精确匹配 name/id/placeholder/aria-label/label）+ semantic。两者都提供时定位最稳。',
+  '【semantic 语言契约（硬性）】semantic 必须是目标站点页面上**真实出现的原文文本**（verbatim），禁止翻译、意译或概括性中文描述：站点是英文就写 "Get started"/"Sign up"，法文就写 "Commencez gratuitement"。规划时若尚未打开页面（无观察清单），按目标站点的语言写其常见 CTA 原文（如 "Get started"、"Sign up"、"Start for free"），**禁止写「注册入口按钮」「Get started 按钮」这类中文意译**——中文语义在英文/法文页面上零词法交集，会导致定位零候选与验证恒失败。',
+  '【首步导航契约】任务提供了入口地址（targetUrl）时，计划第一步必须是 navigate 打开该地址，之后才允许对页面元素做 click/fill。禁止把 navigate 排到后续步骤而在未打开页面时就操作元素。',
+  // C105 F11（真实站点实证 task_mtucm6q7dbnin）：模型把 CTA 文案（"Start for free"）与编造的
+  // DOM id（"continue-nav"）写进 field；field 会被拿去做 name/id/placeholder/aria-label 精确
+  // 匹配，臆造值必然匹配不到（实证：humanClick element not found: #continue-nav 连续 10+ 次）。
+  '【field 契约（硬性）】field 只能是两类值：① 通用字段语义键（email/username/password/search/card/cvv/expiry/zip/city/address/phone 等）；② 观察清单中元素的真实 name/id/placeholder 原文。**禁止把按钮/链接文案当 field（如 "Start for free"、"Get started"），也禁止编造 DOM id（如 "continue-nav"、"signup-submit"）** —— 臆造 field 必然匹配不到元素并触发「未找到」。不确定时宁可省略 field，只给 semantic。',
+  // 同上实证：navigate 到联盟入口后，url_contains "webflow.com" 在动作前就成立（入口域名本身），
+  // 被 P2 无效证据守卫拒绝 4 次，真实到达的导航被判失败。契约层必须避免这类无区分度证据。
+  '【navigate 证据契约】navigate 步骤的 url_contains/url_pattern 的 expect **不得是入口地址已有的域名或路径片段**（如入口是 https://try.webflow.com/xxx 时禁止用 "webflow.com" 作成功证据——它在动作前就成立，会被判为无效证据）。打开落地页类步骤应改用落地页真实存在的元素/文案做证据（element_present/text_present，用站点语言原文），或用目标页特有路径片段。',
   `fill/press 必须提供 action.value（普通字段）或 action.credentialRef（敏感字段），二者至少其一。`,
   'fill/press 敏感字段（password/card/cvv/otp/token 等）必须用 credentialRef 引用，禁止 value 字面量（安全约束，不可违反）。',
   'P1 凭据字段契约：当任务上下文提供了可用凭据清单时，身份类字段（email/邮箱/username/账号/登录名）同样必须用 action.credentialRef 引用凭据清单中的原样 id，禁止自行编造 value（清单里的凭据就是该站点正确用户名，编造必然登录失败并触发人工升级）。仅当凭据清单为空或全部不可用时，才允许对非敏感字段使用 value。凭据清单为空时，禁止在任何步骤输出 credentialRef 字段（执行期必然 CREDENTIAL_UNAVAILABLE 并直送人工升级）——非敏感字段一律用 value，敏感字段动作不要规划。',
@@ -55,7 +69,9 @@ const ACTION_CONSTRAINTS = [
   'VERIFICATION 强制：每个 click / fill / submit 步骤都必须提供有意义的 verification（type 非空 none）。这是硬性要求，缺少将被拒绝。',
   'verification 优先使用可观测判定：text_present（页面出现某文本）/ element_present（某元素出现）/ url_contains（URL 变化；expect 必须是动作执行前 URL 中不存在的片段 —— 若入口 URL 已包含该片段，验证将被判为无效证据而失败，如登录页为 /saas/login.html 时不得用 "saas" 作成功证据，应改用 text_present/element_present/storage）/ url_pattern（URL 正则匹配，形如 {"type":"url_pattern","pattern":"/dashboard$"}，同理 pattern 不得在动作前已匹配）/ storage（Web Storage 键存在或等值，形如 {"type":"storage","storageType":"localStorage","key":"authenticated","equals":"true"}，敏感键由观察层自动脱敏）；无可观测量时用 action_success。',
   'url_contains/url_pattern 只用于「确信动作成功后浏览器会跳转到新 URL」的场景。若无法从页面/任务上下文确认会发生 URL 跳转（典型：单页应用登录成功后在原页面原地展开面板/看板，URL 完全不变），必须改用 element_present 或 text_present（登录成功后才出现的元素/文本，如看板标题、用户名、退出按钮），禁止凭猜测写 url_contains "dashboard" 类证据 —— URL 不变的站点上该证据恒假，会把真实成功误判为失败。',
-  'P2 element 证据 expect 契约：element_present/element_absent 的 expect 只允许两种形态——① 合法 CSS 选择器（#id / .class / tag / [attr=\'值\']；id=regForm 这类缺 #/. 前缀、括号不平衡的写法会被 schema 拒绝并要求重规划）；② 页面上真实存在的语义描述（如「登录按钮」「商品列表容器」，禁止臆造页面中不存在的元素名，如从未出现过的 id=regForm/productSpecs）。text_present 的 expect 必须是成功后页面真实会出现的文本，禁止臆造文案。',
+  // C105 F9：同上语言契约同步到证据面——中文 expect（"注册入口按钮"）在英文页零匹配会被判
+  // required unmet，把真实到达的成功导航误判为失败（实证同上）。
+  'P2 element 证据 expect 契约：element_present/element_absent 的 expect 只允许两种形态——① 合法 CSS 选择器（#id / .class / tag / [attr=\'值\']；id=regForm 这类缺 #/. 前缀、括号不平衡的写法会被 schema 拒绝并要求重规划）；② 站点语言下页面真实存在的语义描述（英文站写 "Sign up form"/"Dashboard"，禁止中文意译如「注册入口按钮」，也禁止臆造页面中不存在的元素名，如从未出现过的 id=regForm/productSpecs）。text_present 的 expect 必须是成功后页面真实会出现的文本（同样用站点语言原文），禁止臆造文案。',
   'navigate 冒充 fill 禁令：navigate 只打开页面、永远不会输入值。凡需要向输入框/表单字段输入内容（如「在搜索框中输入关键词」）的步骤禁止用 navigate（会被 schema 拒绝并要求重规划）——必须拆为 navigate（打开页面）+ fill（输入值，target 用 {field, semantic}）两步；navigate 步骤的 semantic/expectedResult 应包含导航宾语（网址/页面/访问/打开）。',
   P4_CONTRACT,
   P5_CONTRACT,
@@ -355,9 +371,12 @@ async function planObjective({ objective, target, constraints, credentialRefs, e
       (CB || '') +
       `输出格式示例：{ "goal": "...", "steps": [ ` +
       `{ "id":"step_001","type":"NAVIGATE","description":"打开页面","expectedOutcome":"页面加载","risk":"LOW","action":{ "type":"navigate","target":{ "url":"${target || '/'}" },"risk":"LOW" } },` +
-      `{ "id":"step_002","type":"ACT","description":"填写邮箱","expectedOutcome":"邮箱输入框已填入凭据中的用户名","risk":"MEDIUM","action":{ "type":"fill","target":{ "field":"email","semantic":"企业邮箱" },"credentialRef":"cred_xxx","risk":"MEDIUM","verification":{ "type":"text_present","expect":"登录" } } },` +
+      // C105 F9：示例此前用中文意译 semantic/expect，模型照抄（真实站点实证）→ 改为站点语言原文示例
+      `{ "id":"step_002","type":"ACT","description":"填写邮箱","expectedOutcome":"邮箱输入框已填入凭据中的用户名","risk":"MEDIUM","action":{ "type":"fill","target":{ "field":"email","semantic":"Work email" },"credentialRef":"cred_xxx","risk":"MEDIUM","verification":{ "type":"text_present","expect":"Welcome" } } },` +
       `（上例 step_002 的 credentialRef 字段仅在任务提供了凭据清单时才允许存在：cred_xxx 必须替换为「可用凭据」清单中的原样 id，凭据清单非空时 email/username 等身份字段禁止用 value 编造；凭据清单为空时禁止在任何步骤输出 credentialRef 字段 —— step_002 应改用 value 填写或整体省略该字段，违反任一规则都将被拒绝并要求重规划）` +
-      `{ "id":"step_003","type":"ACT","description":"点击登录","expectedOutcome":"登录成功后页面出现登录后内容（看板/用户名等）","risk":"MEDIUM","action":{ "type":"click","target":{ "field":"loginBtn","semantic":"登录按钮" },"risk":"MEDIUM","verification":{ "type":"element_present","expect":"dashboard" } } } ] }`,
+      // expect 保持小写 dashboard：既是英文原文（符合站点语言契约），也与
+      // test_state_reset_evidence_guard C2 的字面守护一致（示例必须从 url_contains 改为 element_present）
+      `{ "id":"step_003","type":"ACT","description":"点击登录","expectedOutcome":"登录成功后页面出现登录后内容（看板/用户名等）","risk":"MEDIUM","action":{ "type":"click","target":{ "field":"loginBtn","semantic":"Sign in" },"risk":"MEDIUM","verification":{ "type":"element_present","expect":"dashboard" } } } ] }`,
     schema: { instructions: plannerInstructions(), validate: validatePlan },
     maxRetries: 3,
     label: 'plan',

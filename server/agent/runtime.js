@@ -707,8 +707,15 @@ async function run(taskId) {
       const _att = (pendingAction && pendingAction.target) || (step.action && step.action.target) || null;
       let _tk = '';
       try {
-        const _keys = _att && typeof _att === 'object' ? Object.keys(_att).sort() : [];
-        _tk = JSON.stringify(_att, _keys);
+        // C105 F13（真实站点实证 task_mtudmyy7rg926）：恢复变体只轮换 semantic 而 field 不变
+        // （"注册密码输入框"→email→password→username，field 恒为 password），旧签名含完整 target
+        // JSON → 每次变体都是「新签名」→ 熔断永不触发（实证同一字段重试 12 次、耗掉 473s 预算）。
+        // 修复：field 存在时以 field 为稳定签名键（同一字段找不到 = 同一失败），否则退回排序 JSON。
+        if (_att && typeof _att === 'object' && _att.field) _tk = 'field:' + String(_att.field);
+        else {
+          const _keys = _att && typeof _att === 'object' ? Object.keys(_att).sort() : [];
+          _tk = JSON.stringify(_att, _keys);
+        }
       } catch (e) { _tk = String(_att); }
       const _sig = ((r.error && r.error.code) || 'UNKNOWN') + '|' + _tk;
       if (_flapStepId !== step.id) { _flapStepId = step.id; _lastFailSig = null; _sameFailCount = 0; }

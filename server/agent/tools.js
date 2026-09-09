@@ -736,7 +736,26 @@ async function runTool(action, resolved, meta) {
 // 查询顺序（降本）：显式 selector → Element Memory（confidence≥0.8 且 pattern 命中）→ semanticResolver。
 // 记忆只产出候选，不直接执行；低置信度自动降级 semanticResolver。
 // meta：透传 selFromMemory / selPattern 供 execute 层统计与误报追踪。
+// C105 F10（真实站点实证 task_mtucm6q7dbnin）：observation 的 `#el-N` 只是**逻辑索引**，
+// 不是真实 DOM id —— locator('#el-37') 恒 30s boundingBox 超时，把「未找到元素」这种
+// 快速失败退化成超时螺旋（随后 reload/变体循环，实证吃掉整个任务预算并升级人工）。
+// 根因（selectorFor 不再产出 #el-N，见 semanticResolver F10）已修；此处为执行面统一守卫：
+// 任何来源（elementMemory 历史缓存、LLM 显式 selector、replan 遗留）的合成 id 一律拒用，
+// 返回 null 让调用方走 ELEMENT_NOT_FOUND 快速失败 + 正常恢复链。
+const SYNTHETIC_ID_RE = /^#el-\d+$/;
+function isSyntheticSelector(sel) {
+  return !!sel && SYNTHETIC_ID_RE.test(String(sel).trim());
+}
 async function resolveSelector(action, obs, meta, page, opts) {
+  const r = await resolveSelectorInner(action, obs, meta, page, opts);
+  if (r && isSyntheticSelector(r.selector)) {
+    if (meta) { meta.syntheticSelectorRejected = r.selector; }
+    return null;
+  }
+  return r;
+}
+
+async function resolveSelectorInner(action, obs, meta, page, opts) {
   const t = action.target || {};
   // Phase 9 P2：opts.prefer 为「在已发现候选内部优先挑选」的谓词（如 submit 需可触发控件）。
   // 仅在候选存在时改变挑选顺序；不做新发现、不重试、不改变候选生成与评分。

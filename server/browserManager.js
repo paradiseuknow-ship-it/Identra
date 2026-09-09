@@ -687,8 +687,27 @@ async function humanClick(page, selector, options = {}) {
   if (page && typeof page.isClosed === 'function' && page.isClosed()) {
     throw new Error('humanClick: 页面已关闭，放弃点击 ' + selector);
   }
-  const loc = page.locator ? page.locator(selector).first() : page.$(selector);
-  const box = await (loc.boundingBox ? loc.boundingBox() : loc.then((el) => el && el.boundingBox()));
+  const loc0 = page.locator ? page.locator(selector).first() : page.$(selector);
+  let loc = loc0;
+  const box0 = await (loc0.boundingBox ? loc0.boundingBox() : loc0.then((el) => el && el.boundingBox()));
+  let box = box0;
+  // C105 F14（真实站点实证 task_mtudaiwupwsmo）：重复 id 在真实站点极其常见，且**第一个实例
+  // 往往是隐藏副本**（响应式站点的移动端/备选副本，w=0,h=0）。旧实现只取 .first() → box 为 null
+  // → 误报 "element not found"，而该元素在页面上真实存在且可见。
+  // 实证：联盟落地页 #continue-nav 共 4 个实例，首个 w=0（隐藏），两个可见实例（245×51 / 142×51）
+  // 排在后面 —— 连续 18 次假性 ELEMENT_NOT_FOUND，恢复链反复 reload，最终升级人工。
+  // 修复：首个实例无有效 box 时，按 DOM 顺序在其余匹配项中找第一个真实可见（有面积）的实例。
+  // 边界：不改变「元素确实不存在」的语义 —— 全部实例都无 box 时仍照原样抛 not found。
+  if (!box && page.locator) {
+    try {
+      const n = await page.locator(selector).count();
+      for (let i = 1; i < n && !box; i++) {
+        const cand = page.locator(selector).nth(i);
+        const b = await cand.boundingBox({ timeout: 3000 }).catch(() => null);
+        if (b && b.width > 0 && b.height > 0) { loc = cand; box = b; }
+      }
+    } catch (e) { /* 计数/遍历失败：保持原行为（不因诊断逻辑吞掉真实错误） */ }
+  }
   if (!box) throw new Error('humanClick: element not found: ' + selector);
   // 点击元素内部一个非中心点（更自然），避开边缘
   const targetX = box.x + box.width * randomBetween(0.35, 0.65);
