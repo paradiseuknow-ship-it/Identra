@@ -14,6 +14,7 @@ const events = require('./events');
 const checkpoint = require('./checkpoint');
 const verification = require('./verification');
 const observation = require('./observation');
+const stagedForm = require('./stagedFormAdvance');
 const verificationIntelligence = require('./verification/verificationIntelligence');
 
 // v0.2.2：孤儿收口守卫（Business Loop 专项 §十三~§十五）。任何 task 终态转换前，先把仍停在 RUNNING 的
@@ -590,6 +591,8 @@ async function run(taskId) {
   // maxRetries 3 内的全部合法重试窗口，仍能截断 C105 式 20+ 长循环（配合 F5b reload 上限）。
   const FLAP_THRESHOLD = 4;
   let _flapStepId = null, _lastFailSig = null, _sameFailCount = 0;
+  // C106 F15：分步表单推进记账（每 step 上限 MAX_ADVANCE_PER_STEP，防止连续推进造成业务副作用）
+  const _advanceCountByStep = new Map();
 
   // Phase 12B §T13：任务级整体墙钟超时（默认关；policy.taskTimeoutMs 可开启）。
   // 防止「每步都很快但总步数无穷」导致任务永不终态。超时即收口为 FAILED。
@@ -729,6 +732,51 @@ async function run(taskId) {
         type: 'agent.flapping_detected',
         payload: { signature: _lastFailSig, consecutive: _sameFailCount, strategy: 'skip_deterministic_retry_to_repair' },
       });
+    }
+    // C106 F15：分步表单推进（advance-then-recheck）。
+    // 真实站点实证（C105 第 4 轮 task_mtudmyy7rg926）：注册流程为分步表单（邮箱 → 继续 → 密码），
+    // planner 假设单页表单 → fill password 时字段【尚未挂载】→ ELEMENT_NOT_FOUND →
+    // 重试/replan/熔断只是在重放同一个不可能成功的动作（实证同字段 12 次 / 473s → FAILED）。
+    // 「目标尚未出现」与「目标不存在」是两种语义：前者必须先推进流程再重查。
+    // 触发面严格受限：字段类动作 + ELEMENT_NOT_FOUND + 未熔断 + 有重试预算 + 每 step 上限 2 次，
+    // 且只点保守前进词表解析出的控件（语义/接地链路与正常动作同源，见 stagedFormAdvance 模块头）。
+    if (canRetry && !flapping && r.error && r.error.code === 'ELEMENT_NOT_FOUND'
+        && stagedForm.isFieldTargetAction(pendingAction || step.action)) {
+      const _advUsed = _advanceCountByStep.get(step.id) || 0;
+      if (_advUsed < stagedForm.MAX_ADVANCE_PER_STEP) {
+        _advanceCountByStep.set(step.id, _advUsed + 1);
+        let adv = { advanced: false, reason: 'not_attempted' };
+        try {
+          adv = await stagedForm.tryAdvance({
+            task, step, action: pendingAction || step.action,
+            tools, observation, browserManager, events,
+          });
+        } catch (e) {
+          adv = { advanced: false, reason: 'advance_error:' + String((e && e.message) || e).slice(0, 120) };
+        }
+        events.emit({
+          taskId: task.id, executionId: task.currentExecutionId, stepId: step.id,
+          type: 'agent.staged_form_advance',
+          payload: {
+            advanced: !!(adv && adv.advanced),
+            term: (adv && adv.term) || null,
+            selector: (adv && adv.selector) || null,
+            reason: (adv && adv.reason) || null,
+            used: _advUsed + 1,
+            max: stagedForm.MAX_ADVANCE_PER_STEP,
+            field: ((pendingAction || step.action).target || {}).field || null,
+          },
+        });
+        if (adv && adv.observation) beforeObs = adv.observation;
+        if (adv && adv.advanced) {
+          // 页面已推进 → 原失败签名不再成立（不是「重放同一失败」），重置 flap 记账，
+          // 否则推进式重试会被 F5 熔断误伤，前 2 次推进白费。
+          _sameFailCount = 0;
+          _lastFailSig = null;
+          pendingAction = null;
+          continue; // 重新执行同一 step：目标字段此时应当已可解析
+        }
+      }
     }
     if (canRetry && !flapping) {
       // Phase 7 防御：若 step 在 store 中已为终态（如 repair 已置 SUCCESS），不再尝试 HEALING（会触发非法状态转换），
