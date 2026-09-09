@@ -152,6 +152,7 @@ export const api = {
 
   // vault
   setVault: (id, b) => req('POST', '/vault/' + id, b),
+  getVault: (id) => req('GET', '/vault/' + id),
 
   // tasks
   listTasks: () => req('GET', '/tasks'),

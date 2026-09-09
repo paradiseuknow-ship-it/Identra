@@ -63,13 +63,16 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved, noti
   const [form, setForm] = useState(() => (profile ? normalizeProfile(profile) : emptyProfile()));
   const [fp, setFp] = useState(profile?.fingerprint || null);
   const [vault, setVault] = useState({ email: '', password: '', card: { number: '', expMonth: '', expYear: '', cvv: '', name: '', zip: '' } });
+  const [vaultSummary, setVaultSummary] = useState(null); // C98：已保存凭据掩码摘要（明文永不回传，空字段 ≠ 未保存）
   const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState(''); // C98：保存失败内联持久化（toast 闪逝 → 用户以为保存成功却数据消失）
   const [regenerating, setRegenerating] = useState(false);
   const [fpError, setFpError] = useState(null);
   const [templates, setTemplates] = useState([]); // C13：新建时的可选模板基线
 
   useEffect(() => {
     if (isNew) api.listTemplates().then(setTemplates).catch(() => {});
+    else api.getVault(profile.id).then(setVaultSummary).catch(() => {}); // C98：掩码摘要回显
   }, [isNew]);
 
   const sectionRefs = {
@@ -149,6 +152,7 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved, noti
 
   const save = async () => {
     setBusy(true);
+    setSaveError('');
     try {
       const payload = buildPayload(form);
       let saved;
@@ -164,7 +168,10 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved, noti
         });
       }
       onSaved();
-    } catch (e) { notify?.('保存失败: ' + e.message, false); }
+    } catch (e) {
+      setSaveError(e.message || String(e)); // C98：错误常驻弹层，直到下一次重试
+      notify?.('保存失败: ' + e.message, false);
+    }
     finally { setBusy(false); }
   };
 
@@ -192,9 +199,17 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved, noti
           <div ref={mainRef} className="flex-1 overflow-y-auto p-5 space-y-6">
             <div data-tab="basic" ref={sectionRefs.basic}><BasicTab form={form} setField={setField} setOv={setOv} isNew={isNew} templates={templates} /></div>
             <div data-tab="proxy" ref={sectionRefs.proxy}><ProxyTab form={form} setField={setField} proxies={proxies} /></div>
-            <div data-tab="account" ref={sectionRefs.account}><AccountTab form={form} setField={setField} setBehavior={setBehavior} vault={vault} setVault={setVault} /></div>
+            <div data-tab="account" ref={sectionRefs.account}><AccountTab form={form} setField={setField} setBehavior={setBehavior} vault={vault} setVault={setVault} vaultSummary={vaultSummary} /></div>
             <div data-tab="fingerprint" ref={sectionRefs.fingerprint}><FingerprintTab form={form} setField={setField} setOv={setOv} setNested={setNested} fp={fp} refreshPreview={refreshPreview} /></div>
             <div data-tab="advanced" ref={sectionRefs.advanced}><AdvancedTab form={form} setField={setField} setOv={setOv} /></div>
+
+            {!busy && saveError && (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+                <div className="text-xs font-medium text-amber-300 mb-1">保存失败</div>
+                <div className="text-xs text-slate-300 leading-relaxed break-words">{saveError}</div>
+                <div className="text-[11px] text-slate-500 mt-1.5">数据未保存。若提示环境不存在，请关闭后从环境列表重新打开（列表可能已过期）。</div>
+              </div>
+            )}
 
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={onClose} className="px-4 py-2 rounded bg-edge hover:bg-slate-700">取消</button>
@@ -471,9 +486,25 @@ function ProxyTab({ form, setField, proxies }) {
   );
 }
 
-function AccountTab({ form, setField, setBehavior, vault, setVault }) {
+function AccountTab({ form, setField, setBehavior, vault, setVault, vaultSummary }) {
+  const saved = vaultSummary && !vaultSummary.locked;
+  const hasAnySaved = saved && (vaultSummary.hasEmail || vaultSummary.hasPassword || (vaultSummary.card && vaultSummary.card.numberMasked));
   return (
     <div className="space-y-4">
+      {vaultSummary?.locked && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300">
+          凭据库已锁定（解密失败，可能更换了主密钥）。凭据密文仍在，但无法读取摘要；重新保存将覆盖。
+        </div>
+      )}
+      {hasAnySaved && (
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/[0.06] p-3 text-xs text-slate-300">
+          <span className="font-medium text-emerald-400">已保存凭据：</span>
+          {vaultSummary.hasEmail ? <span className="ml-2">邮箱 {vaultSummary.emailMasked}</span> : null}
+          {vaultSummary.hasPassword ? <span className="ml-2">密码已设置</span> : null}
+          {vaultSummary.card?.numberMasked ? <span className="ml-2">卡号 {vaultSummary.card.numberMasked}</span> : null}
+          <div className="text-[11px] text-slate-500 mt-1">出于安全设计，明文不会回传前端。下方输入框留空 = 保留已保存值；填入新值 = 覆盖。</div>
+        </div>
+      )}
       <Section title="账号凭据 (AES 加密)">
         <div className="grid grid-cols-2 gap-4">
           <Field label="邮箱"><input className="inp" value={vault.email} onChange={(e) => setVault({ ...vault, email: e.target.value })} /></Field>
