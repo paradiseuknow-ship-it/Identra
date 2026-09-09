@@ -71,9 +71,7 @@ function startRejectProxy() {
       } catch (e) { /* ignore */ }
     });
   });
-  return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port, state }));
-  });
+  return require('./lib_safe_port').listenSafe(server, '127.0.0.1').then(() => ({ server, port: server.address().port, state }));
 }
 
 (async () => {

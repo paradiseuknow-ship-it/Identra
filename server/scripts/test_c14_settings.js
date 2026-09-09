@@ -75,7 +75,7 @@ const KEY = 'sk-c14testkey1234567890abcdef';
         res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }], usage: { total_tokens: 1 } }));
       });
     });
-    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    await require('./lib_safe_port').listenSafe(server, '127.0.0.1');
     const port = server.address().port;
     try {
       settings.updateSettings({ baseUrl: `http://127.0.0.1:${port}`, model: 'stub-model', apiKey: KEY });
@@ -96,7 +96,7 @@ const KEY = 'sk-c14testkey1234567890abcdef';
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Authentication Fails' }));
     });
-    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    await require('./lib_safe_port').listenSafe(server, '127.0.0.1');
     const port = server.address().port;
     try {
       settings.updateSettings({ baseUrl: `http://127.0.0.1:${port}`, apiKey: 'sk-wrong' });

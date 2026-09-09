@@ -49,7 +49,7 @@ function startMockServer() {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(fs.readFileSync(file));
   });
-  return new Promise((r) => server.listen(0, '127.0.0.1', () => r(server)));
+  return require('./lib_safe_port').listenSafe(server, '127.0.0.1');
 }
 
 // ────────────────────────────────────────────────────────────────────────────

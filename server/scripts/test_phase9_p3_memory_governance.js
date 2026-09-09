@@ -68,7 +68,7 @@ function startMockServer() {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(fs.readFileSync(file));
   });
-  return new Promise((r) => server.listen(0, '127.0.0.1', () => r(server)));
+  return require('./lib_safe_port').listenSafe(server, '127.0.0.1');
 }
 
 // 读取某 site+semantic 下所有记录的 success 总和（跨 context 汇总，避免 context 差异干扰）

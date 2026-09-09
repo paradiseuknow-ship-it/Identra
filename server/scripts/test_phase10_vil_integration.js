@@ -32,7 +32,7 @@ function startServer() {
       res.end(data);
     });
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port })));
+  return require('./lib_safe_port').listenSafe(server, '127.0.0.1').then((srv) => ({ server: srv, port: srv.address().port }));
 }
 
 async function main() {

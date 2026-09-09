@@ -69,7 +69,7 @@ function fakeUpstream({ destroyAfterTunnel = false, rejectFirstN = 0 } = {}) {
 }
 
 function listen(server) {
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+  return require('./lib_safe_port').listenSafe(server, '127.0.0.1').then(() => server.address().port);
 }
 
 // 对 shim 发 CONNECT 并收集响应直到 idle

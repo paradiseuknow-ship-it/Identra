@@ -31,6 +31,7 @@ const db = require('../db');
 const { generateFingerprint, seedFromProfile } = require('../fp/generate');
 const browserManager = require('../browserManager');
 const { chromium } = require('playwright');
+const { listenSafe } = require('./lib_safe_port');
 
 const results = [];
 function assert(name, cond, detail) {
@@ -54,7 +55,7 @@ async function probeNativeBrands() {
   const SYSTEM_CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
   const executablePath = fs.existsSync(SYSTEM_CHROME) ? SYSTEM_CHROME : undefined;
   const srv = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<html>probe</html>'); });
-  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  await listenSafe(srv, '127.0.0.1');
   try {
     const browser = await chromium.launch({ headless: true, executablePath });
     try {
@@ -92,7 +93,7 @@ function contractMatchesNative(replayed, native) {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end('<html><body>ok</body></html>');
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await listenSafe(server, '127.0.0.1');
   const port = server.address().port;
 
   // P4.2：注入前先取原生基准（独立探针，不经产品注入链）

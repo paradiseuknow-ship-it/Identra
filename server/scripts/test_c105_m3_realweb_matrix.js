@@ -126,7 +126,9 @@ const idOf = (c) => (top(c) && (top(c).elementId || top(c).selector)) || '(none)
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(html);
   });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  // C94：临时端口必须避开 Chrome unsafe-port 黑名单（端口 0 自动分配可能命中 6000 等 →
+  // page.goto net::ERR_UNSAFE_PORT 概率性假红）。统一消费 lib_safe_port 共享原语。
+  await require('./lib_safe_port').listenSafe(server, '127.0.0.1');
   const BASE = 'http://127.0.0.1:' + server.address().port;
   const browser = await chromium.launch({ headless: true });
 

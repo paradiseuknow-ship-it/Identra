@@ -60,7 +60,7 @@ async function probe(bin, userDataDir, extraArgs) {
   // （about:blank/data: 上两者均 undefined——C2 单测 line70 既有结论），故统一走
   // 127.0.0.1 本地 origin（localhost = secure context）。
   const srv = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<html><body>nidp</body></html>'); });
-  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  await require('./lib_safe_port').listenSafe(srv, '127.0.0.1');
   const origin = 'http://127.0.0.1:' + srv.address().port + '/';
   const args = ['--no-first-run', '--no-default-browser-check'];
   if (extraArgs) args.push(...extraArgs);

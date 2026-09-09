@@ -106,7 +106,7 @@ const JS_PROBE = () => new Promise((resolve) => {
 
 async function runCase({ identityObj, extraArgs, cdpSetup }) {
   const { srv, seen } = makeCaptureServer();
-  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  await require('./lib_safe_port').listenSafe(srv, '127.0.0.1');
   const origin = 'http://127.0.0.1:' + srv.address().port + '/';
   let dir = null;
   const args = ['--no-first-run', '--no-default-browser-check'];
@@ -208,7 +208,7 @@ async function main() {
     // 已知边界（C 类，记录不修）：mobile 是 plain-Bool binding，省略与显式 false
     // 不可区分，无 fallback 可能（会破坏合法 mobile=false 覆盖语义）。
     const ovSrv = makeCaptureServer();
-    await new Promise((r) => ovSrv.srv.listen(0, '127.0.0.1', r));
+    await require('./lib_safe_port').listenSafe(ovSrv.srv, '127.0.0.1');
     const ovOrigin = 'http://127.0.0.1:' + ovSrv.srv.address().port + '/';
     let ovCtx = null;
     try {
