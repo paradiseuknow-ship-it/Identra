@@ -93,6 +93,11 @@ function wrap(raw, kind) {
 
   async function structured(ctx, { system, prompt, schema, maxRetries = 2, label = 'output' }) {
     let lastErr = null;
+    // C96：重试提示必须在原始 prompt 之上追加，不得整体替换——
+    // 旧实现 schema-fail / 调用失败两条路径都把 prompt 覆盖成纯修复指令，
+    // 用户原始目标文本彻底离开上下文，模型只能对着「请输出 JSON」自拟内容
+    // （实录：objective 被偷换为模型回声「修正输出格式…」，planner 无目标自拟 example.com）。
+    const originalPrompt = prompt;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         const resp = await track(ctx, 'structured', () => raw.chat([
@@ -103,7 +108,7 @@ function wrap(raw, kind) {
         const vr = schema.validate(json);
         if (!vr.ok) {
           lastErr = new ProviderError(`Schema 校验失败: ${(vr.errors || []).join('; ')}`, 'SCHEMA_FAIL');
-          prompt = `上一次输出不符合要求：${(vr.errors || []).join('; ')}\n请修正并只输出 JSON。\n\n要求：\n${schema.instructions || ''}`;
+          prompt = `${originalPrompt}\n\n（上一次输出不符合要求：${(vr.errors || []).join('; ')}。请修正并只输出 JSON。）\n\n要求：\n${schema.instructions || ''}`;
           continue;
         }
         return vr.plan || vr.action || json;
@@ -111,7 +116,7 @@ function wrap(raw, kind) {
         lastErr = e;
         if (e instanceof BudgetExceededError) throw e;
         if (attempt >= maxRetries) break;
-        prompt = `调用失败：${String(e.message || e).slice(0, 200)}。请重试，并只输出符合要求的 JSON。`;
+        prompt = `${originalPrompt}\n\n（上次输出无法解析：${String(e.message || e).slice(0, 200)}。请重试，并只输出符合要求的 JSON。）`;
       }
     }
     throw lastErr || new ProviderError(label + ' 生成失败', 'PROVIDER_FAIL');

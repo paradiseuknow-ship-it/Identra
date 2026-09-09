@@ -126,6 +126,21 @@ export default function AiPanel({ profiles, notify, onViewDetail, onGoToSettings
       <div className="grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)_280px] gap-5">
         {/* —— 左栏：Task（Goal composer + Plan + Approval）—— */}
         <div className="space-y-5">
+          {/* C96：当前任务目标卡 —— 从 New Task / 队列跳转进来时，目标与状态常驻可见，
+              消除「输入的内容丢了」感知（实录：用户跳转后只看到空输入框）。 */}
+          {selectedTask && taskDetail && (
+            <div className="card p-4 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] tracking-widest text-slate-500 uppercase">当前任务</span>
+                <span className="text-[11px] text-slate-500 inline-flex items-center gap-1.5">
+                  <StatusDot tone={statusTone(taskDetail.status)} live={isLive} />
+                  {humanStatus(taskDetail.status)}
+                </span>
+              </div>
+              <div className="text-sm text-slate-200 leading-snug">{taskDetail.objective || taskDetail.name}</div>
+              {taskDetail.targetUrl && <div className="text-xs text-slate-500 truncate" title={taskDetail.targetUrl}>{taskDetail.targetUrl}</div>}
+            </div>
+          )}
           <div className="card p-5 space-y-3.5">
             <div>
               <div className="text-sm font-medium text-slate-100 inline-flex items-center gap-2"><span className="text-accent"><IconAI /></span>给 AI 一个目标</div>

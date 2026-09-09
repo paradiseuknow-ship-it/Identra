@@ -63,7 +63,13 @@ async function parse(text, provider, ctx = {}) {
         maxRetries: 1,
         label: 'parse',
       });
-      if (parsed && parsed.objective) return parsed;
+      if (parsed && parsed.objective) {
+        // C96 防御：LLM 偶发丢 target —— URL 提取是确定性的，启发式兜底合并，
+        // 保证用户给的网址永不因 LLM 输出缺陷而丢失（实录：example.com 自拟事故）。
+        const h = heuristicParse(text);
+        if (!parsed.target && h.target) parsed.target = h.target;
+        return parsed;
+      }
     } catch (e) {
       // LLM 解析失败回退启发式
     }
