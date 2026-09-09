@@ -110,7 +110,40 @@ function remove(ref) {
   store.remove('aiCredentials', ref);
 }
 
-module.exports = { createSecret, getByRef, resolve, listMasked, listRecords, remove, maskedView, recordUsage, SECRET_TYPES };
+// C99：vault→credentialRef 自动接线（B 类 wiring gap）。
+// 此前 ProfileEditor 保存 vault 凭据后没有任何路径注册 cred_ 引用 —— planner 的
+// 可用凭据清单恒为空 → 敏感字段门确定性拒绝 → needsCredentials 恒成立，
+// 「用户已配置凭据」的产品承诺在规划链路上断裂（e2e 实证：12:59/13:07/13:28 三次
+// 同型失败）。此处在任务创建前按 profileId 幂等补注册：email/password → email_password，
+// card.number → payment。引用不含明文，available 仍由 vault 现算（computeAvailable）。
+function ensureProfileRefs(profileId, site, stamp) {
+  if (!profileId) return [];
+  const refs = [];
+  try {
+    const s = vault.getProfileSecrets(profileId);
+    if (!s) return [];
+    const want = [];
+    if (s.email || s.password) want.push('email_password');
+    if (s.card && s.card.number) want.push('payment');
+    for (const type of want) {
+      const existing = store.read('aiCredentials', []).find((r) => r.profileId === profileId && r.type === type);
+      const rec = existing || createSecret({
+        profileId,
+        type,
+        site: site || null,
+        label: type === 'payment' ? '环境支付凭据（自动注册）' : '环境登录凭据（自动注册）',
+        workspaceId: stamp && stamp.workspaceId,
+        createdBy: stamp && stamp.createdBy,
+      });
+      refs.push(rec.id);
+    }
+  } catch (e) {
+    return []; // vault 锁定/IO 失败 → 回退为无自动引用（不阻断规划，门禁语义不变）
+  }
+  return refs;
+}
+
+module.exports = { createSecret, getByRef, resolve, listMasked, listRecords, remove, ensureProfileRefs, maskedView, recordUsage, SECRET_TYPES };
 
 // Credential 使用记录（不存值，只存引用/字段/结果）—— 供购买流程追溯"哪个账号用了哪个凭据"
 function recordUsage({ taskId, credentialId, site, fields, result, error }) {

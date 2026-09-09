@@ -51,7 +51,11 @@ const RESULT = {
 
 // 工具级操作超时：短于 Playwright 默认 30s 与 runtime REPAIR_TIMEOUT(90s)，
 // 让浏览器层先于两者失败并回到 Runtime 收口。
-const TOOL_OP_TIMEOUT_MS = Number(process.env.TOOL_OP_TIMEOUT_MS) || 25000;
+// C100：默认 25s 会把 schema 导航族 30s（C100 action.js）拦腰截断 —— e2e 实证
+// "navigate 超时（>25000ms）"先于动作自身超时触发，同一不一致性的第二层。
+// 提升默认到 45s：> 导航族 30s 动作超时，< REPAIR_TIMEOUT(90s) 与动态步看门狗
+// （max(30s, timeoutMs+25s) ≥ 55s）。env 仍可覆盖。
+const TOOL_OP_TIMEOUT_MS = Number(process.env.TOOL_OP_TIMEOUT_MS) || 45000;
 
 // 检测页面/上下文是否已失效：失效则立即抛，避免把请求发往已死的 CDP 连接（那是挂死高发区）。
 function assertPageAlive(page) {

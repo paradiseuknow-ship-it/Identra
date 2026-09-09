@@ -548,6 +548,20 @@ router.post('/chat', async (req, res) => {
     } catch (e) { /* Router 失败不阻断，沿用既有逻辑 */ }
 
     // 3) 创建 Task（不执行，等待人工确认 Plan）
+    // C99：vault→credentialRef 自动接线 —— 任务生效环境配置了凭据（vault）却无 cred_ 引用时，
+    // 幂等补注册并把引用挂到任务上。否则敏感字段门恒见空清单 → needsCredentials 恒成立，
+    // 「已配置凭据」在规划链路断裂（e2e 实证三连失败）。
+    let credentialRefs = Array.isArray(parsed.credentialRefs) ? parsed.credentialRefs.filter(Boolean) : [];
+    try {
+      const effProfileId = recommendedProfileId || profileId || null;
+      if (effProfileId) {
+        const autoRefs = secretManager.ensureProfileRefs(effProfileId, parsed.target || null, {
+          workspaceId: req.identityUser ? req.identityUser.currentWorkspaceId : undefined,
+          createdBy: req.identityUser ? req.identityUser.id : undefined,
+        });
+        credentialRefs = [...new Set([...credentialRefs, ...autoRefs])];
+      }
+    } catch (e) { /* 接线失败不阻断：维持原清单，门禁语义不变 */ }
     // CAP-K2：Router 决策摘要（含失败经验 warnings）随任务落库，经 contextBuilder 进 Planner 上下文
     const { toIntelligence } = require('./intelligence/router/taskInputEnhancer');
     const intelligence = toIntelligence(routerDecision);
@@ -557,7 +571,7 @@ router.post('/chat', async (req, res) => {
       targetUrl: parsed.target || '',
       profileId: recommendedProfileId,
       executionMode: ['SIMULATION', 'ASSIST', 'AUTONOMOUS', 'DEBUG'].includes(executionMode) ? executionMode : 'ASSIST',
-      secretRefs: parsed.credentialRefs || [],
+      secretRefs: credentialRefs,
       constraints: parsed.constraints || [],
       routerHints: intelligence || undefined,
     });
@@ -567,7 +581,7 @@ router.post('/chat', async (req, res) => {
     aiAudit(req, 'ai.chat', 'ai_task', task.id, { sessionId: session.id, messageLen: String(message).length });
 
     // 4) Planner → Plan（先查 Flow Memory，高置信度直接加载历史流程，跳过 LLM；不自动执行）
-    const pr = await flowPlanner.planWithMemory({ ...parsed, executionMode: task.executionMode, provider: prov, ctx: { taskId: task.id } });
+    const pr = await flowPlanner.planWithMemory({ ...parsed, credentialRefs, executionMode: task.executionMode, provider: prov, ctx: { taskId: task.id } });
     if (!pr.ok) {
       try { taskManager.deleteTask(task.id); } catch (e) {}
       return res.status(400).json({ ok: false, error: pr.error || '计划生成失败' });

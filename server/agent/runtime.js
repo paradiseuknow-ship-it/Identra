@@ -598,9 +598,14 @@ async function run(taskId) {
       skipExecution = false;
     } else {
       try {
+        // C100：看门狗必须大于动作自身超时 —— schema 导航族默认 30s（C100）+ pageReady 8s +
+        // 观察开销，30s 固定值会在慢站点导航上先于动作超时触发，把「动作超时可重试」
+        // 错标成「浏览器无响应」。改为 max(30s, 动作 timeoutMs + 25s) 动态看门狗。
+        const _aMs = (step && step.action && Number(step.action.timeoutMs)) || 0;
+        const _watchdogMs = Math.max(STEP_TIMEOUT_MS, _aMs + 25000);
         r = await Promise.race([
           runStep(task, step, beforeObs, pendingAction),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('STEP_TIMEOUT')), STEP_TIMEOUT_MS)),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('STEP_TIMEOUT')), _watchdogMs)),
         ]);
       } catch (stepHang) {
         // C69：显式杀死 ghost 注册 —— 重试耗尽走 repair 分支时不再起新 runStep，

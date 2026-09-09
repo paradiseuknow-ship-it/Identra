@@ -233,7 +233,13 @@ function validateAction(raw) {
 
   if (errors.length) return { ok: false, errors };
 
-  // 规范化
+  // C100：导航族动作默认超时与交互动作分离。此前统一兜底 15000 —— tools.js navigate 的
+  // 30s 默认被 schema 默认值静默压到 15s，慢站点（重定向链/首载 >15s，e2e 实证
+  // try.webflow.com 每次导航 STEP_TIMEOUT）必死且自愈无法恢复（每次重试同预算）。
+  // 导航/等待族 30s；交互（点击/输入/悬停等）维持 15s。显式传入仍受 60000 上限约束。
+  const NAV_FAMILY_DEFAULT_MS = 30000;
+  const isNavFamily = type === 'navigate' || type === 'reload' || type === 'back' || type === 'wait';
+  const defaultTimeoutMs = isNavFamily ? NAV_FAMILY_DEFAULT_MS : 15000;
   const action = {
     type,
     target: {},
@@ -244,7 +250,7 @@ function validateAction(raw) {
     risk: raw.risk || riskFloorFor(type, raw),
     verification: raw.verification && raw.verification.type && raw.verification.type !== 'none' ? raw.verification : { type: 'none' },
     expectedBusinessState: hasBusinessState ? raw.expectedBusinessState : null,
-    timeoutMs: Number.isInteger(raw.timeoutMs) && raw.timeoutMs > 0 ? Math.min(raw.timeoutMs, 60000) : 15000,
+    timeoutMs: Number.isInteger(raw.timeoutMs) && raw.timeoutMs > 0 ? Math.min(raw.timeoutMs, 60000) : defaultTimeoutMs,
     retryable: raw.retryable !== false,
   };
   for (const k of TARGET_KEYS) {
