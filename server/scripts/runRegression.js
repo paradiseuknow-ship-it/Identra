@@ -26,6 +26,20 @@ const ROOT = path.join(__dirname, '..', '..');
 const SCRIPTS_DIR = path.join(ROOT, 'server', 'scripts');
 const OUT_DIR = path.join(ROOT, '.benchmark');
 
+// ---------------------------------------------------------------------------
+// 环境确定性加固（PHASE 17-C，2026-09-11；**零断言改动**）
+//
+// 执行器环境的 TEMP/TMP 在后台任务 / 嵌套 shell 下并不确定（可能缺失或为 POSIX 形态），
+// 而 os.tmpdir() 会因此回落到「可创建但不可列」的 %SystemRoot%\temp → esbuild 解析
+// resolveDir 父目录时 Access is denied → 8 个 SSR/esbuild 套件整套假红
+// （c70/c74/c78/c80/c81/c82/c87/c88）。**不是代码回归，是执行器环境非确定性。**
+//
+// 完整根因链、两次实证与踩坑记录见 `server/scripts/tmpEnvGuard.js` 头部注释。
+// 这里只做一件事：**任何环境变量都不依赖**地把 TEMP/TMP 固定到可列目录。
+// ---------------------------------------------------------------------------
+const { ensureListableTemp } = require('./tmpEnvGuard');
+const TMP_ENV = ensureListableTemp();
+
 // 每个测试文件的超时上限（毫秒）。超时按失败计，避免 CI 被悬挂进程卡死。
 const PER_TEST_TIMEOUT_MS = Number(process.env.REGRESSION_TIMEOUT_MS) || 180000;
 
@@ -117,6 +131,7 @@ const t0 = Date.now();
 console.log('回归执行器：' + files.length + ' 个测试文件'
   + (ONLY ? '（过滤: ' + ONLY + '）' : '')
   + (Object.keys(knownGaps).length ? '，已登记缺口 ' + Object.keys(knownGaps).length + ' 项' : ''));
+console.log('临时目录：' + TMP_ENV.dir + (TMP_ENV.changed ? '（已从不「可列」目录加固，见 ensureListableTemp）' : ''));
 console.log('─'.repeat(96));
 
 for (const { file, label } of files) {

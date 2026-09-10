@@ -27,7 +27,11 @@ function validateFlow(flow) {
     if (blob.includes('"' + k + '"')) errors.push('state 禁止包含字段 ' + k);
   }
   for (const h of FORBIDDEN_VALUE_HINTS) {
-    if (blob.includes(h)) errors.push('state 禁止包含 ' + h);
+    // 2026-09-10（PHASE 17-C 顺带取证）：blob 已 toLowerCase，而提示串 'document.querySelector'
+    // 含大写 S → 该条**恒不命中**（死护栏，与 SEC7 同因）。此处改为双向小写。
+    // 影响面已取证：server/data/aiFlowMemory.json 对三种禁用形态零命中 → 本修正为**纯收紧**，
+    // 不改变任何已落库记录的判定结果。
+    if (blob.includes(h.toLowerCase())) errors.push('state 禁止包含 ' + h);
   }
   // 状态必须有 id 与 name，且 next 必须可达（DONE 终结）
   const ids = new Set();

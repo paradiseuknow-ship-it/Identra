@@ -12,6 +12,28 @@ ROOT="$(pwd)"
 # 该 Node 版执行器跨平台（Windows 下 npm 用 cmd.exe 执行 scripts，无法调用 bash），
 # 且支持已知缺口登记与取证跳过计数。本 shell 脚本保留仅为兼容既有使用习惯。
 NODE="${NODE:-node}"
+
+# ── 环境确定性加固（PHASE 17-C，2026-09-11；零断言改动）─────────────────────
+# 执行器环境的 TEMP/TMP 在后台任务 / 嵌套 shell 下并不确定（可能缺失，或为 POSIX
+# 形态 /tmp 而 MSYS 的环境变量转换在 argv / env / 脚本内 export 三条路径上不一致），
+# 而 os.tmpdir() 会因此回落到「可创建但不可列」的 %SystemRoot%\temp → 测试能建出
+# fixture，但 esbuild 解析 stdin.resolveDir 的父目录时 Access is denied
+# → 8 个 SSR/esbuild 套件整套假红（c70/c74/c78/c80/c81/c82/c87/c88）。
+# **不是代码回归，是执行器环境非确定性。**
+#
+# ⚠️ 两个已踩过的坑（勿回退）：
+#   1) 在外层命令里 `export TEMP=...` **不会**传递进嵌套 bash → 必须在脚本内部导出。
+#   2) 候选**只能是 Windows 绝对路径**。写成 `/tmp` 时 MSYS 会把它映射成
+#      `C:\WINDOWS` → mkdtemp 报 EPERM。
+#
+# 处置：整段判定交给 Node 侧的**唯一事实源**（server/scripts/tmpEnvGuard.js，
+# 不依赖任何环境变量：LOCALAPPDATA → os.homedir() → 仓库内 .benchmark/.tmp 兜底）。
+# 完整根因链见该文件头部注释。env 正常时此处零行为变化。
+if [ -f server/scripts/tmpEnvGuard.js ]; then
+  _fix="$("$NODE" server/scripts/tmpEnvGuard.js 2>/dev/null || true)"
+  if [ -n "${_fix:-}" ]; then export TEMP="$_fix"; export TMP="$_fix"; fi
+fi
+echo "临时目录: ${TEMP:-<未设置>}"
 OUT=".benchmark/phase9_regression_$(date +%Y%m%d_%H%M%S).txt"
 mkdir -p .benchmark
 

@@ -472,6 +472,15 @@ function complete(id, result) {
     const flowMemory = require('./intelligence/flowMemory');
     flowMemory.recordFlowFromTask(task);
   } catch (e) { /* 经验落库失败不影响任务结果 */ }
+  // PHASE 17-C 消费点：成功任务提炼 Skill Candidate（设计依据 17-B §7.4）。
+  // 与 flowMemory **并列**消费同一成功事件，而非替换：
+  //   flowMemory = 低门槛「快速通道」层（保留既有 84 次成功复用的正面实证，本阶段不动）
+  //   skill      = 契约化层（更严门禁：≥2 次独立成功 + 证据链 + 状态契约；本阶段**只产 CANDIDATE**）
+  // 关键：只消费 complete() 路径 —— 该方法仅在全部业务验证通过后才被调用（假成功不入 Skill，防线 P5）。
+  // fail-open：任何异常都不影响任务结果；本模块**不接执行**（Skill 不驱动动作）。
+  try {
+    require('./skill/skillBuilder').observe(task);
+  } catch (e) { /* Skill 提炼失败不影响任务结果 */ }
   // Phase 3.4 消费点：成功 → 更新 Profile 评分 / 站点成功率 / 生命周期
   try {
     const site = siteOfUrl(task.targetUrl);

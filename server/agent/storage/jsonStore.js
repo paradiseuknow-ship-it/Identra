@@ -39,6 +39,11 @@ const FILES = {
   aiProfileBindings: 'aiProfileBindings.json',
   aiPlannerEvidence: 'aiPlannerEvidence.json',
   aiSchedules: 'aiSchedules.json', // CAP-M1：定时触发 / 批量执行计划
+  // PHASE 17-C：Project Skill 域（设计依据 17-B §17.3 —— 走同一 Facade，不新建存储系统）
+  aiSkill: 'aiSkill.json',                 // Skill 主记录（状态机 + 契约 + 统计 + 生命周期）
+  aiSkillHistory: 'aiSkillHistory.json',   // 版本快照（append-only，供 rollback）
+  aiSkillEvidence: 'aiSkillEvidence.json', // 证据链（**独立集合**：体量大，必须配水位）
+  aiSkillRuns: 'aiSkillRuns.json',         // 重放记录（独立性判定的唯一数据源）
   deprecationHits: 'deprecationHits.json', // C44：遗留端点（RFC 8594）命中计数
 };
 
@@ -57,6 +62,11 @@ const AUTO_ARCHIVE_LIMITS = {
   aiTasks: 4000,
   aiRepairAttempts: 4000,
   aiPlannerEvidence: 3000,
+  // PHASE 17-C：Skill 域水位。aiSkill 主记录规模小（一个 capability/site 一条，10²–10³）**刻意不设限**；
+  // 证据链与重放记录按每次重放一条增长（10⁴–10⁵ 量级），必须配水位 —— 否则重演 aiAttempts 42MB 事故。
+  aiSkillEvidence: 3000,
+  aiSkillRuns: 4000,
+  aiSkillHistory: 2000,
 };
 
 function archiveDateString(d) {
