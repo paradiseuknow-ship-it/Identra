@@ -42,6 +42,7 @@ const EVENT_TYPES = [
   'agent.diagnosed', 'agent.escalating',
   // C106 F15：分步表单推进（目标字段尚未出现 → 点前进控件后重查；带 term/selector/advanced 取证）
   'agent.staged_form_advance',
+  'agent.bot_challenge_detected',
   'task.paused', 'task.resumed', 'task.completed', 'task.failed', 'task.cancelled',
   // A 类 cancel deadline（2026-08-31）：cancel 收尾链任一环节超时/异常时的审计事件
   'task.cancel_timeout',

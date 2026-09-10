@@ -43,6 +43,44 @@ const FIELD_TOKENS = {
   submit: ['submit', 'signin', 'signup', 'login', 'search', 'continue', 'next', 'proceed', 'ok', 'done', 'save'],
 };
 
+// C106 F16：field 权威校验（真实站点实证——Webflow 注册任务 task_mtuqje3txasfd）：
+//   idx27 fill {semantic:'注册邮箱输入框', field:'email'}    SUCCESS
+//   idx28 fill {semantic:'注册密码输入框', field:'password'} FAILED 未找到输入目标
+//   idx29 fill {semantic:'email',          field:'password'} SUCCESS ← 静默填错字段
+// 根因：field 解析不到时，评分器退而接受 semantic='email' 命中的 **email 输入框**，
+// 于是「填密码」把密码写进了邮箱框并判成功。对 write 类动作，写错字段比找不到更危险：
+// 前者污染站点数据且验证很可能看不见，后者至少走恢复链。
+// 规则：target.field 存在且与 semantic 不等价时，候选元素必须自带 field 证据才合格。
+const FIELD_TYPE_EQUIV = {
+  password: 'password', passwd: 'password', pwd: 'password',
+  email: 'email', mail: 'email', 'e-mail': 'email',
+  search: 'search', query: 'search', q: 'search',
+  tel: 'tel', phone: 'tel', mobile: 'tel',
+  url: 'url', link: 'url',
+  username: 'text', user: 'text', login: 'text',
+};
+
+// 元素是否自带「我就是这个 field」的证据：属性命中 field token，或 input type 语义等价。
+function fieldMatchesElement(field, el) {
+  if (!field || !el) return false;
+  if (scoreField(field, el).score > 0) return true;
+  const f = normalize(field);
+  const wantType = FIELD_TYPE_EQUIV[f];
+  if (wantType && String(el.type || '').toLowerCase() === wantType) return true;
+  return false;
+}
+
+// field 与 semantic 是否已表达同一目标（此时无需额外强校验，避免误伤
+// {semantic:'Password', field:'password'} 这类正常组合）。
+function fieldSemanticEquivalent(field, semantic) {
+  if (!field || !semantic) return false;
+  const f = normalize(field);
+  const s = normalize(semantic);
+  if (!f || !s) return false;
+  if (f === s || f.includes(s) || s.includes(f)) return true;
+  return false;
+}
+
 // Phase 9 P6（CJK 缩写扩展）：电商/表单高频行业缩写 → 全称。
 // 背景（smoke5 rw.094 铁证）：语义「加购按钮」与「加入购物车」无连续子串关系
 // （加_入_购_物_车），中文 bigram 重叠为 0；而任意带「按钮」后缀的元素（如搜索按钮，
@@ -538,4 +576,6 @@ function cssGroundedInObs(sel, el) {
   return saw;
 }
 
-module.exports = { resolve, normalize, synonymSet, semanticVariants, selectorFor, escapeCss, SYNONYMS, CJK_ABBREVIATIONS, scoreNearbyText, scoreSemantic, scoreField, BARE_TAGS, bareTagHint, scoreBareTag, selectorGrounded };
+module.exports = { resolve, normalize, synonymSet, semanticVariants, selectorFor, escapeCss, SYNONYMS, CJK_ABBREVIATIONS, scoreNearbyText, scoreSemantic, scoreField, BARE_TAGS, bareTagHint, scoreBareTag, selectorGrounded,
+  // C106 F16：field 权威校验（防「填错字段」型假成功）
+  fieldMatchesElement, fieldSemanticEquivalent, FIELD_TYPE_EQUIV };

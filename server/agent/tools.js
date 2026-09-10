@@ -453,6 +453,10 @@ async function runTool(action, resolved, meta) {
     }
     case 'click': {
       const obs = await withBrowserOp('click.inspect', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId }));
+      // C106 F17b：观察失败 ≠ 元素不存在。真实站点实证：整页 evaluate 抛错 → inspect 返回
+      // {ok:false} 且无 observation → resolveSelector 必然返回 null → 报 ELEMENT_NOT_FOUND
+      // → 上层走 replan/升级链，但真实原因是「此刻看不见页面」。fail-loud 交给等待重试恢复。
+      if (obs && obs.ok === false) return RESULT.error('OBSERVATION_FAILED', '页面不可观察，跳过 click: ' + String(obs.error || '').slice(0, 160));
       const beforeObs = obs.ok ? obs.observation : null;
       const sel = await resolveSelector(action, obs.observation, meta, page);
       if (!sel) return RESULT.error('ELEMENT_NOT_FOUND', '未找到目标元素: ' + (action.target.semantic || action.target.field || action.target.text || '?'));
@@ -565,6 +569,10 @@ async function runTool(action, resolved, meta) {
     }
     case 'fill': {
       const obs = await withBrowserOp('fill.inspect', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId }));
+      // C106 F17b：同 click 分支 —— 观察失败不得被误报成「字段不存在」。
+      // 更要紧的是：观察空集时若仍按 semantic 解析，会把值填进**语义相近的另一个字段**
+      // （实证：target {semantic:'email', field:'password'} 静默填进了 email 框并判 SUCCESS）。
+      if (obs && obs.ok === false) return RESULT.error('OBSERVATION_FAILED', '页面不可观察，跳过 fill: ' + String(obs.error || '').slice(0, 160));
       const beforeObs = obs.ok ? obs.observation : null;
       const sel = await resolveSelector(action, obs.observation, meta, page);
       if (!sel) return RESULT.error('ELEMENT_NOT_FOUND', '未找到输入目标: ' + (action.target.field || action.target.semantic || '?'));
@@ -801,7 +809,22 @@ async function resolveSelectorInner(action, obs, meta, page, opts) {
   // 2) semanticResolver（多信号评分；传入完整 target 对象以启用 field 权威键）
   const cands = semanticResolver.resolve(t, obs);
   if (cands.length) {
-    const best = pickFrom(cands);
+    let best = pickFrom(cands);
+    // C106 F16：field 权威校验 —— target.field 与 semantic 表达不同目标时
+    // （实证 {semantic:'email', field:'password'}），候选必须自带 field 证据，
+    // 否则宁可判「未找到」也不能把值写进语义相近的另一个字段。
+    if (best && t.field && t.semantic && !semanticResolver.fieldSemanticEquivalent(t.field, t.semantic)
+        && !semanticResolver.fieldMatchesElement(t.field, best.el)) {
+      const alt = cands.find((c) => c && c.el && semanticResolver.fieldMatchesElement(t.field, c.el));
+      if (alt) {
+        best = alt;
+      } else if (meta) {
+        meta.fieldMismatchRejected = { field: t.field, semantic: t.semantic, rejected: best.selector };
+        return null; // 拒绝「填错字段」型假成功；交给 ELEMENT_NOT_FOUND 恢复链
+      } else {
+        return null;
+      }
+    }
     const out = { selector: best.selector, pattern: elementMemory.patternOf(best.el), semantic, fromMemory: false };
     if (meta) {
       meta.selFromMemory = false; meta.selPattern = null;

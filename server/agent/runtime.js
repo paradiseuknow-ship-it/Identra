@@ -15,6 +15,7 @@ const checkpoint = require('./checkpoint');
 const verification = require('./verification');
 const observation = require('./observation');
 const stagedForm = require('./stagedFormAdvance');
+const botChallenge = require('./botChallenge');
 const verificationIntelligence = require('./verification/verificationIntelligence');
 
 // v0.2.2：孤儿收口守卫（Business Loop 专项 §十三~§十五）。任何 task 终态转换前，先把仍停在 RUNNING 的
@@ -732,6 +733,35 @@ async function run(taskId) {
         type: 'agent.flapping_detected',
         payload: { signature: _lastFailSig, consecutive: _sameFailCount, strategy: 'skip_deterministic_retry_to_repair' },
       });
+    }
+    // C106 F18：反爬/人机验证挑战页识别 —— 只识别并显式升级，**绝不绕过**。
+    // 真实站点实证（task_mtuqje3txasfd + probe_c106_empty_obs_1788998063594）：
+    // 点进注册入口后落地的其实是 PerimeterX 挑战页（"Confirm you're not a bot …"，
+    // DOM 仅 22–26 节点、零 input），而 agent 仍按注册表单语义反复 fill password
+    // → ELEMENT_NOT_FOUND ×4 + 分步推进 no_advance_control ×2 → 空转 283s，
+    // 升级理由写「重试4次耗尽」，完全没提「被人机验证挡住」——运营无法据此决策。
+    // 红线：不自动解题、不隐藏自动化痕迹、不触碰挑战控件；这里只做「识别 + 交给人」。
+    if (r.error) {
+      const _bcObs = r.observation || beforeObs || null;
+      let _bcHtml = '';
+      try {
+        const _pg = await browserManager.getPage(task.profileId);
+        if (_pg && typeof _pg.evaluate === 'function') {
+          _bcHtml = await _pg.evaluate(() => (document.documentElement ? document.documentElement.outerHTML.slice(0, 20000) : ''));
+        }
+      } catch (e) { _bcHtml = ''; }
+      let bc = { blocked: false, vendor: null, confidence: 0, evidence: [] };
+      try { bc = botChallenge.detect(_bcObs, { url: (_bcObs && _bcObs.url) || null, html: _bcHtml }); } catch (e) { bc = { blocked: false }; }
+      if (bc.blocked) {
+        events.emit({
+          taskId: task.id, executionId: task.currentExecutionId, stepId: step.id,
+          type: 'agent.bot_challenge_detected',
+          payload: { vendor: bc.vendor || 'generic', confidence: bc.confidence, evidence: bc.evidence.slice(0, 5) },
+        });
+        const _bcMsg = `遇到人机验证/反爬挑战（${bc.vendor || 'generic'}）：${bc.evidence.join(' | ').slice(0, 200)} —— 需真人通过验证后继续，自动化不尝试绕过`;
+        finalizeOrphans(taskId);
+        return taskManager.escalate(taskId, new Error(_bcMsg), { reason: 'BOT_CHALLENGE' });
+      }
     }
     // C106 F15：分步表单推进（advance-then-recheck）。
     // 真实站点实证（C105 第 4 轮 task_mtudmyy7rg926）：注册流程为分步表单（邮箱 → 继续 → 密码），

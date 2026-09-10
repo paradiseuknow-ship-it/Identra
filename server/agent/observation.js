@@ -251,7 +251,11 @@ const COLLECT_JS = `(() => {
   };
   // 为元素构造 CSS 选择器（主要用于 iframe 内元素定位）；主文档元素不强制带 selector。
   const cssFor = (el) => {
-    const tag = el.tagName.toLowerCase();
+    // C106 F17：真实站点实证 —— webflow.com/signup 上 page.evaluate 整体抛
+    //   TypeError: Cannot read properties of undefined (reading 'toLowerCase')
+    // 根因即本行：某些节点（非标准元素 / 被脚本覆写 tagName 的节点）没有 tagName，
+    // 一次访问就让整页观察失败 → 观察空集 → 所有动作误报 ELEMENT_NOT_FOUND。
+    const tag = String(el.tagName || '').toLowerCase();
     if (el.id) return tag + '#' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id);
     const attrs = [];
     const nm = el.getAttribute && el.getAttribute('name');
@@ -316,7 +320,9 @@ const COLLECT_JS = `(() => {
     for (const el of all) {
       if (seen.has(el)) continue;
       seen.add(el);
-      const tag = el.tagName.toLowerCase();
+      // C106 F17：同上，tagName 缺失不得让整页观察失效（真实站点实证）。
+      const tag = String(el.tagName || '').toLowerCase();
+      if (!tag) continue;
       if (['script', 'style', 'noscript', 'template', 'svg', 'head'].includes(tag)) continue;
       // iframe：仅同域可读取其内部 DOM 并递归收集其交互元素；跨域 iframe 浏览器禁止访问，直接跳过。
       if (tag === 'iframe') {
@@ -431,7 +437,16 @@ const COLLECT_JS = `(() => {
       }
     }
   };
-  walk(body, '');
+  // C106 F17 保底：walk 内任何未预料的单元素异常，都不应让整页观察归零。
+  // 真实站点实证（webflow.com/signup）：一次属性访问 TypeError → 整个 evaluate 失败
+  // → 上层拿到 {ok:false} 且无 observation → 所有动作报「未找到输入目标」，
+  // 与页面真实内容完全无关。这里截断到异常发生处，保留已采集元素并留痕，
+  // 使观察降级为「部分可见」而不是「全盲」。
+  try {
+    walk(body, '');
+  } catch (e) {
+    out.walkError = String((e && e.message) || e).slice(0, 200);
+  }
   // 可见文本摘要（去重、截断、脱敏）。标签集合扩展至 div/td/th 等内容容器，
   // 修复 Phase 5 发现的 text_present 对 <div> 动态渲染内容的盲区（verification 读取本字段）。
   const texts = [];
