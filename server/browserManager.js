@@ -1305,6 +1305,39 @@ function getSession(profileId) {
   return sessions.get(profileId) || null;
 }
 
+// PHASE 17-A 测试专用接缝：把外部已 launch 的真实 Playwright session 注入 sessions。
+// 为什么需要它：`__setSessionForTest` 在 browserManager 中并不存在（此前测试脚本里的
+// 可选调用被 `? :` 保护成了静默 no-op），导致「真实 runtime 主循环 + 真实 tools 执行」
+// 的端到端安全测试无法在不起真 Chrome 全链路（含指纹注入/代理预检）的情况下编写。
+// 这里补一个**最小且只增不改**的接缝：把给定的 { browser, context, page } 包装成
+// browserManager 的 session 结构并注册，使 getSession/getPage/getPages/close 全部按
+// 既有契约工作。生产路径零调用 —— 该函数不被任何非测试代码引用。
+// 传入 null 等价于注销该 profile（测试清理用），避免污染后续用例。
+function __setSessionForTest(profileId, session) {
+  if (!profileId) return false;
+  const prev = sessions.get(profileId);
+  if (prev && prev._testInjected && prev.context && !prev.context.isClosed()) {
+    try { prev.context.close({ reason: 'test-replaced' }).catch(() => {}); } catch (e) {}
+  }
+  if (!session) { sessions.delete(profileId); return true; }
+  const page = session.page || (session.context && session.context.pages()[0]) || null;
+  sessions.set(profileId, {
+    context: session.context || null,
+    page,
+    fp: session.fp || null,
+    proxy: session.proxy || null,
+    profileId,
+    startedAt: Date.now(),
+    shimServers: [],
+    chromePid: null,
+    pages: page ? [page] : [],
+    activePageIndex: 0,
+    behavior: {},
+    _testInjected: true,
+  });
+  return true;
+}
+
 function isRunning(profileId) {
   return sessions.has(profileId);
 }
@@ -1619,6 +1652,8 @@ function startZombieKiller(intervalMs) {
 
 module.exports = {
   launch, getSession, isRunning, runtimeSnapshots, getPage, close, closeAll, screenshot, navigate,
+  // PHASE 17-A：测试专用 session 注入接缝（生产路径零调用，见函数注释）
+  __setSessionForTest,
   cleanupOrphanedChromium, startZombieKiller, setupRoutes, isVerificationHost,
   humanMove, humanClick, humanType, humanScroll,
   getChromeVersion, captureNativeUaBrands, applyHeadlessBrandContract,

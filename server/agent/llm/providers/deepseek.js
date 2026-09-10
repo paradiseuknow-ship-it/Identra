@@ -10,7 +10,16 @@ const secretManager = require('../../secretManager');
 // P4/P5 契约同步：与 planner.js 共享单一事实源 —— deepseekPlan 是真实 LLM 执行路径，
 // 此前其独立 system prompt 未携带 P4（语义放大禁令）/P5（等待观察证据契约），导致
 // 最小修复轮的 planner 修复无法到达真实执行（B 类一致性缺陷，smoke 前必须闭合）。
-const { P4_CONTRACT, P5_CONTRACT, P6_CONTRACT, R8_CONTRACT, R9_CONTRACT } = require('../../plannerContractText');
+const {
+  P4_CONTRACT,
+  P5_CONTRACT,
+  P6_CONTRACT,
+  R8_CONTRACT,
+  R9_CONTRACT,
+  SEMANTIC_LANG_CONTRACT,
+  CROSS_ORIGIN_CONTRACT,
+  NATIVE_SIGNUP_CONTRACT,
+} = require('../../plannerContractText');
 
 // P1 JSON parse failure 加固（Final100 rw.063/rw.091 归因）：
 // 根因是 completion 截断（9 次规划调用全部打满 max_tokens:2048 → JSON 半途而废），
@@ -74,14 +83,20 @@ async function deepseekPlan(chatFn, task, ctx) {
   // 从 ContextBuilder 输出构造上下文块（objective/observation summary/previous steps/verification state）
   const ctxSection = buildContextSection(ctx);
 
+  // C106 F22：semantic 语言契约此前**只写在 planner.js**（structured fallback 路径），
+  // 而本文件是真实 LLM 执行路径，原 system prompt 却明文要求 semantic 写成中文意译——
+  // 与 planner.js 直接矛盾。后果（第 7 轮铁证）：中文 semantic 在英文站零词法交集 →
+  // 25 次连续 ELEMENT_NOT_FOUND。现统一引用共享常量，终结第三次踩同一坑。
+  // C106 F21：跨域边界契约（第三方授权域禁止填凭据）同源同步。
   // 仅作为 schema 强制（validatePlanStrict + action.js MUST_VERIFY）的 LLM 层强化；
   // 真正的拒绝发生在 schema 校验，prompt 只是把已有契约文本化喂给模型。
   const system = '你是严格遵循 JSON Schema 的浏览器自动化任务规划器。只输出 JSON，不要任何解释或 Markdown 代码块之外的文字。'
-    + 'target 必须用双键对象 {field, semantic}：field 用于精确匹配元素的 name/id/placeholder/aria-label/label（如 email/username/password/search），semantic 为中文语义描述；两者都提供时定位最稳。'
+    + 'target 必须用双键对象 {field, semantic}：field 用于精确匹配元素的 name/id/placeholder/aria-label/label（如 email/username/password/search），两者都提供时定位最稳。'
     + '每个 click / fill / submit 步骤都必须包含 verification（type 为 text_present/element_present/url_contains/url_pattern/storage/action_success 等，禁止 none），否则 Plan 将被 schema 拒绝。'
     + 'element_present/element_absent 的 expect 只允许：合法 CSS 选择器（#id / .class / tag / [attr=\'值\']；id=regForm 类缺前缀写法会被 schema 拒绝）或页面上真实存在的语义描述；text_present 的 expect 必须是成功后页面真实会出现的文本，禁止臆造元素名或文案。'
     + 'navigate 只用于打开页面，永远不会输入值：向输入框/表单字段输入内容的步骤（如「在搜索框中输入关键词」）必须用 fill 并拆为 navigate + fill 两步，禁止用 navigate 冒充输入（会被 schema 拒绝）；navigate 描述应含导航宾语（网址/页面/访问/打开）。'
-    + '\n' + P4_CONTRACT + '\n' + P5_CONTRACT + '\n' + P6_CONTRACT + '\n' + R8_CONTRACT + '\n' + R9_CONTRACT;
+    + '\n' + P4_CONTRACT + '\n' + P5_CONTRACT + '\n' + P6_CONTRACT + '\n' + R8_CONTRACT + '\n' + R9_CONTRACT
+    + '\n' + SEMANTIC_LANG_CONTRACT + '\n' + CROSS_ORIGIN_CONTRACT + '\n' + NATIVE_SIGNUP_CONTRACT;
   const buildPrompt = (fixHint) =>
     `目标：${goalText}\n` +
     (target ? `入口地址（相对路径，base 为站点根）：${target}\n` : '') +

@@ -89,9 +89,17 @@ async function main() {
   });
 
   // ── F11.1：semantic 语言契约（站点原文，禁止中文意译）──
+  // C106 F22：契约文本已上移到 plannerContractText.js（单一事实源），planner.js 与
+  // deepseek.js 同源引用 —— 因此断言「引用 + 常量内容正确」，而不是文本内联在哪个文件。
+  //（原断言只看 planner.js 内联文本；文本上移后若仍查内联位置会假红，且会反向激励
+  //  把共享常量抄回各路径，正是 P4/P5/F9 反复踩坑的成因。）
   await ok('F11.1 planner 契约含 semantic 语言契约（verbatim 原文，禁止中文意译）', () => {
-    assert(/semantic 语言契约/.test(PLANNER_SRC), '缺 semantic 语言契约');
-    assert(/禁止翻译、意译或概括性中文描述/.test(PLANNER_SRC), '契约未禁止中文意译');
+    assert(/SEMANTIC_LANG_CONTRACT/.test(PLANNER_SRC), 'planner 未引用共享语义契约常量');
+    const contract = require('../agent/plannerContractText');
+    const text = String(contract.SEMANTIC_LANG_CONTRACT || '');
+    assert(/semantic 语言契约/.test(text), '共享常量缺 semantic 语言契约标识');
+    assert(/禁止翻译、意译或概括性中文描述/.test(text), '契约未禁止中文意译');
+    assert(/verbatim/.test(text), '契约未要求站点原文 verbatim');
   });
 
   // ── F11.2：field 不得臆造 ──

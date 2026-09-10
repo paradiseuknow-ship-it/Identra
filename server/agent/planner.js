@@ -38,7 +38,16 @@ const secretManager = require('./secretManager');
 // 注意：这只是把【已有 schema 规则】文本化喂给模型，不改变校验逻辑本身（校验仍在 schema/plan·action）。
 // Phase 7 Step 2-B：强化「每个交互动作必须可验证」与「target 双键定位」契约。
 // P4/P5 单一事实源：与 deepseek.js（真实 LLM 执行路径）共享同一份契约文本，禁止双份漂移。
-const { P4_CONTRACT, P5_CONTRACT, P6_CONTRACT, R8_CONTRACT, R9_CONTRACT } = require('./plannerContractText');
+const {
+  P4_CONTRACT,
+  P5_CONTRACT,
+  P6_CONTRACT,
+  R8_CONTRACT,
+  R9_CONTRACT,
+  SEMANTIC_LANG_CONTRACT,
+  CROSS_ORIGIN_CONTRACT,
+  NATIVE_SIGNUP_CONTRACT,
+} = require('./plannerContractText');
 
 const ACTION_CONSTRAINTS = [
   '每个 step 必须含 action 对象。',
@@ -52,7 +61,14 @@ const ACTION_CONSTRAINTS = [
   // 经 F1 零证据拒点后与英文/法文页面零词法交集 → 解析零候选 + element_present 验证恒失败
   // （实证：4 次 VERIFY_FAILED 同签名 → 熔断升级）。真实信号是页面原文，不是翻译。
   'target 定位应使用「双键」：field（如 email/username/password/search，用于精确匹配 name/id/placeholder/aria-label/label）+ semantic。两者都提供时定位最稳。',
-  '【semantic 语言契约（硬性）】semantic 必须是目标站点页面上**真实出现的原文文本**（verbatim），禁止翻译、意译或概括性中文描述：站点是英文就写 "Get started"/"Sign up"，法文就写 "Commencez gratuitement"。规划时若尚未打开页面（无观察清单），按目标站点的语言写其常见 CTA 原文（如 "Get started"、"Sign up"、"Start for free"），**禁止写「注册入口按钮」「Get started 按钮」这类中文意译**——中文语义在英文/法文页面上零词法交集，会导致定位零候选与验证恒失败。',
+  // C106 F22：文本上移到 plannerContractText.SEMANTIC_LANG_CONTRACT —— 本条此前只存在于本文件，
+  // 真实 LLM 路径（deepseek.js）仍明文要求「中文语义描述」，两处矛盾（第 7 轮 25 次
+  // ELEMENT_NOT_FOUND 铁证）。共享常量后两条路径同源，禁止再各自硬编码。
+  SEMANTIC_LANG_CONTRACT,
+  // C106 F21：跨域边界（第三方授权域禁止填凭据），同源同步。
+  CROSS_ORIGIN_CONTRACT,
+  // C106 F23：注册类任务必须走站点自身分步表单，不得把第三方 OAuth 授权当注册手段。
+  NATIVE_SIGNUP_CONTRACT,
   '【首步导航契约】任务提供了入口地址（targetUrl）时，计划第一步必须是 navigate 打开该地址，之后才允许对页面元素做 click/fill。禁止把 navigate 排到后续步骤而在未打开页面时就操作元素。',
   // C105 F11（真实站点实证 task_mtucm6q7dbnin）：模型把 CTA 文案（"Start for free"）与编造的
   // DOM id（"continue-nav"）写进 field；field 会被拿去做 name/id/placeholder/aria-label 精确

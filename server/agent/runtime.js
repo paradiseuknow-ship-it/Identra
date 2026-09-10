@@ -16,6 +16,9 @@ const verification = require('./verification');
 const observation = require('./observation');
 const stagedForm = require('./stagedFormAdvance');
 const botChallenge = require('./botChallenge');
+// PHASE 17-A P0-B：Diagnosis → Runtime Decision（诊断真正进入动作策略层）
+const diagnosisDecision = require('./diagnosisDecision');
+const credentialAuthorization = require('./credentialAuthorization');
 const verificationIntelligence = require('./verification/verificationIntelligence');
 
 // v0.2.2：孤儿收口守卫（Business Loop 专项 §十三~§十五）。任何 task 终态转换前，先把仍停在 RUNNING 的
@@ -315,6 +318,18 @@ async function runStepInner(task, step, beforeObs, actionOverride, _runToken) {
       }
       return { ok: false, escalated: !_inert(), abandoned: _inert(), error: failErr };
     }
+    // PHASE 17-A P0-A：凭据动作被安全闸拒绝 —— 与「凭据不可用」同族：
+    // 不重试、不 repair、不 reload，直接交人并带上安全证据（绝不尝试绕过）。
+    if (errCode === 'CREDENTIAL_ACTION_BLOCKED') {
+      const failErr = { code: 'CREDENTIAL_ACTION_BLOCKED', message: (err.error && err.error.message) || err.message || '凭据动作被安全闸拒绝' };
+      stepManager.failAttempt(attempt.id, failErr);
+      if (!_inert()) {
+        stepManager.setStepState(step.id, 'FAILED');
+        events.emit({ taskId: task.id, executionId, stepId: step.id, attemptId: attempt.id, type: 'ai.warning', payload: { code: failErr.code, message: failErr.message } });
+        taskManager.escalate(task.id, new Error('凭据安全闸：' + failErr.message), { reason: 'CREDENTIAL_ACTION_BLOCKED' });
+      }
+      return { ok: false, escalated: !_inert(), abandoned: _inert(), error: failErr };
+    }
     stepManager.failAttempt(attempt.id, err);
     if (err.code === 'ACTION_REQUIRES_APPROVAL') {
       // ASSIST 高风险 → PAUSED_FOR_HUMAN（Case 6）；携带待审批动作供 Approve/Modify
@@ -576,6 +591,12 @@ async function run(taskId) {
   // 三者只在「同一个 step 内」有效，换步即失效（下方 step 变更时统一清理）。
   let pendingDiagnosis = null;      // 统一诊断结论
   let pendingDiagnosisStepId = null; // 该结论属于哪个 step
+  // PHASE 17-A P0-B：结构化 Diagnosis Decision（含 blockedActions / required）。
+  // 与 pendingDiagnosis 分开保存：后者是 failureDiagnoser 的自由文本结论（给 repair 短路用），
+  // 前者是 Runtime 动作策略层唯一可读的结构化契约 —— 它拥有 BLOCK CURRENT ACTION 的能力。
+  let pendingDecision = null;
+  let pendingDecisionStepId = null;
+  const decisionBlockCounts = new Map(); // `${stepId}::${blockKey}` → 已阻塞次数
   let skipExecution = false;        // 诊断判定不可重试 → 下一次迭代不再执行动作
   let lastFailureResult = null;     // 跳过执行时复用的上一次失败结果
   // R5（2026-09-03）churn 熔断状态：跨 replan 的同失败签名记忆（canon240_run1 rw.091 实证：
@@ -634,6 +655,75 @@ async function run(taskId) {
       pendingDiagnosisStepId = step.id;
       skipExecution = false;
       lastFailureResult = null;
+    }
+    if (pendingDecisionStepId !== step.id) {
+      pendingDecision = null;
+      pendingDecisionStepId = step.id;
+    }
+    // ── P0-B：Diagnosis Decision Gate（执行前拦截）────────────────────────
+    // 这是本阶段的核心：诊断不再只是一条日志，它拥有「禁止执行当前动作」的能力。
+    // 实证（R3）：LLM 已正确诊断「分步表单，密码框尚未出现」（conf 0.95），
+    // Runtime 仍机械重放 fill password 12 次 / 473s。此处让该结论真正改变动作策略。
+    if (pendingDecision) {
+      const _pa = { decision: pendingDecision, action: pendingAction || step.action };
+      const _pol = diagnosisDecision.evaluate(_pa);
+      if (_pol.blocked) {
+        const _bkey = String(step.id) + '::' + diagnosisDecision.blockKeyOf(pendingAction || step.action);
+        const _cnt = (decisionBlockCounts.get(_bkey) || 0) + 1;
+        decisionBlockCounts.set(_bkey, _cnt);
+        events.emit({
+          taskId: task.id, executionId: task.currentExecutionId, stepId: step.id,
+          type: 'agent.diagnosis_decision',
+          payload: {
+            state: _pol.state, blocked: true, required: _pol.require,
+            action: _bkey.split('::')[1] || null, repeat: _cnt,
+            maxRepeats: _pol.maxRepeats, escalate: _pol.escalate,
+            confidence: _pol.confidence, evidence: (_pol.evidence || []).slice(0, 3),
+          },
+        });
+        // 升级类决策（挑战页 / 跨域凭据漂移）：不 repair、不 retry，直接交人
+        if (_pol.escalate || diagnosisDecision.repeatsExhausted(_cnt, _pol)) {
+          const _msg = `诊断决策 ${_pol.state} 阻止了当前动作（要求 ${_pol.require}）`
+            + `，已重复 ${_cnt} 次：${
+              'diagnosis_decision:' + String(_pol.state).toLowerCase()
+            }`;
+          finalizeOrphans(taskId);
+          return taskManager.escalate(taskId, new Error(_msg), { reason: 'diagnosis_decision:' + _pol.state });
+        }
+        // 非升级类：先等页面稳定 + 重新观察 —— 目标出现即放行，绝不机械重放
+        try {
+          await sleep(1500);
+          const _pg = await browserManager.getPage(task.profileId);
+          if (_pg) {
+            const _insp = await observation.inspect(_pg, { taskId: task.id, skipCache: true, source: 'diagnosis_decision' });
+            const _obs = _insp && _insp.ok ? _insp.observation : null;
+            if (_obs) beforeObs = _obs;
+            if (_obs && diagnosisDecision.targetResolvable(pendingAction || step.action, _obs)) {
+              // 目标已出现 → 决策失效，正常执行（诊断绝不制造 SUCCESS，只是不再阻止）
+              pendingDecision = null;
+              pendingAction = pendingAction || null;
+            } else if (_pol.allowAdvance) {
+              // 目标仍未出现 → 尝试推进分步表单（F15），推进成功即重查
+              const _advUsed = _advanceCountByStep.get(step.id) || 0;
+              if (_advUsed < stagedForm.MAX_ADVANCE_PER_STEP) {
+                _advanceCountByStep.set(step.id, _advUsed + 1);
+                const adv = await stagedForm.tryAdvance({
+                  task, step, action: pendingAction || step.action,
+                  tools, observation, browserManager, events,
+                }).catch(() => ({ advanced: false, reason: 'advance_error' }));
+                if (adv && adv.observation) beforeObs = adv.observation;
+                if (adv && adv.advanced) {
+                  _sameFailCount = 0;
+                  _lastFailSig = null;
+                  pendingDecision = null;
+                  pendingAction = null;
+                  continue;
+                }
+              }
+            }
+          }
+        } catch (e) { /* 观察/推进失败：不阻塞，交由下方既有链路 */ }
+      }
     }
     // Phase 7 修复：以 store 权威状态为准做 SUCCESS 跳过判定。
     // 背景：repair 成功会把 step 置 SUCCESS（写入 store），但本地 steps[index] 快照可能已陈旧；
@@ -837,6 +927,24 @@ async function run(taskId) {
         // STEP 4：诊断判定「继续重试不可能成功」（验证码 / OTP / 权限 / 支付被拒 /
         // 凭据错误 / 记录重复）→ 立刻耗尽重试预算，不再把必然失败的请求重发 N 遍，
         // 直接进入修复/升级收口，并把根因带给修复链路（repairManager 会据此短路 LLM）。
+        // P0-B：把本次失败的现场交给 Diagnosis Decision Contract。
+        // 确定性推导优先（零 LLM 成本、每次失败都跑），LLM 结构化决策在 repair 返回后覆盖。
+        // 这是 R3 缺的那一环：诊断结论必须能进入动作策略层，而不只是写进日志。
+        try {
+          const _obs = r.observation || beforeObs || null;
+          const _dec = diagnosisDecision.derive({
+            error: r.error,
+            observation: _obs,
+            action: pendingAction || step.action,
+            pageUrl: (_obs && _obs.url) || null,
+            targetUrl: (task && task.targetUrl) || null,
+            challenge: (_obs && _obs.challenge) || null,
+          });
+          if (_dec) {
+            pendingDecision = _dec;
+            pendingDecisionStepId = step.id;
+          }
+        } catch (e) { /* 决策推导失败不得阻塞既有恢复链路 */ }
         if (rec.escalate && rec.diagnosis) {
           retries = stepMax;          // 下一次迭代 canRetry=false → 直落 repair 分支
           skipExecution = true;       // 下一次迭代不再执行动作（关键：不重复提交必然失败的请求）
@@ -871,6 +979,25 @@ async function run(taskId) {
       }
       await backoffSleep(retries); // 重试退避（Phase 12B §T14）
       continue; // 同一 step 再跑一次新 Attempt（带恢复候选动作）
+    }
+
+    // ── P0-B：禁止修复类决策 → 不进入修复编排 ────────────────────────────
+    // 「挑战页 / 跨域凭据漂移」这类结论的正确处理是交人，不是让修复链路在页面上点三次按钮。
+    // 这也是 anti-flapping 的最小修复点：诊断结论未变 + 动作被同一条决策阻塞
+    // → 不再消耗 repair 预算（历史上同一失败签名可跑满 21 次 repair）。
+    if (pendingDecision) {
+      const _p = diagnosisDecision.evaluate({ decision: pendingDecision, action: pendingAction || step.action });
+      if (_p.blocked && _p.noRepair) {
+        const _msg = `诊断决策 ${_p.state} 禁止继续自动处理（要求 ${_p.require}）：`
+          + 'diagnosis_decision:' + String(_p.state).toLowerCase();
+        events.emit({
+          taskId: task.id, executionId: task.currentExecutionId, stepId: step.id,
+          type: 'agent.diagnosis_decision',
+          payload: { state: _p.state, blocked: true, required: _p.require, noRepair: true, evidence: (_p.evidence || []).slice(0, 3) },
+        });
+        finalizeOrphans(taskId);
+        return taskManager.escalate(taskId, new Error(_msg), { reason: 'diagnosis_decision:' + _p.state });
+      }
     }
 
     // 重试耗尽：进入修复编排（Phase 2.3）。修复失败/需审批 → 升级为显式终态，杜绝悬挂。
@@ -991,6 +1118,12 @@ async function run(taskId) {
       }
     }
 
+    // P0-B：LLM 诊断的结构化决策回灌 Runtime（F22/F23 的最小接口连接）。
+    // 修复失败后决策仍然成立 → 它必须作用于**下一步动作**，而不是随 repair 一起丢掉。
+    if (outcome && outcome.decision) {
+      pendingDecision = outcome.decision;
+      pendingDecisionStepId = step.id;
+    }
     if (outcome.paused) {
       // 需人工：Phase 5.8 升级为 HUMAN_ESCALATION 显式终态（原 PAUSED_FOR_HUMAN 非终态，会永久悬挂）。
       const err = new Error(`${step.description || step.id} 需人工处理（重试${attemptNo}次耗尽）: ${outcome.reason || (r.error && r.error.message) || 'unknown'}`);

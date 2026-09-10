@@ -57,6 +57,14 @@ function buildUser({ failure, observation, execution, memorySuggestion, classifi
     parts.push(`该站点该错误的历史成功策略: ${memorySuggestion.strategy}（成功率 ${memorySuggestion.successRate}，样本 ${memorySuggestion.samples}）`);
   }
 
+  // PHASE 17-A P0-B：让诊断把「下一步该不该继续」说成结构化结论，而不是一段文字。
+  // 只在证据充分时输出；诊断绝不判定成功，也绝不产出任何绕过验证码/风控的方案。
+  parts.push('【决策字段（可选，证据充分时才给）】');
+  parts.push('- state: TARGET_NOT_PRESENT_YET（目标尚未出现，当前页可能是合法中间态，例如分步表单只到邮箱步）/ MULTI_STEP_FORM（分步表单，禁止提前执行后续字段）/ NAVIGATION_IN_PROGRESS（导航或提交未完成）/ CROSS_ORIGIN_DRIFT（已漂移到第三方域）/ SECURITY_CHALLENGE（人机验证或风控挑战）/ TARGET_STALE（目标定位已失效）');
+  parts.push('- blockedActions: 形如 ["fill:password"]，列出当前**已知不可能成功**的动作；为空数组表示不特指');
+  parts.push('- required: REOBSERVE_AFTER_SUBMIT / WAIT_AND_REOBSERVE / REAUTH_CONTEXT / HUMAN / FRESH_OBSERVE_AND_REGROUND');
+  parts.push('- 严禁编造：没把握就不要给 state。严禁给出任何绕过人机验证/风控/跨域授权的方案。');
+
   return parts.join('\n');
 }
 

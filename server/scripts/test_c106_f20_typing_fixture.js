@@ -104,7 +104,24 @@ function server() {
   const browser = await chromium.launch({ headless: true });
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  const meta = () => ({ taskId: 't_c106_f20' });
+  // PHASE 17-A P0-A：`fill` 对 email/phone 这类**凭据字段**会先过 Credential Action
+  // Authorization Gate（tools.guardCredentialAction）。旧版这里硬编码 taskId='t_c106_f20'，
+  // 该任务在 store 中并不存在 → 授权上下文缺失 → fail closed（CREDENTIAL_ACTION_BLOCKED），
+  // 于是本套件 9 条断言全红（实测）。这是安全闸的**正确行为**，不是缺陷：
+  // 无法证明授权的凭据动作就必须拒绝。修复方向只能是「让 fixture 拥有真实任务 +
+  // 真实 targetUrl」，绝不能为了让测试变绿去放宽闸门。
+  const credentialAuthorization = require('../agent/credentialAuthorization');
+  const taskManager = require('../agent/taskManager');
+  const task = taskManager.createTask({
+    name: 'c106 f20 typing fixture',
+    objective: 'human-typing behavior on a real page',
+    targetUrl: BASE + '/plain', // 锚点 origin：fixture 全程同源，凭据动作应放行
+    executionMode: 'ASSIST',
+    profileId: null,
+    policy: {}, budget: {}, constraints: [], secretRefs: [],
+    createdBy: 'fixture',
+  });
+  const meta = () => ({ taskId: task.id, executionId: 'exe_' + task.id, stepId: 'step_f20' });
 
   // ---------- A 节奏 + 回读一致 ----------
   await page.goto(BASE + '/plain', { waitUntil: 'domcontentloaded' });

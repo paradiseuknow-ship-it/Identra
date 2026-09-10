@@ -71,6 +71,10 @@ function createTask(input = {}) {
     createdBy: input.createdBy || null,
     // CAP-M1：来源定时计划（scheduleTrigger.fireSchedule 盖章；直调旧路径 null）
     scheduleId: input.scheduleId || null,
+    // PHASE 17-A P0-A：凭据动作授权声明（Credential Authorization Context 的任务级来源）。
+    // 只有**显式声明**才会进入授权上下文 —— 默认严格（仅锚点 origin 授权），
+    // 跨注册域跳转不继承授权。null = 未声明 → 严格默认。
+    credentialAuthorization: require('./credentialAuthorization').normalize(input.credentialAuthorization),
     status: 'PENDING',
     plan: [],
     planVersion: null,     // plan_v1 / plan_v2 ...（支持 Plan Revision）

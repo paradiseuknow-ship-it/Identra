@@ -26,6 +26,7 @@
 
 const { chromium } = require('playwright');
 const fs = require('fs');
+const http = require('http');
 const path = require('path');
 
 const paymentField = require('../agent/paymentField');
@@ -33,8 +34,10 @@ const paymentState = require('../agent/paymentStateClassifier');
 const observation = require('../agent/observation');
 const tools = require('../agent/tools');
 const secretManager = require('../agent/secretManager');
+const taskManager = require('../agent/taskManager');
 const { validateAction, SENSITIVE_FIELDS } = require('../agent/schema/action');
 const diagnoser = require('../agent/diagnosis/failureDiagnoser');
+const { listenSafe } = require('./lib_safe_port');
 
 let pass = 0, fail = 0;
 function ok(name, cond, extra) {
@@ -63,6 +66,48 @@ async function openForm() {
   const page = await browser.newPage();
   await page.setContent(PAYMENT_FORM);
   return page;
+}
+
+// ── 真实 HTTP origin 的支付表单 ───────────────────────────────────────────────
+// P0-A（C107）：凭据类动作要求真实授权上下文 —— 任务必须有可解析 origin 的 targetUrl，
+// 且该 origin 必须与页面所在 origin 一致。setContent() 造出的页面 origin 是 about:blank
+// （originless local context），凭据 fill 会被安全闸 fail closed（NO_ORIGIN_CONTEXT）——
+// 那是**正确**行为。要测「卡号分段映射」这条业务链路，表单必须挂在真实 origin 上。
+let paySrv = null;
+let payOrigin = null;
+
+async function ensurePayServer() {
+  if (paySrv) return payOrigin;
+  paySrv = http.createServer((req, res) => {
+    const u = String(req.url || '/');
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    if (u.indexOf('/edge') === 0) return res.end(EDGE_FORM);
+    res.end(PAYMENT_FORM);
+  });
+  await listenSafe(paySrv, '127.0.0.1');
+  payOrigin = 'http://127.0.0.1:' + paySrv.address().port;
+  return payOrigin;
+}
+
+/** 打开挂在真实 origin 上的支付表单，并返回 { page, taskId }（任务锚点 = 该 origin）。 */
+async function openRealForm() {
+  const origin = await ensurePayServer();
+  const task = taskManager.createTask({
+    name: 'step6 payment capability fixture',
+    objective: 'card field mapping end-to-end fill',
+    targetUrl: origin + '/pay',
+    status: 'RUNNING',
+    executionMode: 'ASSIST',
+    profileId: null,
+    policy: {},
+    budget: {},
+    constraints: [],
+    secretRefs: [],
+    createdBy: 'fixture',
+  });
+  const page = await browser.newPage();
+  await page.goto(origin + '/pay', { waitUntil: 'load' });
+  return { page, taskId: task.id };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -247,7 +292,7 @@ async function caseMaskBoundary() {
 
 async function caseEndToEndFill() {
   section('Case 10 [浏览器] 端到端 fill：credentialRef → 各段填进对应的框');
-  const page = await openForm();
+  const { page, taskId } = await openRealForm();
   const _resolve = secretManager.resolve;
   const _getByRef = secretManager.getByRef;
   secretManager.resolve = () => ({ profileId: 'p-test', type: 'payment', secrets: { card: CARD } });
@@ -266,7 +311,7 @@ async function caseEndToEndFill() {
         { type: 'fill', target: { selector: sel, field }, credentialRef: 'cred_test',
           verification: { type: 'text_present', value: 'x' }, timeoutMs: 20000 },
         { page, session: { profileId: 'p-test' } },
-        { taskId: 'cap-l1-fill-' + Date.now() + '-' + sel.slice(1) },
+        { taskId: taskId },
       );
       const got = await page.inputValue(sel).catch(() => '<err>');
       ok('fill ' + sel + ' → ' + want, res.success === true && got === want,
@@ -299,7 +344,7 @@ async function caseEndToEndFill() {
     const resMiss = await tools.runTool(
       { type: 'fill', target: { selector: '#cv', field: 'cvv' }, credentialRef: 'cred_test',
         verification: { type: 'text_present', value: 'x' }, timeoutMs: 20000 },
-      { page, session: { profileId: 'p-test' } }, { taskId: 'cap-l1-missing-' + Date.now() },
+      { page, session: { profileId: 'p-test' } }, { taskId: taskId },
     );
     ok('凭据缺 CVV → CREDENTIAL_FIELD_MISSING（非静默成功）',
       resMiss.success === false && resMiss.error && resMiss.error.code === 'CREDENTIAL_FIELD_MISSING',
@@ -468,6 +513,7 @@ function caseRedLines() {
     console.log('  FAIL 浏览器用例异常：' + String(e && e.message || e));
   } finally {
     await browser.close().catch(() => {});
+    if (paySrv) { await new Promise((r) => paySrv.close(() => r())); paySrv = null; }
   }
 
   console.log('\n────────────────────────────────────────');

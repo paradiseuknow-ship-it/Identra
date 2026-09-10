@@ -80,12 +80,28 @@ function server() {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
 
-  const meta = () => ({ taskId: 't_c106_f16f17' });
+  // PHASE 17-A P0-A：`fill` 对 email/password 这类**凭据字段**会先过 Credential Action
+  // Authorization Gate（tools.guardCredentialAction）。旧版这里硬编码 taskId='t_c106_f16f17'，
+  // 该任务在 store 中不存在 → 授权上下文缺失 → fail closed（CREDENTIAL_ACTION_BLOCKED），
+  // 导致 B/C/D 四条断言全部改报安全闸错误（实测）。
+  // 这是安全闸的**正确行为**，不是缺陷 —— 修复方向是给 fixture 一个真实任务 +
+  // 真实 targetUrl（锚点 origin），绝不为了跑绿而放宽闸门。
+  const taskManager = require('../agent/taskManager');
+  const task = taskManager.createTask({
+    name: 'c106 f16/f17 fixture',
+    objective: 'field authority + observation tolerance on a real page',
+    targetUrl: BASE + '/both',
+    executionMode: 'ASSIST',
+    profileId: null,
+    policy: {}, budget: {}, constraints: [], secretRefs: [],
+    createdBy: 'fixture',
+  });
+  const meta = () => ({ taskId: task.id, executionId: 'exe_' + task.id, stepId: 'step_f1617' });
 
   // ---------- A 观察容错：坏元素不得让整页观察归零 ----------
   await page.goto(BASE + '/broken', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(300);
-  const oBroken = await observation.inspect(page, { taskId: 't_c106_f16f17' });
+  const oBroken = await observation.inspect(page, { taskId: task.id });
   const elsBroken = (oBroken.observation && oBroken.observation.elements) || [];
   check('A1 坏元素存在时观察仍 ok', oBroken.ok !== false, 'ok=' + oBroken.ok + (oBroken.error ? ' err=' + oBroken.error : ''));
   check('A2 坏元素之外的元素仍被采集（email）', elsBroken.some((e) => e.id === 'email'), 'elements=' + elsBroken.length);

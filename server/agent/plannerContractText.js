@@ -29,4 +29,35 @@ const R8_CONTRACT = 'R8 泛化容器证据禁令：element_present/element_absen
 // click SUCCESS，只「再确认」不重新执行因果动作），证据永不出现 → 烧尽预算至 deadline。
 const R9_CONTRACT = 'R9 重规划因果动作契约：为「确认类」步骤（CONFIRMATION/DOWNLOAD 等业务结果确认，requiredEvidence 含 text_present）重规划时，若该确认证据文本在历史尝试中从未真实出现在页面上，禁止生成只含 inspect/观察的纯确认计划——证据不出现的根因是产生它的业务动作（点击/提交/导出等）没有真正生效，唯一出路是重新执行该因果动作。重规划计划必须：① 重新执行因果动作（保留原 target 完整对象：field/semantic/credentialRef）；② 其后紧跟确认观察步骤。仅当页面观察中已经能看到确认证据、只是验证尚未通过时，才允许纯确认计划。';
 
-module.exports = { P4_CONTRACT, P5_CONTRACT, P6_CONTRACT, R8_CONTRACT, R9_CONTRACT };
+// C106 F22 出处：真实 Webflow E2E 第 7 轮铁证（task_mtuvn2u9zfwk0，50 动作 / 442.9s / HUMAN_ESCALATION）——
+// step_002 连续 25 次 ELEMENT_NOT_FOUND，semantic 恒为「落地页上的注册/开始使用入口按钮」。
+// 根因是**同一契约在两条规划路径上互相矛盾**：planner.js:55（C105 F9）已要求 semantic
+// 必须是站点原文 verbatim，而 deepseek.js:80 的 system prompt 仍明文写「semantic 为中文语义描述」。
+// deepseekPlan 才是真实 LLM 执行路径 → 中文 semantic 在英文/法文页面上零词法交集 →
+// semanticResolver 恒 0 候选 → 必然 ELEMENT_NOT_FOUND。本文件头注已记录 P4/P5 踩过同一坑，
+// 这是第三次，故从此一律走本常量，禁止任何路径再硬编码 semantic 语言表述。
+const SEMANTIC_LANG_CONTRACT = '【semantic 语言契约（硬性）】semantic 必须是目标站点页面上**真实出现的原文文本**（verbatim），禁止翻译、意译或概括性中文描述：站点是英文就写 "Get started"/"Sign up"，法文就写 "Commencez gratuitement"。规划时若尚未打开页面（无观察清单），按目标站点的语言写其常见 CTA 原文（如 "Get started"、"Sign up"、"Start for free"），**禁止写「注册入口按钮」这类中文意译**——中文语义在英文/法文页面上零词法交集，会导致定位零候选与验证恒失败。';
+
+// C106 F21 出处：同上第 7 轮铁证——执行期导航到第三方 OAuth 域
+// （github.com/login?client_id=…&return_to=/login/oauth/authorize…）后，planner 继续按原目标
+// 生成 fill 步骤，semantic 漂移为「GitHub 登录用户名或邮箱输入框」，把任务凭据填入第三方域。
+// 这是凭据外泄面：任务目标是 Webflow 注册，Agent 不该在 github.com 上提交任何凭据类字段。
+const CROSS_ORIGIN_CONTRACT = '【跨域边界契约（硬性）】规划时若当前页面 host 与任务目标 host 不同（例如任务目标是 shop.example.com，页面却被导航到第三方授权/登录域 auth.other-example.net），禁止在该第三方域上生成 fill/submit 类步骤——尤其是携带 credentialRef 或 password/email/card/cvv 等凭据字段的步骤。遇到第三方授权/登录页，只生成观察类步骤（inspect）并把情况交回上层处理（等待真人完成授权），不得代替用户在该域上输入凭据。';
+
+// C106 F23 出处：第 7 轮用户现场指认 —— Agent 在注册页选择了「使用第三方账号（OAuth）登录」
+// 捷径，被导航到第三方授权域后仍继续按原目标填邮箱，最终把环境凭据带离目标域。
+// 正当路径是站点自身的分步注册表单：填邮箱 → 下一步 → 填密码 → 下一步。
+// 与 F21 分工：F21 是执行期硬边界（拦住凭据外泄），F23 是规划期路径选择（别走错路，
+// 否则即使被拦也只是升级失败）。仅靠 F21 会把「选错路径」变成「人工升级」，任务仍不成功。
+const NATIVE_SIGNUP_CONTRACT = '【原生表单优先契约（硬性）】任务的 objective 是「注册/创建账号/sign up」时，必须走目标站点自身的注册表单：按页面实际形态分步完成（典型形态：填邮箱 → 点前进控件 → 填密码 → 提交），页面进入下一步后再规划下一步的字段，禁止在尚未进入对应步骤时就提前规划后续字段。禁止把「用第三方账号继续/注册」（形如 Continue with X / Sign up with X 的第三方授权入口）当作注册手段——第三方授权只是「用已有的第三方身份登录」，不能完成「在本站点创建新账号」这一目标，且会把任务凭据带离目标域（会被跨域边界契约拦截并升级为人工处理）。仅当任务 objective 明确要求使用第三方账号时才可以走第三方授权。';
+
+module.exports = {
+  P4_CONTRACT,
+  P5_CONTRACT,
+  P6_CONTRACT,
+  R8_CONTRACT,
+  R9_CONTRACT,
+  SEMANTIC_LANG_CONTRACT,
+  CROSS_ORIGIN_CONTRACT,
+  NATIVE_SIGNUP_CONTRACT,
+};

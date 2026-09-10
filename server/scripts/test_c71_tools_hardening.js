@@ -78,7 +78,10 @@ ${PAGE_HELPER}
   observation.inspect = async () => ({ ok: true, observation: { url: 'https://shop.test/login', elements: [], capturedAt: Date.now() } });
   browserManager.getSession = () => ({ page: fakePage, profileId: 'p-c71' });
   browserManager.humanType = async (page, sel, v) => { out.typed.push(v); };
-  taskManager.getTask = () => ({ id: 't-c71', profileId: 'p-c71', status: 'RUNNING' });
+  // P0-A（C107）：凭据类动作需要真实授权上下文（显式 targetUrl + 可解析 origin）。
+  // 本 fixture 的 fakePage 声明 url = https://shop.test/login，故任务锚点必须与之一致；
+  // 否则安全闸 fail closed（AUTHORIZATION_CONTEXT_MISSING）——这是**正确**行为，不得放宽。
+  taskManager.getTask = () => ({ id: 't-c71', profileId: 'p-c71', status: 'RUNNING', targetUrl: 'https://shop.test/login' });
 
   vault.setProfileSecrets('p-c71a', { password: 'TopS3cret!' });
   const credA = secretManager.createSecret({ profileId: 'p-c71a', type: 'email_password' });

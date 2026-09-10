@@ -13,6 +13,8 @@ const lock = require('./lock');
 const events = require('./events');
 const recorder = require('./recorder');
 const observation = require('./observation');
+const credentialAuthorization = require('./credentialAuthorization');
+const botChallenge = require('./botChallenge');
 const humanInput = require('./humanInput');
 const semanticResolver = require('./semanticResolver');
 const verification = require('./verification');
@@ -340,6 +342,107 @@ function makeLocator(page, selector) {
   return cur;
 }
 
+// PHASE 17-A P0-A：元素所在文档的 origin（iframe 场景）。
+// 凭据守卫必须知道「值会落在哪个文档里」—— 页面 origin 相同但元素在第三方 iframe 中
+// 时，凭据仍然会离开授权域。取不到（老版本 Playwright / 元素已消失）时返回 null，
+// 由守卫按「不可证明」处理，绝不假装同源。
+async function elementDocumentOrigin(page, selector, ms = 3000) {
+  if (!page || !selector) return null;
+  let timer = null;
+  const bail = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('ownerFrame 探测超时')), ms); });
+  try {
+    const handle = await Promise.race([makeLocator(page, selector).elementHandle(), bail]);
+    if (!handle || typeof handle.ownerFrame !== 'function') return null;
+    const frame = await handle.ownerFrame();
+    const url = frame && typeof frame.url === 'function' ? frame.url() : null;
+    try { if (handle.dispose) await handle.dispose(); } catch (e) {}
+    return url || null;
+  } catch (e) {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// PHASE 17-A P0-A：Credential Action Authorization Gate（执行期真正生效的那一处）。
+//
+// 为什么放在这里而不是 planner/runtime：只有这里同时握有「真实的 page（可问到当前 URL
+// 与元素所在文档）」与「即将执行的动作」，且是 fill/login 的唯一必经点。
+//
+// 返回 null = 放行；返回 RESULT.error = 拒绝（调用方直接 return）。
+// 拒绝语义：不重试、不 repair、由 runtime 直送人工（见 runtime 对
+// CREDENTIAL_ACTION_BLOCKED 的收口），绝不产出任何绕过方案。
+async function guardCredentialAction(action, page, meta, extra) {
+  const x = extra || {};
+  try {
+    if (!credentialAuthorization.isCredentialAction(action)) return null; // 非凭据动作：零开销放行
+    const task = taskManager.getTask(meta.taskId);
+    const pageUrl = page && typeof page.url === 'function' ? page.url() : '';
+    const ctx = credentialAuthorization.contextFor(task, meta.executionId);
+
+    // 挑战页判定（只识别、不解题、不绕过）
+    let challenge = { blocked: false };
+    if (x.checkChallenge !== false) {
+      try {
+        const html = await page.evaluate(() => (document.documentElement ? document.documentElement.outerHTML.slice(0, 20000) : ''));
+        const bc = botChallenge.detect(null, { url: pageUrl, html: String(html || '') });
+        if (bc && bc.blocked) challenge = { blocked: true, vendor: bc.vendor || null };
+      } catch (e) { /* 观测能力缺失不得阻塞守卫：challenge 保持未命中 */ }
+    }
+
+    const elementOrigin = x.elementOrigin === undefined ? null : x.elementOrigin;
+    const verdict = credentialAuthorization.authorize({
+      context: ctx, pageUrl, elementOrigin, action, challenge,
+    });
+    if (verdict.allowed) return null;
+
+    try {
+      events.emit({
+        taskId: meta.taskId,
+        executionId: meta.executionId,
+        stepId: meta.stepId,
+        type: 'agent.credential_action_blocked',
+        payload: {
+          reason: verdict.reason,
+          pageOrigin: verdict.pageOrigin,
+          anchorOrigin: verdict.anchorOrigin,
+          elementOrigin: verdict.elementOrigin || null,
+          field: (action.target || {}).field || null,
+          semantic: (action.target || {}).semantic || null,
+          hasCredentialRef: !!(action.target || {}).credentialRef,
+          actionType: action.type || null,
+          evidence: (verdict.evidence || []).slice(0, 5),
+        },
+      });
+    } catch (e) { /* 事件失败不得影响守卫 */ }
+
+    // 安全证据（不落任何凭据值）
+    try {
+      const t = taskManager.getTask(meta.taskId);
+      if (t) {
+        t.securityBlocks = Array.isArray(t.securityBlocks) ? t.securityBlocks : [];
+        t.securityBlocks.push({
+          at: Date.now(), kind: 'CREDENTIAL_ACTION_BLOCKED', reason: verdict.reason,
+          pageOrigin: verdict.pageOrigin, anchorOrigin: verdict.anchorOrigin,
+          stepId: meta.stepId || null, actionType: action.type || null,
+        });
+        if (t.securityBlocks.length > 50) t.securityBlocks = t.securityBlocks.slice(-50);
+        require('./store').upsert('aiTasks', t);
+      }
+    } catch (e) {}
+
+    return RESULT.error(
+      'CREDENTIAL_ACTION_BLOCKED',
+      '凭据类动作被安全闸拒绝（' + verdict.reason + '）：' + ((verdict.evidence || [])[0] || '当前页不在本任务授权上下文中')
+        + '（当前页 ' + (verdict.pageOrigin || '?') + ' / 锚点 ' + (verdict.anchorOrigin || '?') + '）'
+        + '——需真人显式授权该域后再继续，自动化不尝试绕过',
+    );
+  } catch (e) {
+    // 守卫自身异常不得阻塞主流程（保持既有 fail-open-on-error 纪律）
+    return null;
+  }
+}
+
 // 带自超时的 locator 计数。探测类调用一律走这里：它们失败只应导致"退化到下一个候选"，
 // 绝不能把 Runtime 挂住 —— 因此刻意不用 withBrowserOp（它超时会抛，
 // 会把"没有增强信息"变成"动作失败"，与 fail-open 原则相反）。
@@ -554,6 +657,12 @@ async function runTool(action, resolved, meta) {
     case 'password_change': {
       // 高风险业务触发动作：语义定位目标按钮/链接 → 拟人点击进入下一步。
       // schema 已强制这些类型必须提供有意义的 verification（防止盲执行）。
+      // PHASE 17-A P0-A：login / password_change / payment / purchase 属凭据类动作类型，
+      // 同样必须在授权上下文内才允许执行（第三方域上的登录/支付提交 = 凭据外泄面）。
+      {
+        const _blocked = await guardCredentialAction(action, page, meta);
+        if (_blocked) return _blocked;
+      }
       const obs = await withBrowserOp('action.inspect', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId }));
       const beforeObs = obs.ok ? obs.observation : null;
       let sel = await resolveSelector(action, obs.observation, meta, page);
@@ -569,6 +678,13 @@ async function runTool(action, resolved, meta) {
       return RESULT.ok({ acted: action.type, selector: sel.selector, element: sel.pattern }, after.observation, beforeObs);
     }
     case 'fill': {
+      // PHASE 17-A P0-A：Credential Action Authorization Gate（安全边界，必须在任何解析/观察之前）。
+      // 实证：任务目标为某 SaaS 注册流程，执行期漂移到第三方 OAuth 登录域，Agent 把环境
+      // 凭据邮箱连续填入第三方登录框 4 次。授权上下文之外的 origin 一律不提交凭据。
+      {
+        const _blocked = await guardCredentialAction(action, page, meta);
+        if (_blocked) return _blocked;
+      }
       const obs = await withBrowserOp('fill.inspect', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId }));
       // C106 F17b：同 click 分支 —— 观察失败不得被误报成「字段不存在」。
       // 更要紧的是：观察空集时若仍按 semantic 解析，会把值填进**语义相近的另一个字段**
@@ -577,6 +693,13 @@ async function runTool(action, resolved, meta) {
       const beforeObs = obs.ok ? obs.observation : null;
       const sel = await resolveSelector(action, obs.observation, meta, page);
       if (!sel) return RESULT.error('ELEMENT_NOT_FOUND', '未找到输入目标: ' + (action.target.field || action.target.semantic || '?'));
+      // PHASE 17-A P0-A 第二道：元素所在文档 origin（跨 origin iframe → 默认拒绝）。
+      // 只有定位到元素之后才能问到「这个值会落在哪个文档里」。
+      if (credentialAuthorization.isCredentialAction(action)) {
+        const _elOrigin = await elementDocumentOrigin(page, sel.selector);
+        const _blocked2 = await guardCredentialAction(action, page, meta, { elementOrigin: _elOrigin, checkChallenge: false });
+        if (_blocked2) return _blocked2;
+      }
       const fillCtx = { signals: await elementSignals(page, sel.selector) };
       const filled = await resolveFill(action, fillCtx);
       if (filled.value === null) {

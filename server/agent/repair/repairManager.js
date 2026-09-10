@@ -13,6 +13,9 @@ const errorClassifier = require('../recovery/errorClassifier');
 const failureSnapshot = require('../recovery/failureSnapshot');
 const failureAdvisor = require('../intelligence/failure/failureAdvisor');
 const failureCollector = require('../intelligence/failure/failureCollector');
+// PHASE 17-A P0-B：LLM 结构化决策（state / blockedActions / required）→ Runtime 动作策略层。
+// 此前 Diagnosis 的唯一消费口是「选修复策略」，Runtime 从不读它（R3 473s 实证）。
+const diagnosisDecision = require('../diagnosisDecision');
 const repairPlanner = require('./repairPlanner');
 const repairPolicy = require('./repairPolicy');
 const executor = require('./executor');
@@ -80,6 +83,15 @@ async function handleStepFailure({ task, step, error, observation, execution, pr
     }
   }
   const category = diag ? diag.diagnosis.category : 'UNKNOWN';
+
+  // P0-B：解析 LLM 产出的结构化 Decision（未产出时保持 null，绝不编造）。
+  // 它通过 handleStepFailure 的返回值交给 runtime —— 这是 F22/F23 的「最小接口连接」：
+  // 诊断结论从此能真正进入 Runtime Decision Layer，而不只是被写进 task.lastDiagnosis。
+  let decision = null;
+  try { decision = diagnosisDecision.fromLLM(diag && diag.diagnosis); } catch (e) { decision = null; }
+  if (decision) {
+    events.emit({ ...ctx, stepId: step.id, type: 'agent.diagnosis_decision', payload: { state: decision.state, blockedActions: decision.blockedActions, required: decision.required, source: 'llm', confidence: decision.confidence } });
+  }
 
   // Phase 7 Step 5：VERIFY_FAILED 的修复必须走「等待稳定→重观察→重试验证」序列，
   // 而非被 Diagnosis LLM 重分类为 ELEMENT_CHANGED 后误用 SEMANTIC_RELOCATE（对验证期望未满足无效）。
@@ -154,13 +166,13 @@ async function handleStepFailure({ task, step, error, observation, execution, pr
   }
 
   // 6) 返回结果
-  if (repairOk) return { ok: true, category, usedMemory, repairAttempt: lastOut.repairAttempt };
+  if (repairOk) return { ok: true, category, usedMemory, repairAttempt: lastOut.repairAttempt, decision };
 
   // 修复耗尽 → PAUSED_FOR_HUMAN（不无限循环）
   const errMsg = `修复尝试已达上限(${pr.plan.strategy})，需人工处理`;
   events.emit({ ...ctx, stepId: step.id, type: 'ai.failed', payload: { category, message: errMsg } });
   taskManager.pauseForHuman(task.id, errMsg, { stepId: step.id, action: step.action });
-  return { paused: true, reason: errMsg, category, usedMemory, repairStats: repairAttempts.statsByStrategy() };
+  return { paused: true, reason: errMsg, category, usedMemory, decision, repairStats: repairAttempts.statsByStrategy() };
 }
 
 module.exports = { handleStepFailure };
