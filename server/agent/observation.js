@@ -10,6 +10,7 @@ const obsCache = require('./observationCache');
 // STEP 2：网络可观测层。挂在 page 上，采集 request/response/console/pageerror。
 // 只观测，不判定；采集的文本一律脱敏（Authorization / token / 卡号 / CVV / 密码）。
 const networkObserver = require('./network/networkObserver');
+const networkReadiness = require('./networkReadiness');
 // CAP-L1：通用支付字段识别（autocomplete token / 通用构词），页内脱敏令牌的单一真源。
 const paymentField = require('./paymentField');
 // Phase 15.0（GAP-1）：真实站点 challenge / 外部阻断检测（纯函数，零网络依赖）。
@@ -17,20 +18,13 @@ const challengeDetector = require('../fp/challengeDetector');
 
 const INTERACTIVE_TAGS = new Set(['a', 'button', 'input', 'select', 'textarea', 'form', 'label', 'img', 'h1', 'h2', 'h3', 'p', 'summary']);
 
-// v0.2.1：在 page 对象上挂载一次性请求计数器，得到真实的「网络是否仍在进行」信号。
-// 不新增全局 event system —— 仅按需为本 page 实例挂 Playwright 原生 request 监听。
+// v0.2.1：在 page 对象上挂载请求监听，得到真实的「网络是否仍在进行」信号。
+// C106 F19 后收敛为独立模块 server/agent/networkReadiness.js —— 判据改为按请求类型分层
+// （详见该模块），且挂载时机由 browserManager 在 page 创建时立即执行：
+// 原先只在首次 inspect 时才挂，会漏掉页面加载期间的所有请求，
+// 而「没抓到」会伪装成「已就绪」（比恒 pending 更危险）。
 function ensureNetHook(page) {
-  if (!page) return;
-  if (page.__vilNetHooked) return;
-  page.__vilNetHooked = true;
-  page.__pendingRequests = 0;
-  try {
-    page.on('request', () => { page.__pendingRequests = (page.__pendingRequests || 0) + 1; });
-    page.on('requestfinished', () => { page.__pendingRequests = Math.max(0, (page.__pendingRequests || 0) - 1); });
-    page.on('requestfailed', () => { page.__pendingRequests = Math.max(0, (page.__pendingRequests || 0) - 1); });
-  } catch (e) { /* 页面已失效时忽略 */ }
-  // STEP 2：挂更完整的网络/运行时监听（幂等，失败静默 —— 观测能力缺失不得影响主流程）
-  try { networkObserver.attach(page); } catch (e) {}
+  return networkReadiness.attach(page);
 }
 const ROLE_TAGS = { a: 'link', button: 'button', input: 'input', select: 'select', textarea: 'textarea', form: 'form', img: 'img' };
 
@@ -543,10 +537,7 @@ function obsId(prefix) {
 // 后 DOM 不变极常见）时后续观察全部缓存命中，EXTERNAL_BLOCK/INTERACTIVE_CHALLENGE 永不触发，
 // 任务烧满预算而不是升级人工。提取为共享函数，新鲜/缓存两条路径消费同一实现（单点无漂移）。
 function computeNetworkState(page) {
-  if (page && typeof page.__pendingRequests === 'number') {
-    return page.__pendingRequests > 0 ? 'pending' : 'idle';
-  }
-  return 'unknown';
+  return networkReadiness.compute(page);
 }
 function computeChallenge(observation) {
   try {

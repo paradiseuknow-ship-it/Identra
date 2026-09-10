@@ -18,6 +18,10 @@ const { startShim } = require('./socksShim');
 const { startHttpShim } = require('./httpProxyShim');
 const { precheckProxy } = require('./proxyPrecheck');
 const { runIntegrityCheck, logIntegrity } = require('./integrity');
+// C106 F19：网络就绪判据。必须在 page 创建后立即 attach —— 原先只在首次
+// observation.inspect 时才挂，会漏掉页面加载期间发起的 document / 阻塞脚本 / 首屏 xhr
+// （「没抓到」会伪装成「已就绪」，比恒 pending 更危险）。
+const networkReadiness = require('./agent/networkReadiness');
 
 const sessions = new Map(); // profileId -> { context, page, fp, proxy, profileId, startedAt }
 
@@ -177,7 +181,7 @@ async function captureNativeUaBrands(context, cacheKey) {
     });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
     const port = server.address().port;
-    tempPage = await context.newPage();
+    tempPage = await newTrackedPage(context);
     await tempPage.goto('http://127.0.0.1:' + port + '/', { waitUntil: 'load', timeout: 10000 });
     result = await tempPage.evaluate(async () => {
       const u = navigator.userAgentData;
@@ -683,6 +687,16 @@ async function humanMove(page, targetX, targetY, options = {}) {
   }
 }
 
+/**
+ * C106 F19：统一的 page 创建入口 —— 创建后立即挂网络就绪监听。
+ * 幂等（networkReadiness.attach 内部去重），失败静默（观测能力缺失不得影响主流程）。
+ */
+async function newTrackedPage(context) {
+  const p = await context.newPage();
+  try { networkReadiness.attach(p); } catch (e) {}
+  return p;
+}
+
 async function humanClick(page, selector, options = {}) {
   if (page && typeof page.isClosed === 'function' && page.isClosed()) {
     throw new Error('humanClick: 页面已关闭，放弃点击 ' + selector);
@@ -849,7 +863,7 @@ async function warmupProxyConnection(context, proxy) {
   ];
   let wp = null;
   try {
-    wp = await context.newPage();
+    wp = await newTrackedPage(context);
     for (const url of candidates) {
       let ok = false;
       for (let attempt = 0; attempt < 3 && !ok; attempt++) {
@@ -1107,7 +1121,7 @@ async function _launchProfile(profile, proxies) {
 
   // 持久化上下文可能自动恢复上次页面
   let page = context.pages()[0];
-  if (!page) page = await context.newPage();
+  if (!page) page = await newTrackedPage(context);
 
   // 真实分辨率探测（仅 headful + 真实模式）：窗口已最大化，读取显示器真实尺寸回填 fp.screen，
   // 使注入的 screen / outerWidth / devicePixelRatio 与真实窗口完全一致，规避伪造破绽。
@@ -1249,7 +1263,7 @@ h1{margin:0 0 18px;font-size:22px;color:#38bdf8}
   {
     await page.goto(urlsToOpen[0], { timeout: 30000, waitUntil: 'domcontentloaded' }).catch(() => {});
     for (let i = 1; i < urlsToOpen.length; i++) {
-      const p2 = await context.newPage();
+      const p2 = await newTrackedPage(context);
       await setupRoutes(p2, behavior);
       p2.goto(urlsToOpen[i], { timeout: 30000, waitUntil: 'domcontentloaded' }).catch(() => {});
     }
@@ -1360,7 +1374,7 @@ async function switchToPage(profileId, indexOrUrl) {
 async function openPage(profileId, url) {
   const s = sessions.get(profileId);
   if (!s) return null;
-  const p = await s.context.newPage();
+  const p = await newTrackedPage(s.context);
   await setupRoutes(p, s.behavior || {}).catch(() => {});
   await applyClientHints(p, s.fp).catch(() => {});
   s.pages = Array.isArray(s.pages) ? s.pages : [s.page];
