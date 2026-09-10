@@ -3,44 +3,81 @@
 // Mock Provider：Phase 1.2 用，不接真实 LLM。
 // 目标：test-site/form —— navigate → inspect → fill(email) → fill(password, credentialRef)
 //      → submit → verify(text_present "success") → SUCCESS。
+//
+// C108（2026-09-10）planForTask 契约修复：planner.planObjective 对 provider.plan capability
+// 的产出按「严格 Step 契约」消费（normalizeStrictToCanonical：顶层 action=动作字符串、
+// semantic/expectedResult 承载描述与验证依据）。本文件此前返回的是规范化运行时 Step
+// （action 为对象、顶层 type: 'NAVIGATE'）→ 被当 strict 输入归一后全部步骤退化为
+// ACT/空 action/空描述 → validatePlan 恒拒绝 → mock planObjective 恒失败：
+//   - /chat 在 mock 模式恒 400（session 创建后规划阶段失败，C79 归因实证）；
+//   - runtime REPLAN 恒 fail-fast（恢复链「意外地快」是死路径的副作用，不是性能）。
+// 修复后 mock 与真实 LLM provider（deepseekPlan）同走 validatePlanStrict 自校验，fail-loud——
+// 契约漂移在生成期炸掉，而不是在 planner 校验层静默重试三次后 400。
+// 附带时序影响（C79/C108 实证）：mock REPLAN 变为真实可用 → step22 受控失败注入场景
+// （F1/F2）恢复链多走「重规划→执行→再失败→升级」全程，suite 总时长 70–94s → ~200–260s，
+// runRegression 对该套件启用专属超时覆盖（断言口径零变化，仅执行时间窗对齐真实恢复链成本）。
 
 const provider = require('./provider');
+const { validatePlanStrict } = require('./schema/plan');
 
 function planForTask(task) {
   const url = task.targetUrl || 'http://localhost:9555/form';
-  const ref = (task.secretRefs && task.secretRefs[0]) || null;
+  const ref = (task.secretRefs && task.secretRefs.filter(Boolean)[0]) || null;
+  // 凭据契约（与 planner.credentialContractViolations / PLAN_STRICT_INSTRUCTIONS 同源语义）：
+  //   - 有凭据引用 → email/password 身份字段一律 credentialRef（禁止 value 编造）；
+  //   - 无凭据引用 → 禁止任何 credentialRef（空集反向守卫），且敏感字段（password）动作不规划。
+  const emailStep = ref
+    ? {
+        action: 'fill', target: { field: 'email', semantic: 'email 输入框' },
+        credentialRef: ref,
+        semantic: '填写邮箱（凭据引用）',
+        expectedResult: '邮箱输入框已填入凭据中的邮箱',
+        verification: { type: 'element_present', expect: 'email' },
+      }
+    : {
+        action: 'fill', target: { field: 'email', semantic: 'email 输入框' },
+        value: 'demo@test.local',
+        semantic: '填写邮箱',
+        expectedResult: '邮箱输入框已填入 demo@test.local',
+        verification: { type: 'element_present', expect: 'email' },
+      };
   const steps = [
     {
-      id: 'step_nav', description: `打开 ${url}`, type: 'NAVIGATE',
-      action: { type: 'navigate', target: { url }, risk: 'LOW', verification: { type: 'page_change' } },
-      verification: { type: 'page_change' }, retryable: true, maxRetries: 3,
+      action: 'navigate', target: { url },
+      semantic: `打开 ${url}`,
+      expectedResult: '页面加载完成，目标表单可见',
+      verification: { type: 'page_change' },
     },
     {
-      id: 'step_obs', description: '观察页面结构', type: 'OBSERVE',
-      action: { type: 'inspect', target: { role: 'page' }, risk: 'LOW', verification: { type: 'none' } },
-      verification: { type: 'none' }, retryable: true, maxRetries: 3,
+      action: 'inspect', target: { role: 'page' },
+      semantic: '观察页面结构',
+      expectedResult: '页面元素结构可读',
     },
-    {
-      id: 'step_email', description: '填写邮箱', type: 'ACT',
-      action: { type: 'fill', target: { field: 'email' }, value: 'demo@test.local', risk: 'MEDIUM', verification: { type: 'element_present', expect: 'email' } },
-      verification: { type: 'element_present', expect: 'email' }, retryable: true, maxRetries: 3,
-    },
-    {
-      id: 'step_pwd', description: '填写密码', type: 'ACT',
-      action: { type: 'fill', target: { field: 'password' }, credentialRef: ref, risk: 'MEDIUM', verification: { type: 'none' } },
-      verification: { type: 'none' }, retryable: true, maxRetries: 3,
-    },
-    {
-      id: 'step_submit', description: '提交表单', type: 'ACT',
-      action: { type: 'submit', target: { semantic: 'submit' }, risk: 'HIGH', verification: { type: 'page_change' } },
-      verification: { type: 'page_change' }, retryable: true, maxRetries: 3,
-    },
-    {
-      id: 'step_verify', description: '验证注册结果', type: 'VERIFY',
-      action: { type: 'extract', target: { role: 'body' }, risk: 'LOW', verification: { type: 'text_present', expect: 'success' } },
-      verification: { type: 'text_present', expect: 'success' }, retryable: true, maxRetries: 3,
-    },
+    emailStep,
   ];
+  if (ref) {
+    steps.push({
+      action: 'fill', target: { field: 'password', semantic: 'password 输入框' },
+      credentialRef: ref,
+      semantic: '填写密码（凭据引用）',
+      expectedResult: '密码输入框已填入凭据中的密码',
+      verification: { type: 'element_present', expect: 'password' },
+    });
+  }
+  steps.push(
+    {
+      action: 'submit', target: { semantic: 'submit' },
+      semantic: '提交表单',
+      expectedResult: '表单提交成功，页面进入成功态',
+      verification: { type: 'page_change' },
+    },
+    {
+      action: 'extract', target: { role: 'body' },
+      semantic: '验证注册结果',
+      expectedResult: '页面出现 success 文本',
+      verification: { type: 'text_present', expect: 'success' },
+    },
+  );
   return steps;
 }
 
@@ -54,10 +91,15 @@ function mockFactory(config) {
       return { ok: true };
     },
     async plan(task) {
-      // Phase 5.8 修复（Finding #2 一部分）：planner.planObjective 期望 provider.plan 返回
-      // 步骤【数组】，而非 {steps:[...]} 对象——旧格式会被 planner 判为「未返回步骤数组」而拒绝。
-      // 此处返回合法数组，使 planner 契约正确；仅覆盖 form 站目标（复杂 Objective 仍需 bridge/LLM）。
-      return planForTask(task);
+      // C108：产出严格 Step 契约格式，并先经 validatePlanStrict 自校验（fail-loud）。
+      // planner.planObjective 会对本返回值走 normalizeStrictToCanonical → validatePlan，
+      // 与真实 LLM provider 完全同一条校验链。
+      const steps = planForTask(task);
+      const vr = validatePlanStrict({ steps });
+      if (!vr.ok) {
+        throw new Error('mock plan 违反 strict 契约（fail-loud）: ' + (vr.errors || []).slice(0, 3).join('; '));
+      }
+      return vr.plan.steps;
     },
     async diagnose(context) {
       const category = (context && context.error && context.error.type) || 'UNKNOWN';

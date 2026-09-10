@@ -197,14 +197,17 @@ function structuralScan() {
     const aDel = await auditOf('ai.task.delete');
     chk('P1c ai.task.delete 审计落盘', !!aDel && aDel.entries && aDel.entries.some((e) => e.resourceId === ct.id), JSON.stringify(aDel).slice(0, 120));
 
-    // P1d: /chat 意图归因最强实证 —— mock 下规划恒失败（C79 已证边界）→ 400 响应，
-    // 但审计点锚在任务创建 → 意图事件必须落盘（400 + 审计 = 双断言）。
+    // P1d: /chat 意图归因 —— 审计点锚在任务创建（先于规划结果落定）。C108 修复 mock plan
+    // strict 契约后规划成功 → 200 + taskId；审计 resourceId 必须锚定该任务 id
+    //（比旧「400 + 审计留存」更强的归属断言：意图事件与存活任务可对账）。
     const CHAT_MSG = 'C84_INTENT_MARKER_open example and screenshot';
     const chat = await req('POST', '/api/ai/chat', { message: CHAT_MSG }, tk);
-    chk('P1d chat mock 规划失败 → 400（C79 已证边界）', chat.code === 400, 'code=' + chat.code);
+    const chatTask = j(chat);
+    chk('P1d chat mock 规划成功 → 200（C108 契约修复）', chat.code === 200, 'code=' + chat.code + ' ' + chat.body.slice(0, 120));
+    chk('P1d chat 200 返回 taskId', !!chatTask && !!chatTask.taskId, chat.body.slice(0, 120));
     const aChat = await auditOf('ai.chat');
-    const eChat = aChat && aChat.entries && aChat.entries[0];
-    chk('P1d ai.chat 意图审计落盘（规划失败也留存）', !!eChat, JSON.stringify(aChat).slice(0, 120));
+    const eChat = aChat && aChat.entries && aChat.entries.find((e) => chatTask && e.resourceId === chatTask.taskId);
+    chk('P1d ai.chat 意图审计落盘且锚定任务 id', !!eChat, JSON.stringify(aChat).slice(0, 120));
     chk('P1d chat detail.messageLen 正确', !!eChat && eChat.detail && eChat.detail.messageLen === CHAT_MSG.length, JSON.stringify(eChat).slice(0, 200));
     chk('P1d chat 审计不含消息原文', !JSON.stringify(eChat || {}).includes('C84_INTENT_MARKER'), JSON.stringify(eChat).slice(0, 200));
 

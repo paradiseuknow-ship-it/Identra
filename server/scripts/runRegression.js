@@ -29,6 +29,14 @@ const OUT_DIR = path.join(ROOT, '.benchmark');
 // 每个测试文件的超时上限（毫秒）。超时按失败计，避免 CI 被悬挂进程卡死。
 const PER_TEST_TIMEOUT_MS = Number(process.env.REGRESSION_TIMEOUT_MS) || 180000;
 
+// C108（2026-09-10）每套件超时覆盖表：mock plan strict 契约修复后 runtime REPLAN 真实可用，
+// step22 受控失败注入场景（F1）恢复链实测 193.4s 到 HUMAN_ESCALATION（C79 曾 4/4 复现
+// 200–260s 击穿旧 180s 全局窗）→ suite 总时长 ~70–94s 升至 ~250–280s。仅对该套件提高
+// 执行时间窗（断言口径零变化，非降阈值；重基线证据 .benchmark/c108_step22_run*.log）。
+const PER_TEST_TIMEOUT_OVERRIDES = {
+  'test_step22_business_e2e.js': Number(process.env.REGRESSION_TIMEOUT_STEP22_MS) || 480000,
+};
+
 const argv = process.argv.slice(2);
 const VERBOSE = argv.includes('--verbose');
 const ONLY = (() => {
@@ -114,10 +122,11 @@ console.log('─'.repeat(96));
 for (const { file, label } of files) {
   const base = path.basename(file);
   const started = Date.now();
+  const timeoutMs = PER_TEST_TIMEOUT_OVERRIDES[base] || PER_TEST_TIMEOUT_MS;
   const res = spawnSync(process.execPath, [file], {
     cwd: ROOT,
     encoding: 'utf8',
-    timeout: PER_TEST_TIMEOUT_MS,
+    timeout: timeoutMs,
     maxBuffer: 32 * 1024 * 1024,
     env: process.env,
   });
@@ -128,7 +137,7 @@ for (const { file, label } of files) {
 
   const timedOut = res.error && /ETIMEDOUT|timed out/i.test(String(res.error.message || res.error));
   const code = timedOut ? 124 : (res.status == null ? 1 : res.status);
-  const summary = timedOut ? ('超时 >' + Math.round(PER_TEST_TIMEOUT_MS / 1000) + 's') : pickSummary(log);
+  const summary = timedOut ? ('超时 >' + Math.round(timeoutMs / 1000) + 's') : pickSummary(log);
 
   const skips = (log.match(/⊘ SKIP/g) || []).length;
   skipCount += skips;

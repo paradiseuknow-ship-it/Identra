@@ -14,7 +14,7 @@
 // 覆盖（tmp 隔离真实服务器 ×1，Mode A 本地模式 + 注册双用户跨工作区，零浏览器零外网）：
 //   P0  服务器启动 + register×2/login×2（跨工作区双身份链路）
 //   P1  alice 建 AI 任务 → 200 + id
-//   P2  alice chat 创建 session（mock 规划 400=已记录边界；session 创建先于规划失败）
+//   P2  alice chat 创建 session（C108 后 mock 规划成功→任务创建；session 创建先于规划）
 //   P3  P3a bob sessions 列表不含 alice session（D3 列表过滤）
 //       P3b alice session 有 workspaceId 章 === alice 工作区（盖章生效）
 //       P3c alice sessions 列表含自有 session（归属者零变化）
@@ -117,10 +117,9 @@ const createdSnapDirs = [];
     const tid = ct && ct.id;
     chk('P1 alice 建 AI 任务 → 200+id', ct && !!tid, ct ? JSON.stringify(ct).slice(0, 120) : 'null');
 
-    // P2 alice chat → session 创建+盖章。⚠️ 已记录边界（C79 归因实证）：mock 模式下 /chat 在
-    // session 创建后于规划阶段 400（provider.mock planForTask 输出违反 planner strict 契约，
-    // 此前不可达的 runtime REPLAN 路径会被罐头计划激活 → step22 验收时序击穿，修复需专门
-    // 恢复链重基线批次）。session 创建先于规划失败 → 仍可从列表取证归属章。
+    // P2 alice chat → session 创建+盖章。C108 已修复 mock plan strict 契约（原边界：规划阶段
+    // 恒 400），规划成功 → 任务创建 + 挂计划；session 创建先于规划 → 归属章断言不受影响。
+    // 此前不可达的 runtime REPLAN 路径随契约修复激活（C79 归因），step22 时序由 C108 专门批次重基线。
     const aliceMsg = 'c79-alice-chat-归属取证消息';
     await req('POST', '/api/ai/chat', { message: aliceMsg }, AT);
     const alist0 = j(await req('GET', '/api/ai/sessions', undefined, AT));
@@ -173,7 +172,7 @@ const createdSnapDirs = [];
     const r7b = await req('GET', '/api/ai/snapshots/' + legacyId + '/..%2f..%2f..%2fvault.json');
     chk('P7b 快照路径穿越 → 400', r7b.code === 400, r7b.code + ' ' + r7b.body.slice(0, 80));
 
-    // P8 Mode A 回归：匿名 chat（400 为已记录 mock 边界）+ 匿名 sessions 可见其 session
+    // P8 Mode A 回归：匿名 chat（C108 后规划成功 → session+任务创建）+ 匿名 sessions 可见其 session
     const anonMsg = 'c79-anon-chat-ModeA取证消息';
     await req('POST', '/api/ai/chat', { message: anonMsg });
     const a8list = j(await req('GET', '/api/ai/sessions'));

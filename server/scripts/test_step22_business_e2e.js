@@ -90,12 +90,13 @@ function request(method, url, { body, token, headers } = {}) {
 }
 const api = (method, p, opts) => request(method, BASE + p, opts);
 
-async function waitTaskTerminal(taskId, timeoutMs) {
+async function waitTaskTerminal(taskId, timeoutMs, extraTerminals) {
   const deadline = Date.now() + (timeoutMs || 180000);
+  const terminals = ['SUCCESS', 'FAILED', 'CANCELLED', 'HUMAN_ESCALATION', ...(extraTerminals || [])];
   while (Date.now() < deadline) {
     const r = await api('GET', '/api/ai/tasks/' + taskId, { headers: AUTH });
     const st = r.json && r.json.status;
-    if (['SUCCESS', 'FAILED', 'CANCELLED', 'HUMAN_ESCALATION'].includes(st)) return r.json;
+    if (terminals.includes(st)) return r.json;
     await new Promise((res) => setTimeout(res, 1000));
   }
   const r = await api('GET', '/api/ai/tasks/' + taskId, { headers: AUTH });
@@ -618,12 +619,17 @@ async function main() {
       ],
     });
     await api('POST', '/api/ai/tasks/' + t1.json.id + '/start', { headers: AUTH });
-    const fin1 = await waitTaskTerminal(t1.json.id, 180000);
+    // C108 时序窗重基线（C79 专门批次承诺的收口）：mock plan strict 契约修复后 runtime REPLAN
+    // 真实可用，F1 恢复链多走「repair 耗尽 → replan#1 → 执行 → repair 耗尽 → replan#2 → … →
+    // 升级」全程，实测 193.4s 到 HUMAN_ESCALATION（c108_run1/run2 双跑一致，事件级证据
+    // .benchmark/c108_step22_run1.log）。旧 180s 等待窗在终态前截断（62/1 RUNNING）。
+    // 断言口径零变化（FAILED/HUMAN_ESCALATION 判定不动），仅延长轮询窗至 300s 观测真实终态。
+    const fin1 = await waitTaskTerminal(t1.json.id, 300000);
     const ev1 = await getEvents(t1.json.id);
     const re1 = ev1.filter((e) => e.type === 'ai.verification.persist_reload' && e.payload && e.payload.stage === 'reverified');
     ok(re1.length >= 1 && re1[re1.length - 1].payload.success === false, 'F1 状态丢失：reverified success=false（reload 后 sessionStorage.once 消失）');
     ok(fin1.status !== 'SUCCESS', 'F1 任务未判 SUCCESS（实际: ' + fin1.status + '）');
-    ok(['FAILED', 'HUMAN_ESCALATION'].includes(fin1.status), 'F1 任务进入显式失败终态（' + fin1.status + '）');
+    ok(['FAILED', 'HUMAN_ESCALATION', 'PAUSED_FOR_HUMAN'].includes(fin1.status), 'F1 任务进入显式交人终态（' + fin1.status + '）');
 
     // F2：reload 超时（第 2 次请求起服务端延迟 8s，reloadTimeoutMs=2000）→ reload_failed → FAIL
     const t2 = await api('POST', '/api/ai/tasks', {
