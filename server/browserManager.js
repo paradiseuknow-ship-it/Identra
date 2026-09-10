@@ -744,11 +744,16 @@ async function humanType(page, selector, text, options = {}) {
     await page.keyboard.press('ControlOrMeta+a');
     await page.keyboard.press('Backspace');
   }
+  // C106 F20：input-value 守卫。默认开启（options.focusGuard === false 可关）。
+  // 受控组件在每次 input 事件后 re-render，可能重建 input 节点导致焦点丢失，
+  // 后续字符打到 body → 只进去前几个字符，而调用方此前无从察觉（实证：注册第一步邮箱）。
+  const guard = options.focusGuard !== false;
   const baseDelay = options.baseDelay || 60;
   const randomDelay = options.randomDelay || 100;
   const mistakes = options.mistakes || 0; // 0 表示不模拟输错；1 表示可能输错一次再回退
   let pendingMistake = mistakes > 0 && Math.random() < 0.3;
-  for (const char of String(text)) {
+  const str = String(text == null ? '' : text);
+  for (const char of str) {
     if (Date.now() > _deadline) {
       throw new Error('humanType: 输入超过总时长上限（' + (Number(process.env.TOOL_OP_TIMEOUT_MS) || 25000) + 'ms），中止以避免悬挂');
     }
@@ -769,6 +774,50 @@ async function humanType(page, selector, text, options = {}) {
     await page.keyboard.type(char, { delay });
     if (thinkPause > 0) await sleep(thinkPause);
   }
+
+  // C106 F20-c：末尾回读校验 + 一次补录。
+  // 只在末尾重输，循环中间绝不回退索引——受控组件的 setState 是异步的，
+  // 中间回读落后于实际输入会造成字符重复（宁可慢，不可错）。
+  if (guard && str.length > 0) {
+    const readValue = async () => {
+      try {
+        const v = await page.locator(selector).first().inputValue({ timeout: 2000 });
+        return v == null ? null : String(v);
+      } catch (e) {
+        return null;
+      }
+    };
+    // 等价判定可注入：站点前端常对卡号/电话做格式化（插入空格），
+    // 此时去分隔符后相等应视为成功（由 humanInput.valuesMatch 提供，敏感字段不放宽）。
+    const eq = typeof options.equals === 'function' ? options.equals : null;
+    const same = (v) => (eq ? !!eq(v, str) : v === str);
+    let actual = await readValue();
+    if (same(actual)) return { ok: true, value: actual, retyped: false, length: str.length };
+    // 一次补录：重新聚焦 → 全选清空 → 重输（延迟减半，守住总时长预算）。
+    // 保持 replace 语义（先清空再重输），绝不拼接。
+    await humanClick(page, selector, options).catch(() => {});
+    const tag = await page.evaluate(() => {
+      const el = document.activeElement;
+      if (!el) return null;
+      const t = String(el.tagName || '').toLowerCase();
+      if (t === 'input' || t === 'textarea') return t;
+      if (el.isContentEditable) return 'contenteditable';
+      return null;
+    }).catch(() => null);
+    if (tag) {
+      await page.keyboard.press('ControlOrMeta+a');
+      await page.keyboard.press('Backspace');
+    }
+    const fast = Math.max(10, Math.round((baseDelay + randomDelay / 2) * 0.5));
+    for (const ch of str) {
+      if (Date.now() > _deadline) break;
+      if (page && typeof page.isClosed === 'function' && page.isClosed()) break;
+      await page.keyboard.type(ch, { delay: fast });
+    }
+    const after = await readValue();
+    return { ok: same(after), value: after, retyped: true, length: str.length, firstAttempt: actual };
+  }
+  return { ok: true, value: null, retyped: false, skipped: true };
 }
 
 async function humanScroll(page, deltaY = 300, options = {}) {

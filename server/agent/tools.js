@@ -13,6 +13,7 @@ const lock = require('./lock');
 const events = require('./events');
 const recorder = require('./recorder');
 const observation = require('./observation');
+const humanInput = require('./humanInput');
 const semanticResolver = require('./semanticResolver');
 const verification = require('./verification');
 const pageStateClassifier = require('./pageStateClassifier');
@@ -589,10 +590,35 @@ async function runTool(action, resolved, meta) {
         return RESULT.error('NO_VALUE', 'fill 缺少 value 且 credentialRef 不可用');
       }
       const value = filled.value;
-      await withBrowserOp('fill.type', page, meta.taskId, () => {
-        if (sel.selector.indexOf(' >> ') >= 0) return makeLocator(page, sel.selector).fill(value);
-        return browserManager.humanType(page, sel.selector, value, { baseDelay: 30, randomDelay: 60 });
+      // C106 F20-b：输入前先等字段在 DOM 上稳定，避开页面 re-render / 步骤切换窗口。
+      //（真实站点实证：注册第一步输入过快 → 界面刷新 → 只进去前几个字符。）
+      await humanInput.waitFieldStable(page, sel.selector, { timeoutMs: 1500 });
+      // C106 F20-a：人类打字节奏（原 60ms/字符 ≈17 字符/秒，人类是 150–250ms/字符）。
+      const _profile = humanInput.typingProfile(value, { field: (action.target || {}).field });
+      const _field = (action.target || {}).field || (action.target || {}).semantic;
+      const typed = await withBrowserOp('fill.type', page, meta.taskId, () => {
+        // 超长值（>120 字符）降级为整体赋值：人类打长文本靠粘贴，且逐字符会击穿超时上限。
+        if (_profile.mode === 'fill' || sel.selector.indexOf(' >> ') >= 0) {
+          return makeLocator(page, sel.selector).fill(value);
+        }
+        return browserManager.humanType(page, sel.selector, value, {
+          baseDelay: _profile.baseDelay,
+          randomDelay: _profile.randomDelay,
+          equals: (a, e) => humanInput.valuesMatch(a, e, { field: _field }).equal,
+        });
       });
+      // C106 F20-c：回读校验。填进去的值必须真的在字段里，否则 fail-loud。
+      // 此前从不校验 → 只填进几个字符也判 SUCCESS → 错误静默传给验证层，
+      // 表现为「明明填过了却莫名其妙失败」。
+      if (typed && typed.skipped !== true && typed.ok === false) {
+        const _d = humanInput.describeValue(value, _field);
+        return RESULT.error('FILL_VALUE_MISMATCH',
+          '输入后回读不一致（期望长度 ' + _d.length + '，实际长度 ' +
+          String((typed.value == null ? '' : typed.value).length) +
+          '，已尝试补录一次），页面可能重置了该字段');
+      }
+      // F20-a 收尾：让受控组件的 onChange / 实时校验跑完，再进入下一步。
+      await humanInput.sleep(humanInput.settleDelay());
       // 凭据使用记录（不存值）—— 追溯"哪个账号用了哪个凭据"
       if (action.credentialRef) {
         try {
