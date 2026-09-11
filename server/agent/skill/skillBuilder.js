@@ -469,8 +469,14 @@ function persist(candidate, chain, task) {
       useChain = prev;
       evidence.appendTransitions(useChain, chain.transitions);
     }
+    // else：旧链已被归档截尾（aiSkillEvidence 水位 3000，最老 1/3 移出主文件）或历史 Skill
+    // 无 ref —— 此时 useChain 保持为本次观察的新链。**必须**把 skill.evidenceChainRef
+    // 重指到新链 id，否则引用悬挂：Skill 记录指向一条已不在集合里的链，
+    // 17-D Router 消费证据链时 find 恒 null（C111 实锤并修复）。
+    // 注：旧链的历史迁移记录仍在 archive 归档文件中可查证，此处不伪造「完整」。
   }
   useChain.skillId = skill.id;
+  skill.evidenceChainRef = useChain.id;
   useChain.skillVersion = skill.version;
 
   // provenance：任务只计一次（幂等）
