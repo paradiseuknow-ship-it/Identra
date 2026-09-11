@@ -627,10 +627,17 @@ function shadow(task, observation, opts) {
 }
 
 // 任务结束时回填实际结果（影子比对用）。同一任务只回填一次；fail-open。
-function recordActual(taskId, actual) {
+// ★ C112 配对守卫：调用方可传 opts.executionId（= 终态时的 task.currentExecutionId），
+//   此时**只回填同一 execution 的待回填记录**（executionId 为 null 的旧记录仍兼容回填）。
+//   为什么：cancel()/进程硬杀不回填 → 影子记录以 actual=null 残留；retry() 复用同一
+//   taskId 二次影子落库后，若按 taskId-only 回填，attempt-1 的决策会被 attempt-2 的
+//   实际结果污染（跨 execution 决策/实际错配，决策质量统计失真）。宁可少记不误记。
+function recordActual(taskId, actual, opts) {
   try {
     if (!taskId || !actual) return { ok: false, reason: 'BAD_INPUT' };
-    const rows = store.findWhere(ROUTING_COLLECTION, (r) => r && r.taskId === taskId && r.actual == null);
+    const wantExec = (opts && opts.executionId) ? String(opts.executionId) : null;
+    const rows = store.findWhere(ROUTING_COLLECTION, (r) => r && r.taskId === taskId && r.actual == null
+      && (!wantExec || r.executionId == null || r.executionId === wantExec));
     if (!rows.length) return { ok: false, reason: 'NO_PENDING_ROUTING' };
     const now = Date.now();
     for (const r of rows) {

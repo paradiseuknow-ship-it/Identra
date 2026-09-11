@@ -122,6 +122,11 @@ function _purgeTaskEvidence(taskId) {
   const stepIds = new Set(store.read('aiSteps', []).filter((s) => s.taskId === taskId).map((s) => s.id));
   store.write('aiSteps', store.read('aiSteps', []).filter((s) => s.taskId !== taskId));
   store.write('aiAttempts', store.read('aiAttempts', []).filter((a) => a.taskId !== taskId && !stepIds.has(a.stepId)));
+  // ★ C112：aiSkillRouting 也是任务级证据 —— retry 复用同一 taskId 时，旧 attempt 的
+  //   待回填影子记录（actual=null，cancel/硬杀路径不回填）若不清退，会被新 attempt 的
+  //   终态按 taskId 回填 → 跨 execution 决策/实际错配（17-E 决策质量数据集失真）；
+  //   deleteTask 同理留下永久孤儿。与 aiSteps/aiAttempts 同一清退口径。
+  store.write('aiSkillRouting', store.read('aiSkillRouting', []).filter((r) => r && r.taskId !== taskId));
   return stepIds.size;
 }
 
@@ -518,9 +523,11 @@ function siteOfUrl(url) {
 // 语义：SUCCESS / FAILED / HUMAN_ESCALATION —— 刻意不细分升级原因，避免把
 // 「Skill 不适用」与「Skill 失败」混为一谈（§9.2 三态纪律在统计侧的延伸）。
 // fail-open：影子记录是观测设施，任何异常都不得影响任务结果。
+// ★ C112：传入终态时的 executionId —— 回填只配对同一 execution 的影子记录，
+//   防止 cancel/硬杀残留的旧 execution 待回填记录被新 attempt 的结果污染（见 skillRouter.recordActual）。
 function recordRoutingActual(task, outcome) {
   try {
-    if (task && task.id) require('./skill/skillRouter').recordActual(task.id, outcome);
+    if (task && task.id) require('./skill/skillRouter').recordActual(task.id, outcome, { executionId: task.currentExecutionId || null });
   } catch (e) { /* 影子回填失败不影响任务结果 */ }
 }
 
@@ -626,6 +633,7 @@ module.exports = {
   start, pauseForHuman, resume, cancel, retry, complete, fail, escalate,
   attachPlan, revisePlan, approve, reject, modify, recover,
   setExecutor, isTaskTerminal, markFlowUsed,
+  recordRoutingActual, // C112：导出面（fail-open 包装，供守护测试直接验证配对行为）
 };
 
 function isTaskTerminal(s) { return tsm.isTaskTerminal(s); }
