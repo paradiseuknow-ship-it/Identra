@@ -481,6 +481,10 @@ function complete(id, result) {
   try {
     require('./skill/skillBuilder').observe(task);
   } catch (e) { /* Skill 提炼失败不影响任务结果 */ }
+  // PHASE 17-D 消费点：把任务终态回填到路由影子记录（`aiSkillRouting.actual`）。
+  // 这是影子模式的**闭环另一半** —— 只有「Router 会怎么决定」（决策期写入）与「实际结果」
+  // （终态写入）都存在，才能比对决策质量（§25.1 门禁）。fail-open，零控制流影响。
+  recordRoutingActual(task, 'SUCCESS');
   // Phase 3.4 消费点：成功 → 更新 Profile 评分 / 站点成功率 / 生命周期
   try {
     const site = siteOfUrl(task.targetUrl);
@@ -507,6 +511,17 @@ function complete(id, result) {
 function siteOfUrl(url) {
   if (!url) return null;
   try { return new URL(url).hostname || null; } catch (e) { return null; }
+}
+
+// PHASE 17-D：路由影子记录的结果回填（`aiSkillRouting.actual`）。
+// 只在任务进入终态时调用；同一任务只回填一次（recordActual 内部按 actual==null 过滤）。
+// 语义：SUCCESS / FAILED / HUMAN_ESCALATION —— 刻意不细分升级原因，避免把
+// 「Skill 不适用」与「Skill 失败」混为一谈（§9.2 三态纪律在统计侧的延伸）。
+// fail-open：影子记录是观测设施，任何异常都不得影响任务结果。
+function recordRoutingActual(task, outcome) {
+  try {
+    if (task && task.id) require('./skill/skillRouter').recordActual(task.id, outcome);
+  } catch (e) { /* 影子回填失败不影响任务结果 */ }
 }
 
 // CAP-K1：runtime.resolvePlan 命中高置信度历史 flow 时，把 flowId 记到任务上，
@@ -545,6 +560,7 @@ function fail(id, error, opts = {}) {
   queue.markDone(task.id, terminalState);
   events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'task.failed', payload: { error: task.error, escalate: !!opts.escalate } });
   recordFlowFailure(task); // CAP-K1：复用的 flow 也吃一次失败反馈
+  recordRoutingActual(task, terminalState); // PHASE 17-D：影子记录回填（FAILED / HUMAN_ESCALATION）
   // Phase 3.4 消费点：失败 → 更新 Profile 评分（恶化降级，不删除）
   try {
     const site = siteOfUrl(task.targetUrl);
@@ -601,6 +617,7 @@ function escalate(id, error, opts = {}) {
   queue.markDone(task.id, 'HUMAN_ESCALATION');
   events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'task.escalated', payload: { error: task.error, reason: opts.reason || null, escalationKind: task.escalationKind } });
   recordFlowFailure(task); // CAP-K1：升级同视为未完成目标，复用的 flow 也吃失败反馈（置信度有界自我修正）
+  recordRoutingActual(task, 'HUMAN_ESCALATION'); // PHASE 17-D：影子记录回填（升级不是 Skill 失败，但必须可观测）
   return task;
 }
 

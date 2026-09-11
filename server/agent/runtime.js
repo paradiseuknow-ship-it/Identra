@@ -220,6 +220,12 @@ async function resolvePlan(task) {
 
   // Observation → ContextBuilder → Planner：构建结构化上下文（objective/observation/steps/checkpoint/errorHistory/verification）
   const planningObs = await capturePlanningObservation(task);
+  // PHASE 17-D 影子接入点（§9.5：skillRouter 的时机是「执行期，runtime.resolvePlan 上游」）。
+  // ★ 复用**已有**的 planningObs —— 零新增导航、零新增观察成本、零新增失败模式。
+  // ★ 只落「决策 + 证据」到 aiSkillRouting，**返回值完全不参与后续逻辑**：
+  //   本行删掉与保留，resolvePlan 的行为必须逐字节相同（守护测试断言这一点）。
+  //   决策质量先在真实流量上观测（比对 Router 决策 vs 实际结果），接线属 17-E。
+  try { require('./skill/skillRouter').shadow(task, planningObs); } catch (e) { /* 影子观测失败不影响规划 */ }
   const ctx = {
     taskId: task.id,
     executionId: task.currentExecutionId,

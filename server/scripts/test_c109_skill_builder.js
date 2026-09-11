@@ -368,5 +368,42 @@ ATTEMPTS.forEach((a) => store.insert('aiAttempts', a));
   check('Y2 flowSchema 对合法 flow 仍放行（修正为纯收紧）', good.ok === true, JSON.stringify(good.errors));
 }
 
+// ── CH：证据链引用完整性（防悬挂引用）──────────────────────────────────────
+// 背景（2026-09-11 核实的工作区既有修复，本次为其补守护断言）：
+//   aiSkillEvidence 水位 3000 → 最老 1/3 被归档移出主文件。此后 persist 在
+//   「existing 命中但 store.find(旧链) 返回 null」时会退回本次新链 ——
+//   若不把 skill.evidenceChainRef 重指，Skill 记录就指向一条**解析不到的链**，
+//   任何证据链消费者（如 17-D Router）都会 find 恒 null。
+//   取证：当前真实数据 16 skill / 16 chain、悬挂 0 条 —— 缺陷真实但需达水位才触发。
+//   行为中性验证：旧链存在时 useChain === prev，重指后 ref 值不变。
+{
+  const p1 = builder.observe(TASK);
+  const rec1 = p1.ok ? store.find('aiSkill', p1.skillId) : null;
+  check('CH0 基线：Skill 的 evidenceChainRef 可解析',
+    !!rec1 && !!store.find('aiSkillEvidence', rec1.evidenceChainRef),
+    rec1 ? 'ref=' + rec1.evidenceChainRef : 'no skill');
+
+  if (rec1) {
+    // 构造失联引用（模拟归档截尾后的状态）
+    store.upsert('aiSkill', Object.assign({}, rec1, { evidenceChainRef: 'chain_archived_gone' }));
+    check('CH1 前置条件成立：引用已失联',
+      store.find('aiSkill', rec1.id).evidenceChainRef === 'chain_archived_gone');
+
+    // 第二次观察：同 skillKey → existing 命中，且旧链解析不到
+    const T1B = T1 + '_b';
+    const task2 = Object.assign({}, TASK, { id: T1B, currentExecutionId: 'exe_c109_2' });
+    const steps2 = STEPS.map((s) => Object.assign({}, s, { taskId: T1B }));
+    const atts2 = ATTEMPTS.map((a) => Object.assign({}, a, { taskId: T1B }));
+    const b2 = builder.build({ task: task2, steps: steps2, attempts: atts2 });
+    const p2 = b2.ok ? builder.persist(b2.candidate, b2.chain, task2) : { ok: false, reason: b2.reason };
+    const rec2 = p2.ok ? store.find('aiSkill', p2.skillId) : null;
+
+    check('CH2 旧链失联时 persist 仍成功（不因证据链缺口整体失败）', !!(p2 && p2.ok), String(p2 && p2.reason));
+    check('CH3 evidenceChainRef 已重指，不再悬挂', !!rec2 && rec2.evidenceChainRef !== 'chain_archived_gone',
+      rec2 ? 'ref=' + rec2.evidenceChainRef : 'no skill');
+    check('CH4 重指目标必须可在集合中解析', !!rec2 && !!store.find('aiSkillEvidence', rec2.evidenceChainRef));
+  }
+}
+
 console.log('\n=== 结果: ' + pass + ' passed, ' + fail + ' failed ===');
 process.exit(fail === 0 ? 0 : 1);
