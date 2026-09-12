@@ -36,7 +36,11 @@ const path = require('path');
 
 const PORT = 22860 + (process.pid % 50);
 const ROOT = path.join(__dirname, '..', '..');
-const SNAP_DIR = path.join(ROOT, 'data', 'evidence', 'snapshots');
+// C115：快照目录改为**跟随隔离数据根**。此前硬编码真实 <repo>/data，等于依赖
+// evidence.js 忽略 FPB_DATA_DIR 的旧行为——而那正是「隔离测试把截图写进真实 data
+// 目录」污染源。evidence.js 已改为 dataRoot() 驱动，测试与之同源推导。
+// 断言逻辑与强度不变（P6/P7 一字未改），仅夹具根随隔离目录走（17-A 同类处置）。
+let SNAP_DIR = null; // 在 dataDir 创建后赋值
 
 function req(method, p, body, token) {
   return new Promise((resolve) => {
@@ -96,6 +100,7 @@ async function waitReady() {
 const createdSnapDirs = [];
 (async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fpb-c79-'));
+  SNAP_DIR = path.join(dataDir, 'evidence', 'snapshots'); // C115：与 evidence.js 同源（隔离根）
   const srv = bootServer(PORT, dataDir, {});
   try {
     if (!(await waitReady())) { chk('P0 服务器启动', false, srv.logs.join('').slice(-400)); throw new Error('server not ready'); }

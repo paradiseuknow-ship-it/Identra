@@ -81,7 +81,11 @@ async function collectLive(profileId) {
   try {
     const fs = require('fs');
     const path = require('path');
-    const profPath = path.join(__dirname, '..', '..', '..', '..', 'data', 'profiles.json');
+    // C115：跟随统一数据根（server/dataRoot.js）。此前上溯 4 级硬编码 <repo>/data，
+    // 完全不认 FPB_DATA_DIR —— 隔离测试下这里会读**真实** profiles.json，既破坏隔离，
+    // 又可能与 db.js（走 dataRoot）读到的数据不是同一份（C59 数据根分裂的同族残留）。
+    const { dataRoot } = require('../../../dataRoot');
+    const profPath = path.join(dataRoot(), 'profiles.json');
     if (!fs.existsSync(profPath)) return null;
     const profiles = JSON.parse(fs.readFileSync(profPath, 'utf8'));
     const arr = Array.isArray(profiles) ? profiles : Object.values(profiles);
@@ -100,7 +104,7 @@ async function collectLive(profileId) {
 
     // 代理探测（若配置了 proxyId）
     try {
-      const proxiesPath = path.join(__dirname, '..', '..', '..', '..', 'data', 'proxies.json');
+      const proxiesPath = path.join(dataRoot(), 'proxies.json'); // C115：同上，跟随统一数据根
       if (fs.existsSync(proxiesPath) && profile.proxyId) {
         const proxies = JSON.parse(fs.readFileSync(proxiesPath, 'utf8'));
         const plist = Array.isArray(proxies) ? proxies : Object.values(proxies);

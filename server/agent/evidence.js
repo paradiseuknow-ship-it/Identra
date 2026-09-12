@@ -7,8 +7,14 @@
 const fs = require('fs');
 const path = require('path');
 const { safeJoinWithin, sanitizeSegment } = require('../security/safePath');
+const { dataRoot } = require('../dataRoot');
 
-const SNAP_DIR = path.join(__dirname, '..', '..', 'data', 'evidence', 'snapshots');
+// C115：快照目录跟随统一数据根（server/dataRoot.js）。此前硬编码 <repo>/data，
+// 完全不认 FPB_DATA_DIR——后果：隔离测试（FPB_DATA_DIR=tmp）产生的截图仍写进**真实**
+// data 目录，长期无界累积并污染真实证据链（T24「隔离零污染」纪律外的漏网面）。
+// 非隔离模式下 dataRoot() 与旧值逐字相同（都是 <repo>/data）→ 行为零变化。
+// 保留唯一默认根定义在此（与 C46 对 identityStore/browserManager 的口径一致）。
+const SNAP_DIR = path.join(dataRoot(), 'evidence', 'snapshots');
 
 async function saveSnapshot(page, taskId, stepId, label) {
   if (!page) return null;

@@ -13,6 +13,8 @@
 
 const fs = require('fs');
 const path = require('path');
+// C115：恢复写回改用共享原子写原语（瞬时锁退避 + tmp/rename）
+const { atomicWriteFileSync } = require('./fsSafe');
 
 const BACKUP_FORMAT = 'identra-backup';
 const BACKUP_VERSION = 1;
@@ -82,7 +84,11 @@ function restoreSnapshot(snapshot) {
   const restored = [];
   for (const [name, content] of Object.entries(snapshot.files)) {
     const target = name === 'vault.json' ? vaultFile : path.join(dir, name);
-    fs.writeFileSync(target, JSON.stringify(content, null, 2));
+    // C115：原子写（tmp + rename）。此前裸 writeFileSync——恢复被中断（崩溃/断电/文件锁）
+    // 会留下半截 JSON；而该半截文件正是 jsonStore.read() 损坏分支的输入，会串成
+    // 「备份恢复中断 → 该集合被下一次 RMW 静默清空」。D1 给损坏文件加了侧车保全，
+    // 但源头（非原子写）必须一并堵住，否则每次中断都要靠人工从侧车恢复。
+    atomicWriteFileSync(target, JSON.stringify(content, null, 2));
     restored.push(name);
   }
   return { restored, preRestoreDir: preDir };

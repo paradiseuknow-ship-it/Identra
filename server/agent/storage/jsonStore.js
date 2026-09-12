@@ -10,6 +10,11 @@
 const fs = require('fs');
 const path = require('path');
 const { StoreInterface } = require('./store.interface');
+// C115：I/O 原语统一到 fsSafe（fsSafe.js 头部注释预留的「后续如做统一，需单独批次
+// 回归 jsonStore 全套件」——本批次即该批次）。此前本文件自持一份副本，与 fsSafe
+// 逐字对齐；重复定义会各自漂移（C58 D2 教训）。替换为零语义变更：同款瞬时锁
+// （EPERM/EBUSY/EACCES）5 次退避 + 耗尽 fail-loud + tmp/rename 原子写。
+const { readFileSyncRetry, atomicWriteFileSync } = require('../../fsSafe');
 
 const FILES = {
   aiTasks: 'aiTasks.json',
@@ -74,7 +79,63 @@ const AUTO_ARCHIVE_LIMITS = {
   // PHASE 17-E：Skill 接管执行记录。每个 (task, execution) 至多一条，但记录内嵌逐步证据，
   // 体积大于路由记录 → 取更紧的水位（2000）。不设水位会随任务量线性增长。
   aiSkillExecutions: 2000,
+  // C115 补漏：以下两个集合早已注册 FILES 但从未给水位——「新集合必须同时注册两张表」
+  // 这条纪律此前只靠人记，没有任何机制拦截（D5 的治理断言正是为此而加）。
+  // 两者的量级都是「每任务一条」审计记录，与 aiSkillRouting 同阶 → 取 4000。
+  aiIntelligenceEvaluations: 4000, // Phase 3.6：Runtime 在 Task SUCCESS/FAILED 时 collect() 一条
+  aiDispatchExecutions: 4000,      // Phase 4.1：queueManager.submit() 每次派遣一条
 };
+
+// ── 存储治理登记（C115）──────────────────────────────────────────────────────
+// FILES 里的每个键都必须落进下面三张表之一，由 storageGovernanceGaps() 强制校验。
+// 目的：把「新增集合必须同时配水位」从「靠人记」变成「测试即失败」。
+// 依据：aiAttempts 42MB 事故与 C115 D2（两个集合注册了 FILES 却漏水位，跑了很久没人发现）
+// 都是同一成因——两张表之间没有任何一致性约束。
+//   ① AUTO_ARCHIVE_LIMITS —— 历史审计型：超水位把最老 1/3 归档到 data/archive/（不丢数据）
+//   ② BOUNDED_COLLECTIONS  —— 天然有界：按 id upsert / 环形缓冲 / 显式 trimCollection
+//   ③ UNBOUNDED_ACCEPTED   —— 已知随业务量增长但**不适用归档治理**（登记边界，非默许）
+const BOUNDED_COLLECTIONS = {
+  aiEvents: 'EVENT_MAX=500 环形缓冲（appendEvent 内 splice 截尾）',
+  aiKnowledge: 'trimCollection 2000（memory.js:20）',
+  aiCredentialUsage: 'trimCollection 2000（secretManager.js:161）',
+  aiFailureSnapshots: 'trimCollection 1000（failureSnapshot.js:36）',
+  aiElementMemory: '按 (site × semantic) upsert 单条演进',
+  aiSiteMemory: '按 site upsert',
+  aiFlowMemory: '按 (site × goal) upsert（17-B：Project Skill 的前身）',
+  aiFailureKnowledge: '按 failureId upsert',
+  aiProfileScores: '按 profileId upsert',
+  aiCredentials: '按 credentialId upsert',
+  aiBrowserResources: '按 resourceId upsert（同 id 重建）',
+  aiProfileBindings: '按 profileId × workerId upsert',
+  aiWorkers: '按 workerId upsert（规模 = worker 数）',
+  aiSchedules: '按 scheduleId upsert（CAP-M1 定时计划）',
+  aiSkill: '**刻意不设水位**：一个 capability/site 一条，10²–10³ 量级（PHASE 17-C 设计）',
+  aiRepairs: '死登记：无生产写入方（仅保留历史集合名）',
+  aiDecisionCache: '死登记：decisionCache 当前为内存实现，未落盘',
+  deprecationHits: '按端点路径 upsert 计数（C44）',
+};
+
+// 登记边界（C 类，非本批次修复）：如实记录「已知无界 + 为何不能简单套用归档」。
+// 归档语义会把最老 1/3 记录**移出主文件**，对「主文件即工作集」的集合是行为破坏。
+const UNBOUNDED_ACCEPTED = {
+  aiQueue: '终态只改 status、记录永久残留（queue.js markDone）→ 随任务量无界。'
+    + '**不可用归档治理**：dequeue 只读主文件，归档会把尚在 PENDING 的任务移出队列 = '
+    + '任务静默不执行（比无界增长更糟）。正解 = queue 层终态清理/TTL，属独立批次。',
+  aiSessions: '每次新建会话 insert 一条、无 TTL（sessionManager.js:24）→ 随对话量无界。'
+    + '正解 = 会话 TTL / 按工作区清理，需先确定保留策略，属独立批次。',
+};
+
+// 治理校验：返回未登记的集合名（空数组 = 合规）。测试与启动自检共用。
+function storageGovernanceGaps() {
+  const gaps = [];
+  for (const name of Object.keys(FILES)) {
+    if (AUTO_ARCHIVE_LIMITS[name]) continue;
+    if (BOUNDED_COLLECTIONS[name]) continue;
+    if (UNBOUNDED_ACCEPTED[name]) continue;
+    gaps.push(name);
+  }
+  return gaps;
+}
 
 function archiveDateString(d) {
   const t = d || new Date();
@@ -82,68 +143,25 @@ function archiveDateString(d) {
   return '' + t.getFullYear() + p(t.getMonth() + 1) + p(t.getDate()) + '-' + p(t.getHours()) + p(t.getMinutes()) + p(t.getSeconds());
 }
 
-// 瞬时文件锁（EPERM/EBUSY/EACCES）统一重试判定：与写路径 Phase 5.8 同一故障面
-// （杀毒软件 / 文件索引器短暂锁定目标文件），读路径此前完全没有这层防护。
-function isTransientLockError(e) {
-  const code = e && e.code;
-  return code === 'EPERM' || code === 'EBUSY' || code === 'EACCES';
+// 损坏文件侧车保全（C115）：把损坏文件 rename 成 <file>.corrupt-<时间戳> 再返回，
+// 绝不覆盖既有侧车（同名追加序号）。修复前此处不对称——归档文件损坏有侧车保全
+// （_archiveAppend），主集合损坏却直接吞成 fallback → 下一次 RMW 把坏文件覆写成
+// 「空集合 + 新记录」，原始数据永久蒸发且无从取证（与 C60 修掉的瞬时锁吞 fallback
+// 是同一后果面，只是触发源从「锁」换成「真损坏」）。返回值契约不变（read 仍返回
+// fallback，test_c60 P3 守护）；rename 后文件不存在，下次 read 走「文件不存在 →
+// fallback」的干净路径，不会重复触发解析失败。
+function preserveCorruptSidecar(f) {
+  const base = f + '.corrupt-' + archiveDateString();
+  let target = base;
+  for (let i = 1; i < 20 && fs.existsSync(target); i++) target = base + '-' + i;
+  try { fs.renameSync(f, target); return target; }
+  catch (e) { return null; }
 }
 
-// 同步休眠（替代 write 重试退避里的 busy-wait 空转烧 CPU）。
-function syncSleep(ms) {
-  try {
-    const sab = new Int32Array(new SharedArrayBuffer(4));
-    Atomics.wait(sab, 0, 0, ms);
-  } catch (e) {
-    // SharedArrayBuffer 不可用（极老环境）退回 busy-wait
-    const end = Date.now() + ms;
-    while (Date.now() < end) { /* busy-wait */ }
-  }
-}
-
-// 原子写（临时文件 + rename）+ 瞬时锁有限退避重试。
-// write() 与归档追加共用（C60 前归档是裸 writeFileSync 直写，违背「同步原子写」自述，
-// 进程中断可留下半截归档 JSON）。
-function atomicWriteFileSync(f, payload) {
-  const tmp = f + '.tmp';
-  let lastErr = null;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try {
-      fs.writeFileSync(tmp, payload, 'utf8');
-      try { fs.renameSync(tmp, f); return; }
-      catch (re) {
-        // 某些情况下 .tmp 残留会阻碍下次 rename，先清理再重试
-        if (attempt === 4) throw re;
-        try { fs.unlinkSync(tmp); } catch (_) {}
-        lastErr = re;
-        if (!isTransientLockError(re)) throw re;
-        syncSleep((attempt + 1) * 20);
-      }
-    } catch (e) {
-      lastErr = e;
-      if (!isTransientLockError(e)) throw e;
-      syncSleep((attempt + 1) * 20);
-    }
-  }
-  if (lastErr) throw lastErr;
-}
-
-// 读文件 + 瞬时锁有限退避重试（C60：读路径此前零防护）。
-// 注意：瞬时锁重试耗尽后必须抛出——read() 的调用方（insert/upsert/update/remove/
-// appendEvent）全是 read-modify-write，把读失败吞成 fallback 会把整集合覆写成
-// fallback（真实数据丢失）。fs 读取失败 ≠ 文件损坏，两者语义必须分开。
-function readFileSyncRetry(f) {
-  let lastErr = null;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try { return fs.readFileSync(f, 'utf8'); }
-    catch (e) {
-      lastErr = e;
-      if (!isTransientLockError(e)) throw e;
-      syncSleep((attempt + 1) * 20);
-    }
-  }
-  throw lastErr;
-}
+// 瞬时锁退避重试读 / tmp+rename 原子写统一由 server/fsSafe.js 提供（C115 去重）。
+// 语义要点保留在此：瞬时锁重试耗尽后必须抛出——read() 的调用方（insert/upsert/
+// update/remove/appendEvent）全是 read-modify-write，把 fs 读失败吞成 fallback 会把
+// 整集合覆写成 fallback（真实数据丢失）。fs 读取失败 ≠ 文件损坏，两者语义必须分开。
 
 class JsonStore extends StoreInterface {
   constructor(dataDir) {
@@ -176,7 +194,15 @@ class JsonStore extends StoreInterface {
     // 只有真正的 JSON 解析失败（文件损坏）才走 fallback，维持既有契约。
     const raw = readFileSyncRetry(f);
     let parsed;
-    try { parsed = JSON.parse(raw); } catch (e) { return Array.isArray(fallback) ? fallback.slice() : fallback; }
+    try { parsed = JSON.parse(raw); }
+    catch (e) {
+      // C115：真损坏走 fallback 的返回契约不变，但坏文件必须先侧车保全——否则紧接着的
+      // RMW（insert/upsert/update/remove/appendEvent）会把「空集合 + 新记录」覆写回去，
+      // 损坏前的全量数据永久蒸发且无从取证。C60 只堵住了「锁导致的读失败」这一个入口，
+      // 「文件内容损坏」是同一后果面的另一个入口，此前无防护。
+      preserveCorruptSidecar(f);
+      return Array.isArray(fallback) ? fallback.slice() : fallback;
+    }
     // 返回深拷贝，避免调用方改动污染后续读取
     try { return structuredClone(parsed); } catch (e) { return JSON.parse(JSON.stringify(parsed)); }
   }
@@ -215,7 +241,9 @@ class JsonStore extends StoreInterface {
       } catch (e) {
         // C60：归档历史是 evidence-first 的「不丢数据」承诺，损坏时绝不静默清空
         // 覆写——先把损坏文件侧车保全（.corrupt-<时间戳>），再从空数组续写。
-        try { fs.renameSync(f, f + '.corrupt-' + archiveDateString()); } catch (_) {}
+        // C115：改用共用 preserveCorruptSidecar（原为此处内联 rename；主集合新增侧车后
+        // 若不统一就变成第二份同义实现 → C58 D2「重复定义会各自漂移」）。
+        preserveCorruptSidecar(f);
         prev = [];
       }
     }
@@ -309,4 +337,9 @@ class JsonStore extends StoreInterface {
   }
 }
 
-module.exports = { JsonStore, FILES, EVENT_MAX, AUTO_ARCHIVE_LIMITS, archiveDateString };
+module.exports = {
+  JsonStore, FILES, EVENT_MAX, AUTO_ARCHIVE_LIMITS, archiveDateString,
+  // C115 存储治理登记：前两张为分类依据（人读），storageGovernanceGaps() 为校验入口
+  // （守护测试断言为空数组；新增集合若三张表都没登记即测试红）。
+  BOUNDED_COLLECTIONS, UNBOUNDED_ACCEPTED, storageGovernanceGaps,
+};
