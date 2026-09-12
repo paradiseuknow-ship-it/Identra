@@ -13,20 +13,26 @@
 //     ✅ SkillRouter 五级判定 + 三态预检（MATCH / MISMATCH / INDETERMINATE）
 //     ✅ 独立性判定（aiSkillRuns）
 //     ✅ **影子模式**：只做「决策 + 证据」，决策结果**不改变执行路径**
-//   ❌ 至今**没有** SkillExecutor —— Skill 从不驱动执行（§25.2「先落数据，后落执行」）
+//   PHASE 17-E「Executor / Handover / Lifecycle」：
+//     ✅ SkillExecutor 七步契约（ROUTE → PRECHECK → EXECUTE → OBSERVE → VERIFY_STATE
+//        → HANDOVER / CONTINUE → FINAL_VERIFICATION）
+//     ✅ Handover Contract（结构化 12+ 原因 + SKILL_HANDOVER_ONCE，不可循环）
+//     ✅ 生命周期状态机（CANDIDATE → ACTIVE → REVALIDATING → STALE → DEPRECATED）
+//     ✅ 集合 aiSkillExecutions（执行记录，executionId 配对）
+//     ✅ 受监督接线：Runtime 主循环把「这一步用 Skill 动作还是 Generic 动作」的决策权
+//        交给 Executor，**物理执行仍走既有 runStep → tools.execute 全管线**
 //
 // 结构保证（§8.2 / §2 Q2）：Skill 层是**规划层的上游替换，不是执行层的旁路**。
-// 由于本模块不导出任何执行入口，且未来 Executor 展开后仍走 tools.runTool，
-// 「Skill 绕过 Phase 17-A 凭据闸」在结构上不可能发生。
+//   skillExecutor 不 require 任何浏览器 / 工具层模块（见 test_c113 组 N 的静态断言），
+//   它唯一的产出是「语义动作」与「何时交还控制权」——
+//   「Skill 绕过 Phase 17-A 凭据闸 / 绕过 verification.js」在结构上不可能发生。
 // ============================================================================
 
-// PHASE 17-D 追加：SkillRouter（五级判定 + 三态预检）。
-// ★ 它仍然**不是**执行入口 —— shadow() 只产出决策与证据，route() 是纯函数。
-//   执行侧（SkillExecutor / handover）属 17-E，本阶段不存在。
 const schema = require('./skillSchema');
 const lifecycle = require('./skillLifecycle');
 const evidence = require('./skillEvidence');
 const builder = require('./skillBuilder');
 const router = require('./skillRouter');
+const executor = require('./skillExecutor');
 
-module.exports = { schema, lifecycle, evidence, builder, router };
+module.exports = { schema, lifecycle, evidence, builder, router, executor };

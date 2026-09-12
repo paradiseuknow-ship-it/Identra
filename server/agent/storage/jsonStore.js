@@ -45,6 +45,7 @@ const FILES = {
   aiSkillEvidence: 'aiSkillEvidence.json', // 证据链（**独立集合**：体量大，必须配水位）
   aiSkillRuns: 'aiSkillRuns.json',         // 重放记录（独立性判定的唯一数据源）
   aiSkillRouting: 'aiSkillRouting.json',   // PHASE 17-D 路由决策影子记录（含 actual 回填，供决策质量比对）
+  aiSkillExecutions: 'aiSkillExecutions.json', // PHASE 17-E Skill 接管执行记录（逐步证据 + handover + 终态，executionId 配对）
   deprecationHits: 'deprecationHits.json', // C44：遗留端点（RFC 8594）命中计数
 };
 
@@ -70,6 +71,9 @@ const AUTO_ARCHIVE_LIMITS = {
   aiSkillHistory: 2000,
   // PHASE 17-D：路由影子记录。每个任务至多一条（含回填），随任务量增长 → 必须配水位。
   aiSkillRouting: 4000,
+  // PHASE 17-E：Skill 接管执行记录。每个 (task, execution) 至多一条，但记录内嵌逐步证据，
+  // 体积大于路由记录 → 取更紧的水位（2000）。不设水位会随任务量线性增长。
+  aiSkillExecutions: 2000,
 };
 
 function archiveDateString(d) {

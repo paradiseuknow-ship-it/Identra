@@ -20,6 +20,9 @@ const botChallenge = require('./botChallenge');
 const diagnosisDecision = require('./diagnosisDecision');
 const credentialAuthorization = require('./credentialAuthorization');
 const verificationIntelligence = require('./verification/verificationIntelligence');
+// PHASE 17-E：SkillExecutor（受监督接管）。本模块**不含任何执行入口** —— 它只回答
+// 「这一步用 Skill 的动作还是 Generic 的动作」与「何时交还控制权」，物理执行仍走 runStep。
+const skillExecutor = require('./skill/skillExecutor');
 
 // v0.2.2：孤儿收口守卫（Business Loop 专项 §十三~§十五）。任何 task 终态转换前，先把仍停在 RUNNING 的
 // attempt 显式收口，杜绝 submit 等动作遗留的孤儿 attempt（历史数据中存在 19 个 submit RUNNING 孤儿）。
@@ -196,6 +199,19 @@ async function capturePlanningObservation(task) {
   }
 }
 
+// PHASE 17-E：把 resolvePlan 已经采集的规划期观察交给 SkillExecutor 复用。
+// ★ 为什么需要这条通道（而不是在接线处再调一次 capturePlanningObservation）：
+//   规划期观察发生在 flowMemory 短路**之后**。若在短路之前自行采集，就会给 Skill 路径
+//   引入一次 flowMemory 本可避免的导航 —— 直接违反 17-D 立下的「零新增导航 / 零新增观察成本」。
+//   这里改为**零成本复用**：同一次观察，一份数据，两个消费者。
+// ★ 消费即取走（delete on read），保证每 run 至多驻留一条；另设容量兜底防异常路径泄漏。
+const _planningObsByTask = new Map();
+function takePlanningObs(taskId) {
+  const v = _planningObsByTask.get(taskId) || null;
+  _planningObsByTask.delete(taskId);
+  return v;
+}
+
 async function resolvePlan(task) {
   let steps = stepManager.listSteps(task.id);
   if (steps.length) return steps;
@@ -220,6 +236,11 @@ async function resolvePlan(task) {
 
   // Observation → ContextBuilder → Planner：构建结构化上下文（objective/observation/steps/checkpoint/errorHistory/verification）
   const planningObs = await capturePlanningObservation(task);
+  // PHASE 17-E：把这次观察交给 Skill 预检复用（消费即取走；见 takePlanningObs 注释）。
+  try {
+    if (_planningObsByTask.size > 64) _planningObsByTask.clear();
+    _planningObsByTask.set(task.id, planningObs);
+  } catch (e) { /* 缓存失败不影响规划 */ }
   // PHASE 17-D 影子接入点（§9.5：skillRouter 的时机是「执行期，runtime.resolvePlan 上游」）。
   // ★ 复用**已有**的 planningObs —— 零新增导航、零新增观察成本、零新增失败模式。
   // ★ 只落「决策 + 证据」到 aiSkillRouting，**返回值完全不参与后续逻辑**：
@@ -577,6 +598,17 @@ async function run(taskId) {
     }
   }
 
+  // ── PHASE 17-E：SkillExecutor 受监督接管（§25 允许的最小接线）────────────────
+  // ① 0 级预闸是**纯元数据**读取（零浏览器动作、零观察）→ 无 ACTIVE 候选时本段零成本。
+  //    生产结构惰性：builder 恒产 CANDIDATE ⇒ 此闸恒假 ⇒ 本段对既有行为零影响。
+  // ② 预检用的观察**复用 resolvePlan 已经采集的那一份**（takePlanningObs），
+  //    所以必须放在 resolvePlan **之后** —— 放在之前会引入一次原本可避免的导航。
+  //    flowMemory 命中时 resolvePlan 根本不采集观察 ⇒ 这里拿到 null ⇒ Router 判不可用
+  //    ⇒ HOLD + PRECHECK_INDETERMINATE（**不记 Skill 失败**，§4.2），语义正确且诚实。
+  // ③ 一旦接管：Executor 只在主循环里决定「这一步用 Skill 的动作还是 Generic 的动作」；
+  //    物理执行仍走既有 runStep → tools.execute（policy / 凭据闸 / 观察 / 验证全部原样保留）。
+  // ④ 任何异常一律 fail-open 到 Generic（不新增失败模式）；不 emit 任何新事件类型
+  //    （events 是闭集白名单），可审计性由 aiSkillExecutions 独立承载。
   let steps;
   try {
     steps = await resolvePlan(task);
@@ -589,6 +621,16 @@ async function run(taskId) {
     }
     throw e;
   }
+  // 观察**无论是否接管都消费掉**（消费即取走），避免 Map 常驻。
+  const _skillObs = takePlanningObs(task.id);
+  let skillSession = null;
+  try {
+    const _preSkill = skillExecutor.eligible(task);
+    if (_preSkill && _preSkill.any) {
+      const _opened = skillExecutor.openSession({ task, observation: _skillObs, executionId: task.currentExecutionId });
+      if (_opened && _opened.taken && _opened.session) skillSession = _opened.session;
+    }
+  } catch (e) { skillSession = null; }
   let beforeObs = null;
   let index = 0;
   let retries = 0;
@@ -755,10 +797,32 @@ async function run(taskId) {
         // 错标成「浏览器无响应」。改为 max(30s, 动作 timeoutMs + 25s) 动态看门狗。
         const _aMs = (step && step.action && Number(step.action.timeoutMs)) || 0;
         const _watchdogMs = Math.max(STEP_TIMEOUT_MS, _aMs + 25000);
+        // PHASE 17-E：Skill 监督（session 为 null 时 pendingAction 逐字节不变 → 零行为变化）。
+        // 步前：校验 cursor 状态契约（复用 17-D contractVerdict）→ MATCH 才用 Skill 的语义动作；
+        //       MISMATCH / INDETERMINATE → 立即 handover（并置空 session，本 execution 不再接管）。
+        // 步后：以 action 后的 fresh observation 校验迁移后状态契约 → 不匹配立即 handover，
+        //       **绝不继续执行旧 Skill step**（C105 stale selector / reload 死循环的核心纪律）。
+        let _skillOverride = null;
+        if (skillSession) {
+          try {
+            const _sd = skillSession.beforeStep({
+              step: step, stepId: step.id, observation: beforeObs,
+              genericAction: step.action, recoveryAction: pendingAction || null,
+            });
+            if (_sd && _sd.takeover && _sd.action) _skillOverride = _sd.action;
+            if (_sd && _sd.handover) skillSession = null; // §10：交还后本 execution 不再接管
+          } catch (e) { _skillOverride = null; }
+        }
         r = await Promise.race([
-          runStep(task, step, beforeObs, pendingAction),
+          runStep(task, step, beforeObs, _skillOverride || pendingAction),
           new Promise((_, reject) => setTimeout(() => reject(new Error('STEP_TIMEOUT')), _watchdogMs)),
         ]);
+        if (skillSession && _skillOverride) {
+          try {
+            const _sa = skillSession.afterStep({ step: step, stepId: step.id, result: r, observation: r && r.observation });
+            if (_sa && _sa.handover) skillSession = null;
+          } catch (e) { /* 监督失败不改变 Generic 结果 */ }
+        }
       } catch (stepHang) {
         // C69：显式杀死 ghost 注册 —— 重试耗尽走 repair 分支时不再起新 runStep，
         // 幽灵协程若靠「后继覆盖」失效就轮不到；超时点直接失效最确定。
@@ -1158,6 +1222,10 @@ async function run(taskId) {
     return taskManager.fail(taskId, err);
   }
 
+  // PHASE 17-E：主循环退出（正常结束 / break）→ 结算并落库 Skill 执行记录。
+  // ★ 这里**不产生任何任务结论**：终态仍由下方既有收口与既有 verification 给出。
+  if (skillSession) { try { skillSession.finish(); } catch (e) { /* 监督落库失败不影响任务终态 */ } skillSession = null; }
+
   // 循环正常结束
   task = getTask(taskId);
   if (task && task.status === 'RUNNING') {
@@ -1174,6 +1242,8 @@ async function run(taskId) {
     taskManager.complete(taskId, { completedSteps: okSteps, totalSteps: steps.length });
   }
   } catch (fatal) {
+    // PHASE 17-E：异常路径同样结算 Skill 执行记录（fail-open；不改变任务终态语义）
+    if (skillSession) { try { skillSession.finish(); } catch (e) {} skillSession = null; }
     // Phase 5.8 防御（Finding #1 家族）：任何未预期异常（含浏览器崩溃抛错）都必须落为显式终态，
     // 否则 task 会停在 RUNNING 永久悬挂、worker 占坑导致后续任务饿死。
     console.warn('[runtime] run 未捕获异常，转 FAILED 终态:', String(fatal && fatal.message || fatal).slice(0, 200));

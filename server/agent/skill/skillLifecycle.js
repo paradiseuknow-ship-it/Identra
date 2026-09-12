@@ -164,8 +164,240 @@ function skillConfidence({ independentSuccesses, distinctSessions, failed } = {}
   return Math.round(Math.min(1, Math.max(0, rate)) * 1000) / 1000;
 }
 
+// ============================================================================
+// PHASE 17-E — 生命周期状态机（设计依据：§6 Lifecycle / §12 状态机）
+//
+// 本段**只做纯判定**：给定「当前状态 + 一次执行结果分类 + 生命周期计数」，
+// 返回「下一个状态 + 理由 + 证据」。**不写库**（持久化在 skillExecutor）。
+//
+// 状态机（§12 原文）：
+//   CANDIDATE --promotion gate--> ACTIVE
+//   ACTIVE --evidence drift / validation failure--> REVALIDATING
+//   REVALIDATING --verified success--> ACTIVE
+//   REVALIDATING --repeated failure--> STALE
+//   STALE --> DEPRECATED （ARCHIVED 为既有词表内的终态，不变）
+//
+// ★ 两条纪律的落地点，必须逐条对照：
+//   §15「STALE 不应该一失败就发生」：
+//     单次失败**不**直接 STALE。ACTIVE 上的一次契约违反只进 **REVALIDATING**（观察期）；
+//     只有 REVALIDATING 内的**重复**失败（≥ REVALIDATION.DEPRECATE_UNSATISFIABLE）才落 STALE。
+//     `STALE.CONTRACT_VIOLATION = 1` 的语义因此被精确定义为「1 次违反足以触发漂移处理」，
+//     而不是「1 次违反即 STALE」—— 阈值数值**未改动**。
+//   §11「INDETERMINATE 不能直接磨损 confidence」/ 17-B「CREDENTIAL_ACTION_BLOCKED ≠ Skill failure」：
+//     这两类结果**不产生任何状态迁移，也不计入任何失败计数**。
+// ============================================================================
+
+const LIFECYCLE_STATUS = {
+  CANDIDATE: 'CANDIDATE', ACTIVE: 'ACTIVE', REVALIDATING: 'REVALIDATING',
+  STALE: 'STALE', DEPRECATED: 'DEPRECATED', ARCHIVED: 'ARCHIVED',
+};
+
+// 合法迁移表（**白名单**：不在表内的迁移一律不产生，并留痕 ILLEGAL_TRANSITION）
+const LIFECYCLE_TRANSITIONS = {
+  CANDIDATE: ['ACTIVE'],
+  ACTIVE: ['REVALIDATING', 'STALE', 'DEPRECATED'],
+  REVALIDATING: ['ACTIVE', 'STALE'],
+  STALE: ['DEPRECATED'],
+  DEPRECATED: [],
+  ARCHIVED: [],
+};
+
+// 执行结果分类（由 skillExecutor 归类，本模块只按分类判定）
+//   VERIFIED_SUCCESS       任务以**既有 Verification** 判定为业务成功（延迟确认后才给分）
+//   VERIFIED_FAILURE       任务以既有口径失败，且本 Skill 参与了本 execution
+//   STATE_MISMATCH         执行期检测到状态漂移（结构性信号）
+//   INDETERMINATE          无法判定（观察不可用 / 空元素池 / 页面仍在导航）—— 不磨损
+//   AUTHORIZATION_BLOCKED  被既有安全闸拒绝 —— **不改变状态**（§11 防「弱化安全闸」激励）
+//   NOT_ATTRIBUTABLE       人工升级 / 取消 / 环境不适用 —— 不归因到 Skill（不磨损）
+const OUTCOME = {
+  VERIFIED_SUCCESS: 'VERIFIED_SUCCESS',
+  VERIFIED_FAILURE: 'VERIFIED_FAILURE',
+  STATE_MISMATCH: 'STATE_MISMATCH',
+  INDETERMINATE: 'INDETERMINATE',
+  AUTHORIZATION_BLOCKED: 'AUTHORIZATION_BLOCKED',
+  NOT_ATTRIBUTABLE: 'NOT_ATTRIBUTABLE',
+};
+
+// 不产生任何状态迁移 / 不磨损 confidence 的结果分类
+const NON_WEARING_OUTCOMES = [OUTCOME.INDETERMINATE, OUTCOME.AUTHORIZATION_BLOCKED, OUTCOME.NOT_ATTRIBUTABLE];
+
+function isNonWearing(outcome) {
+  return NON_WEARING_OUTCOMES.includes(String(outcome || ''));
+}
+
+// 生命周期计数（全部可增量维护，缺省 0）—— 与 skill.lifecycle 同源
+function lifecycleCounters(skill, extra) {
+  const lc = Object.assign({}, (skill && skill.lifecycle) || {}, extra || {});
+  return {
+    consecutiveFailures: Number(lc.consecutiveFailures || 0),
+    contractViolations: Number(lc.contractViolations || 0),
+    revalidateFailures: Number(lc.revalidateFailures || 0),
+    revalidateSuccesses: Number(lc.revalidateSuccesses || 0),
+    lastSuccessAt: lc.lastSuccessAt == null ? null : lc.lastSuccessAt,
+    lastFailureAt: lc.lastFailureAt == null ? null : lc.lastFailureAt,
+  };
+}
+
+// 纯判定入口
+// input: {
+//   skill,                       // 当前 Skill 记录（读 status / samples / lifecycle）
+//   outcome,                     // OUTCOME.*
+//   runs,                        // aiSkillRuns 全量（独立性判定用；promotionGate 的唯一数据源）
+//   evidenceComplete,            // aiSkillEvidence 链完整性（§11.4）
+//   contractObservations,        // stateContract 成立过的不同观察次数（§6.3）
+//   ctx: { manual, siteRiskLevel, challenge, siteHasRecentFailures }
+// }
+// 返回 { from, to, changed, reasons[], evidence{} }
+function nextStatus(input) {
+  const opts = input || {};
+  const skill = opts.skill || {};
+  const from = String(skill.status || LIFECYCLE_STATUS.CANDIDATE);
+  const outcome = String(opts.outcome || '');
+  const ctx = opts.ctx || {};
+  const counters = lifecycleCounters(skill, opts.lifecycle);
+  const reasons = [];
+
+  const result = (to, why) => ({
+    from: from,
+    to: to,
+    changed: to !== from,
+    legal: to === from || (LIFECYCLE_TRANSITIONS[from] || []).includes(to),
+    reasons: why || [],
+    counters: counters,
+  });
+
+  // 终态：任何结果都不再迁移
+  if (from === LIFECYCLE_STATUS.DEPRECATED || from === LIFECYCLE_STATUS.ARCHIVED) {
+    return result(from, ['TERMINAL_STATE']);
+  }
+
+  // ★ §11：授权阻断**不改变** Skill 状态（AUTHORIZATION_BLOCK_AFFECTS_STATUS === false）。
+  // ★ §15：无法判定 / 不归因的结果不做任何磨损 —— 连计数都不动（计数由调用方按同样的
+  //   非磨损清单决定是否增量，本函数只保证不迁移）。
+  if (AUTHORIZATION_BLOCK_AFFECTS_STATUS === false && outcome === OUTCOME.AUTHORIZATION_BLOCKED) {
+    return result(from, ['AUTHORIZATION_BLOCK_DOES_NOT_AFFECT_STATUS']);
+  }
+  if (isNonWearing(outcome)) {
+    return result(from, ['NON_WEARING_OUTCOME:' + (outcome || 'UNKNOWN')]);
+  }
+
+  // 结构性信号（与失败计数无关，独立优先）：人工 / 站点风险 / 安全挑战 → STALE
+  if (ctx.manual === true) {
+    return (LIFECYCLE_TRANSITIONS[from] || []).includes(LIFECYCLE_STATUS.STALE)
+      ? result(LIFECYCLE_STATUS.STALE, ['MANUAL'])
+      : result(from, ['MANUAL_NOT_APPLICABLE_FROM_' + from]);
+  }
+  if (ctx.challenge === true) {
+    return (LIFECYCLE_TRANSITIONS[from] || []).includes(LIFECYCLE_STATUS.STALE)
+      ? result(LIFECYCLE_STATUS.STALE, ['SECURITY_CHALLENGE'])
+      : result(from, ['CHALLENGE_NOT_APPLICABLE_FROM_' + from]);
+  }
+  if (String(ctx.siteRiskLevel || '').toLowerCase() === 'high') {
+    return (LIFECYCLE_TRANSITIONS[from] || []).includes(LIFECYCLE_STATUS.STALE)
+      ? result(LIFECYCLE_STATUS.STALE, ['SITE_RISK_HIGH'])
+      : result(from, ['SITE_RISK_NOT_APPLICABLE_FROM_' + from]);
+  }
+
+  if (from === LIFECYCLE_STATUS.CANDIDATE) {
+    if (outcome !== OUTCOME.VERIFIED_SUCCESS) {
+      // 候选期失败 / 漂移：**停在 CANDIDATE**（不晋升），如实留痕
+      return result(from, [outcome === OUTCOME.STATE_MISMATCH ? 'CANDIDATE_CONTRACT_VIOLATION' : 'CANDIDATE_NO_PROMOTION']);
+    }
+    const gate = promotionGate({
+      skill: skill,
+      evidenceComplete: opts.evidenceComplete,
+      contractObservations: opts.contractObservations,
+      runs: opts.runs,
+    });
+    if (!gate.eligible) {
+      // §13：数据无法证明独立性 → NOT_INDEPENDENT，**不得晋升**
+      const ev = gate.evidence || {};
+      const notIndependent = Number(ev.independentSuccesses || 0) < PROMOTION.MIN_INDEPENDENT_SUCCESS
+        || Number(ev.distinctSessions || 0) < PROMOTION.MIN_DISTINCT_SESSIONS;
+      return result(from, (notIndependent ? ['NOT_INDEPENDENT'] : []).concat(gate.reasons));
+    }
+    return result(LIFECYCLE_STATUS.ACTIVE, ['PROMOTION_GATE_PASSED']);
+  }
+
+  if (from === LIFECYCLE_STATUS.ACTIVE) {
+    // 契约违反（结构性）→ 观察期，**不是**立即 STALE（§15）
+    if (outcome === OUTCOME.STATE_MISMATCH || counters.contractViolations >= STALE.CONTRACT_VIOLATION) {
+      return result(LIFECYCLE_STATUS.REVALIDATING, ['EVIDENCE_DRIFT:CONTRACT_VIOLATION']);
+    }
+    if (outcome === OUTCOME.VERIFIED_FAILURE
+      && counters.consecutiveFailures >= STALE.CONSECUTIVE_FAILURES) {
+      return result(LIFECYCLE_STATUS.REVALIDATING, ['CONSECUTIVE_FAILURES']);
+    }
+    // 单次失败 / 成功：保持 ACTIVE
+    return result(from, [outcome === OUTCOME.VERIFIED_FAILURE ? 'SINGLE_FAILURE_TOLERATED' : 'NO_CHANGE']);
+  }
+
+  if (from === LIFECYCLE_STATUS.REVALIDATING) {
+    if (outcome === OUTCOME.VERIFIED_SUCCESS
+      && counters.revalidateSuccesses >= REVALIDATION.RECOVER_SUCCESSES) {
+      return result(LIFECYCLE_STATUS.ACTIVE, ['REVALIDATED_RECOVERED']);
+    }
+    if (counters.revalidateFailures >= REVALIDATION.DEPRECATE_UNSATISFIABLE) {
+      return result(LIFECYCLE_STATUS.STALE, ['UNSATISFIABLE_CONTRACT']);
+    }
+    if (outcome === OUTCOME.VERIFIED_FAILURE
+      && counters.consecutiveFailures >= REVALIDATION.DEPRECATE_FAILURES) {
+      return result(LIFECYCLE_STATUS.STALE, ['REVALIDATION_FAILURES']);
+    }
+    return result(from, ['REVALIDATION_PENDING']);
+  }
+
+  if (from === LIFECYCLE_STATUS.STALE) {
+    const samples = skill.samples || {};
+    const total = Number(samples.success || 0) + Number(samples.failed || 0);
+    const rate = total > 0 ? Number(samples.success || 0) / total : 1;
+    if (counters.consecutiveFailures >= REVALIDATION.DEPRECATE_FAILURES) {
+      return result(LIFECYCLE_STATUS.DEPRECATED, ['DEPRECATE_FAILURES']);
+    }
+    if (total >= DEPRECATION.MIN_TOTAL && rate <= DEPRECATION.MAX_RATE) {
+      return result(LIFECYCLE_STATUS.DEPRECATED, ['DEPRECATE_LOW_RATE']);
+    }
+    return result(from, ['STALE_PENDING_DEPRECATION']);
+  }
+
+  return result(from, ['UNKNOWN_STATUS_NO_TRANSITION']);
+}
+
+// 计数增量（纯）：给定当前计数 + 结果分类，返回新的计数。
+// ★ 非磨损清单（INDETERMINATE / AUTHORIZATION_BLOCKED / NOT_ATTRIBUTABLE）**原样返回**。
+function advanceCounters(input) {
+  const opts = input || {};
+  const c = lifecycleCounters(opts.skill, opts.lifecycle);
+  const outcome = String(opts.outcome || '');
+  const now = Number(opts.now) || Date.now();
+  if (isNonWearing(outcome)) return Object.assign({}, c, { at: now, wore: false });
+
+  const next = Object.assign({}, c);
+  if (outcome === OUTCOME.VERIFIED_SUCCESS) {
+    next.consecutiveFailures = 0;
+    next.revalidateSuccesses = c.revalidateSuccesses + 1;
+    next.lastSuccessAt = now;
+    if (String((opts.skill && opts.skill.status) || '') === LIFECYCLE_STATUS.REVALIDATING) next.revalidateFailures = 0;
+  } else if (outcome === OUTCOME.STATE_MISMATCH) {
+    next.contractViolations = c.contractViolations + 1;
+    next.consecutiveFailures = c.consecutiveFailures + 1;
+    next.lastFailureAt = now;
+    if (String((opts.skill && opts.skill.status) || '') === LIFECYCLE_STATUS.REVALIDATING) next.revalidateFailures = c.revalidateFailures + 1;
+  } else if (outcome === OUTCOME.VERIFIED_FAILURE) {
+    next.consecutiveFailures = c.consecutiveFailures + 1;
+    next.lastFailureAt = now;
+    if (String((opts.skill && opts.skill.status) || '') === LIFECYCLE_STATUS.REVALIDATING) next.revalidateFailures = c.revalidateFailures + 1;
+  }
+  next.at = now;
+  next.wore = true;
+  return next;
+}
+
 module.exports = {
   PROMOTION, STALE, REVALIDATION, DEPRECATION,
   AUTHORIZATION_BLOCK_AFFECTS_STATUS, STALE_REASONS,
   independentSuccesses, promotionGate, staleDecision, skillConfidence,
+  // PHASE 17-E
+  LIFECYCLE_STATUS, LIFECYCLE_TRANSITIONS, OUTCOME, NON_WEARING_OUTCOMES,
+  isNonWearing, nextStatus, advanceCounters,
 };

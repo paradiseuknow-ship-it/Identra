@@ -490,6 +490,10 @@ function complete(id, result) {
   // 这是影子模式的**闭环另一半** —— 只有「Router 会怎么决定」（决策期写入）与「实际结果」
   // （终态写入）都存在，才能比对决策质量（§25.1 门禁）。fail-open，零控制流影响。
   recordRoutingActual(task, 'SUCCESS');
+  // PHASE 17-E 消费点：Skill 执行记录的终态结算（**延迟确认**，17-B 纪律）。
+  // 与上方同一处、同一 fail-open 口径：Skill 不在动作成功时给自己记成功，
+  // 只有任务真正到达既有口径的终态时才结算，且 handover 过的执行不给成功分。
+  recordSkillTerminal(task, 'SUCCESS');
   // Phase 3.4 消费点：成功 → 更新 Profile 评分 / 站点成功率 / 生命周期
   try {
     const site = siteOfUrl(task.targetUrl);
@@ -531,6 +535,20 @@ function recordRoutingActual(task, outcome) {
   } catch (e) { /* 影子回填失败不影响任务结果 */ }
 }
 
+// PHASE 17-E：Skill 执行记录的终态回填 + 生命周期结算（§12 / §13 / §18）。
+// 与 recordRoutingActual 同一处、同一 fail-open 口径；两项纪律直接落在实现上：
+//   ① **延迟确认**（17-B）：Skill 不在动作成功时给自己记成功 —— 只有任务真正到达
+//      既有口径的终态时才结算，与 elementMemory.confirmPendingSuccess 同一思路，
+//      只是把范围从元素级上移到 Skill 级。
+//   ② **归因纪律**：发生过 handover 的执行**不给成功分** —— 「Skill 交还 Generic、
+//      Generic 成功」不是 Skill 的功劳（否则会激励 Skill 抢活）。
+// fail-open：任何异常都不得影响任务结果。
+function recordSkillTerminal(task, outcome) {
+  try {
+    if (task && task.id) require('./skill/skillExecutor').onTaskTerminal(task, outcome);
+  } catch (e) { /* 生命周期结算失败不影响任务结果 */ }
+}
+
 // CAP-K1：runtime.resolvePlan 命中高置信度历史 flow 时，把 flowId 记到任务上，
 // 供 fail/escalate 做失败反馈（降置信度 → 下次同目标降级 LLM 规划）。
 function markFlowUsed(id, flowId, confidence) {
@@ -568,6 +586,7 @@ function fail(id, error, opts = {}) {
   events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'task.failed', payload: { error: task.error, escalate: !!opts.escalate } });
   recordFlowFailure(task); // CAP-K1：复用的 flow 也吃一次失败反馈
   recordRoutingActual(task, terminalState); // PHASE 17-D：影子记录回填（FAILED / HUMAN_ESCALATION）
+  recordSkillTerminal(task, terminalState); // PHASE 17-E：Skill 执行记录终态结算（同一口径）
   // Phase 3.4 消费点：失败 → 更新 Profile 评分（恶化降级，不删除）
   try {
     const site = siteOfUrl(task.targetUrl);
@@ -625,6 +644,7 @@ function escalate(id, error, opts = {}) {
   events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'task.escalated', payload: { error: task.error, reason: opts.reason || null, escalationKind: task.escalationKind } });
   recordFlowFailure(task); // CAP-K1：升级同视为未完成目标，复用的 flow 也吃失败反馈（置信度有界自我修正）
   recordRoutingActual(task, 'HUMAN_ESCALATION'); // PHASE 17-D：影子记录回填（升级不是 Skill 失败，但必须可观测）
+  recordSkillTerminal(task, 'HUMAN_ESCALATION'); // PHASE 17-E：升级 = NOT_ATTRIBUTABLE（不磨损 Skill 状态/置信度）
   return task;
 }
 
@@ -634,6 +654,7 @@ module.exports = {
   attachPlan, revisePlan, approve, reject, modify, recover,
   setExecutor, isTaskTerminal, markFlowUsed,
   recordRoutingActual, // C112：导出面（fail-open 包装，供守护测试直接验证配对行为）
+  recordSkillTerminal, // PHASE 17-E：同上（Skill 执行记录终态结算的 fail-open 包装）
 };
 
 function isTaskTerminal(s) { return tsm.isTaskTerminal(s); }
