@@ -564,7 +564,12 @@ async function main() {
     const retrying = evE.filter((e) => e.type === 'agent.retrying');
     ok(diagnosed.length >= 1, '真实失败被诊断为 ELEMENT_NOT_FOUND（agent.diagnosing ×' + diagnosed.length + '）');
     ok(retrying.length >= 1, '失败进入确定性恢复（agent.retrying ×' + retrying.length + '）');
-    const started3 = evE.filter((e) => e.type === 'task.step_started' && e.stepId && String(e.stepId).indexOf('e3') >= 0);
+    // C114 修复：stepId 真实格式 = <taskId>_<planStepId>（stepManager.createStep 拼 taskId 前缀，
+    // runtime.js:297 事件与 aiAttempts 均用该 id）。旧写法 indexOf('e3') 在 taskId 本身含 'e3'
+    // 子串时（随机 base36，约 1% 概率）会匹配该任务全部步骤 → started3[0] 落在 e1 →
+    // aiAttempts 按 e1 过滤 → e3Fails=0 假红（登记 flake 之一，5 轮 1 中）。
+    // 改用后缀锚定正则（兼容 replan 变体 _e3_rp1），与下方 F 区 endsWith('_f2') 同模式。
+    const started3 = evE.filter((e) => e.type === 'task.step_started' && e.stepId && /_e3(_rp\d+)?$/.test(String(e.stepId)));
     ok(started3.length >= 2, '失败 step 经历 ≥2 次真实 attempt（实际 ' + started3.length + '）');
 
     // 22.6 newInformation（测试层证明，不扩生产范围）：失败 attempt 与成功后的观察不是同一份。
