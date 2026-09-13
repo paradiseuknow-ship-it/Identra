@@ -573,6 +573,13 @@ async function run(taskId) {
   if (!task) return;
   if (!['RUNNING', 'BROWSER_READY'].includes(task.status)) return;
 
+  // C121：skillSession 必须声明在**函数作用域**（try 块之外）。
+  // 17-E 曾把它声明在下方 try 块内（:626），而 PHASE 17-E 的异常结算在 catch (fatal) 里
+  // 引用它 —— JS 的 let 块级作用域下 **catch 看不到 try 内的声明**，于是任何未预期异常
+  // 进入 catch 时，`if (skillSession)` 自身抛 ReferenceError：既炸掉异常结算，又把
+  // **原始异常整体吞掉**（实证 p1_smoke_r1：6/6 worker 只报 ReferenceError，真因丢失）。
+  // 提升 = 最小外科修复；try 内不再允许重复声明（守护 test_c122_runtime_catch_scope）。
+  let skillSession = null;
   try {
   // 确保浏览器
   const b = await ensureBrowser(task);
@@ -623,7 +630,8 @@ async function run(taskId) {
   }
   // 观察**无论是否接管都消费掉**（消费即取走），避免 Map 常驻。
   const _skillObs = takePlanningObs(task.id);
-  let skillSession = null;
+  // C121：skillSession 已提升到 run() 函数作用域（见函数头部），此处**禁止**重复声明——
+  // try 块内的 let 会对 catch (fatal) 形成作用域隔离，重新引入 ReferenceError 吞异常缺陷。
   try {
     const _preSkill = skillExecutor.eligible(task);
     if (_preSkill && _preSkill.any) {
