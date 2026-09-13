@@ -30,6 +30,14 @@ class StoreInterface {
   // 归档最老 N 条到 archive 目录（不丢数据的水位治理，JSON 文件驱动专属：
   // 全量重写型存储才需要；SQLite 等页式存储体积不随条数线性膨胀，默认 no-op）。
   archiveOldest(name, count) { return { archived: 0, remaining: this.read(name, []) }; }
+  // 按谓词归档（C117）：同为 JSON 文件驱动专属，页式存储默认 no-op。
+  // 为什么不能复用 archiveOldest：它按「数组头部 + count」切分（data.slice(0, count)），
+  // 对「主文件即工作集」的集合是行为破坏——队列会把仍在 PENDING 的任务移出主文件，
+  // 而 dequeue() 只读主文件 ⇒ 任务静默不执行（比无界增长更糟）。
+  archiveWhere(name, pred) { return { archived: 0, remaining: this.read(name, []) }; }
+  // 从归档目录按 id 取回单条（C117）：支撑「归档不改变可访问性」——被 TTL 归档的会话
+  // 再次被访问时须能原位恢复，否则「恢复旧会话」会静默退化成「新建会话」。
+  findInArchive(name, id) { return null; }
   // 事件追加（EventStore，仅保留最近 N）
   appendEvent(evt) { throw new Error('not implemented'); }
   // 增量取事件

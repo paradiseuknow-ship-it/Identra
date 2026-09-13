@@ -109,21 +109,26 @@ const BOUNDED_COLLECTIONS = {
   aiProfileBindings: '按 profileId × workerId upsert',
   aiWorkers: '按 workerId upsert（规模 = worker 数）',
   aiSchedules: '按 scheduleId upsert（CAP-M1 定时计划）',
+  aiQueue: 'C117 终态 TTL：pruneTerminal 只归档「已终态且超龄（>7d）**或**超出终态封顶（500 条）」的'
+    + '记录，PENDING/RUNNING 永不归档 ⇒ dequeue 只读 PENDING，控制路径语义零变化。'
+    + '此前登记在 UNBOUNDED_ACCEPTED，因为当时只有按位置切分的 archiveOldest 可用，'
+    + '而位置切法会把 PENDING 任务移出主文件（= 任务静默不执行）；C117 补上按谓词切分的'
+    + 'archiveWhere 后才具备治理条件。',
+  aiSessions: 'C117 会话 TTL：pruneSessions 只归档「updatedAt 超龄（>30d）**或**超出会话封顶'
+    + '（200 条）」的会话 ⇒ 主文件恒有界。归档不改变可访问性：getSession 在主集合 miss 时'
+    + '从归档原位恢复（否则 index.js:511 拿到 null 会静默新建会话，用户「恢复旧对话」'
+    + '变成「历史消失」——那才是归档引入的行为破坏）。',
   aiSkill: '**刻意不设水位**：一个 capability/site 一条，10²–10³ 量级（PHASE 17-C 设计）',
   aiRepairs: '死登记：无生产写入方（仅保留历史集合名）',
   aiDecisionCache: '死登记：decisionCache 当前为内存实现，未落盘',
   deprecationHits: '按端点路径 upsert 计数（C44）',
 };
 
-// 登记边界（C 类，非本批次修复）：如实记录「已知无界 + 为何不能简单套用归档」。
-// 归档语义会把最老 1/3 记录**移出主文件**，对「主文件即工作集」的集合是行为破坏。
-const UNBOUNDED_ACCEPTED = {
-  aiQueue: '终态只改 status、记录永久残留（queue.js markDone）→ 随任务量无界。'
-    + '**不可用归档治理**：dequeue 只读主文件，归档会把尚在 PENDING 的任务移出队列 = '
-    + '任务静默不执行（比无界增长更糟）。正解 = queue 层终态清理/TTL，属独立批次。',
-  aiSessions: '每次新建会话 insert 一条、无 TTL（sessionManager.js:24）→ 随对话量无界。'
-    + '正解 = 会话 TTL / 按工作区清理，需先确定保留策略，属独立批次。',
-};
+// 登记边界（C 类）：如实记录「已知无界 + 为何不能简单套用归档」。
+// C117 后本表为空——原登记的两项 aiQueue / aiSessions 在按谓词归档原语（archiveWhere）
+// 落地后已迁入 BOUNDED_COLLECTIONS。表本身必须保留：它是治理校验的第三选项、也在导出面，
+// 未来若出现「确实无界且不适用归档」的集合仍登记在此，而不是删表或塞进另外两张表。
+const UNBOUNDED_ACCEPTED = {};
 
 // 治理校验：返回未登记的集合名（空数组 = 合规）。测试与启动自检共用。
 function storageGovernanceGaps() {
@@ -264,6 +269,57 @@ class JsonStore extends StoreInterface {
     const f = this._archiveAppend(name, moving);
     this.write(name, remaining);
     return { archived: moving.length, remaining, archiveFile: f };
+  }
+
+  // 按谓词归档（C117）：把满足 pred 的记录移入 data/archive/<name>/<时间戳>.json，
+  // 主文件只留不满足的。返回 { archived, remaining, archiveFile? }。
+  //
+  // 与 archiveOldest 的分工（勿互相替换）：archiveOldest 按「位置」切（数组头部 count 条），
+  // 只适用于历史审计型集合；archiveWhere 按「语义」切，适用于「主文件即工作集」的集合
+  // ——队列/会话只能归档已终结的记录，位置切法会把 PENDING 任务移出主文件 = 任务静默不执行。
+  // 两者作用域天然互斥：AUTO_ARCHIVE_LIMITS 与 BOUNDED_COLLECTIONS 按治理校验无交集，
+  // 故不存在「某集合既被 write() 自动归档、又被 prune 归档」的双写路径。
+  archiveWhere(name, pred) {
+    const arr = this.read(name, []);
+    if (!Array.isArray(arr) || arr.length === 0) return { archived: 0, remaining: arr };
+    // 单遍分拣：moving.length + remaining.length === arr.length 恒成立（不可能有记录
+    // 既没进归档也没留在主文件）。pred 抛异常时在**任何写入之前**就中断 ⇒ 主文件与归档
+    // 都不变（fail-safe，不留半截状态）。
+    const moving = [];
+    const remaining = [];
+    for (const x of arr) {
+      if (x && pred(x)) moving.push(x);
+      else remaining.push(x);
+    }
+    if (moving.length === 0) return { archived: 0, remaining: arr };
+    // 顺序与 archiveOldest 一致：先落归档、再落主文件。若归档成功而主文件写失败，
+    // 后果是「归档与主文件各有一份」= 重复，而非丢失（失效方向安全，勿反转顺序）。
+    const f = this._archiveAppend(name, moving);
+    this.write(name, remaining);
+    return { archived: moving.length, remaining, archiveFile: f };
+  }
+
+  // 归档按 id 取回（C117）：只在主集合 miss 时调用（sessionManager.getSession 兜底）。
+  // 归档文件名为 YYYYMMDD-HHMMSS.json ⇒ 字典序即时序，逆序扫描保证取到最新归档副本。
+  // `.corrupt-<时间戳>` 侧车不以 .json 结尾，天然被过滤（损坏副本不会冒充有效历史）；
+  // 单个归档文件损坏只跳过该文件，不中止——历史里其他文件仍可查。
+  findInArchive(name, id) {
+    const adir = path.join(this.dir, 'archive', name);
+    if (!fs.existsSync(adir)) return null;
+    let files;
+    try { files = fs.readdirSync(adir).filter((n) => n.slice(-5) === '.json'); }
+    catch (e) { return null; }
+    files.sort();
+    for (let i = files.length - 1; i >= 0; i--) {
+      let arr = null;
+      try { arr = JSON.parse(readFileSyncRetry(path.join(adir, files[i]))); }
+      catch (e) { continue; }
+      if (!Array.isArray(arr)) continue;
+      const hit = arr.find((x) => x && x.id === id);
+      // 每次 JSON.parse 都产生新对象 ⇒ 天然无共享引用，调用方可安全改写
+      if (hit) return hit;
+    }
+    return null;
   }
 
   find(name, id) {
