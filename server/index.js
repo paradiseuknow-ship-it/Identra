@@ -1059,8 +1059,16 @@ settingsRouter.post('/backup/restore', (req, res) => {
   catch (e) { return res.status(e.status || 403).json({ ok: false, error: e.status === 401 ? 'UNAUTHORIZED' : String(e.message || e) }); }
   try {
     const r = backup.restoreSnapshot(req.body || {});
-    auditReq(req, 'backup.restore', 'backup', 'data', { restored: r.restored.length, preRestoreDir: r.preRestoreDir });
-    res.json({ ok: true, restored: r.restored, preRestoreDir: r.preRestoreDir, note: '恢复前旧数据已快照到 pre-restore 目录；建议重启服务确保全部模块重新读盘' });
+    auditReq(req, 'backup.restore', 'backup', 'data', { restored: r.restored.length, preRestoreDir: r.preRestoreDir, preRestoreDirs: r.preRestoreDirs });
+    res.json({
+      ok: true,
+      restored: r.restored,
+      preRestoreDir: r.preRestoreDir,
+      // C116：恢复现在会写两个数据根（db 根 + AI store 根），每个被覆写的根各留一份回滚点。
+      // 只透出 db 根会让运维找不到 AI 集合的回滚目录。
+      preRestoreDirs: r.preRestoreDirs,
+      note: '恢复前旧数据已快照到 pre-restore 目录（两个数据根各一份）；建议重启服务确保全部模块重新读盘',
+    });
   } catch (e) {
     res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
   }

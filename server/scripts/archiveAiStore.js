@@ -19,10 +19,11 @@
 
 const fs = require('fs');
 const path = require('path');
+// C116：AI store 根改由 server/dataRoot.js 的 aiStoreRoot() 单一裁定（此前本文件自持一份
+// 解析逻辑）。语义逐字不变：FPB_DATA_DIR 优先，否则 <repo>/server/data。
+const { aiStoreRoot } = require('../dataRoot');
 
-const DATA_DIR = process.env.FPB_DATA_DIR
-  ? path.resolve(process.env.FPB_DATA_DIR)
-  : path.join(__dirname, '..', 'data'); // server/scripts → server/data（与 storage/index.js resolveDataDir 一致）
+const DATA_DIR = aiStoreRoot();
 
 const TERMINAL_TASK_STATES = ['SUCCESS', 'FAILED', 'CANCELLED', 'HUMAN_ESCALATION', 'COMPLETED'];
 
@@ -228,4 +229,5 @@ module.exports = {
   run,
   TERMINAL_TASK_STATES,
   REFERENCE_COLLECTIONS,
+  DATA_DIR, // C116：导出供守护测试断言 AI store 根解析
 };

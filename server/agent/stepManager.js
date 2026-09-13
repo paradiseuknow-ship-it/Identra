@@ -7,18 +7,21 @@ const store = require('./store');
 const tsm = require('./taskStateManager');
 const fs = require('fs');
 const path = require('path');
+// C116：AI store 根改由 server/dataRoot.js 的 aiStoreRoot() 单一裁定（此前本文件自持一份
+// 解析逻辑，与 storage/index.js / archiveAiStore.js / migrationJsonToSqlite.js 重复 ——
+// 4 份同义实现）。语义逐字不变：FPB_DATA_DIR 优先，否则 <repo>/server/data。
+const { aiStoreRoot } = require('../dataRoot');
 
 // 存储治理（2026-09-04）：aiAttempts error 内嵌完整 observation 曾产生 171KB 长尾记录
-// （42MB 主文件的主要来源）。超过阈值的大证据体外置到 data/evidence/attempt_errors/，
+// （42MB 主文件的主要来源）。超过阈值的大证据体外置到 AI 根下的 evidence/attempt_errors/
+// （C116 更正：实际路径 = <repo>/server/data/evidence/attempt_errors/ —— 旧注释写作
+//  `data/evidence/attempt_errors/`，少了 `server/` 层级，正是 D1 排查期的误导源之一）；
 // store 内保留 { externalized, file, byteSize } 指针 + url/title 轻摘要。
 // 离线分析脚本（analyze_phase10 / trace_single_task 等）读 externalized 字段可按 file 还原。
 const EVIDENCE_EXTERNAL_LIMIT = 4 * 1024;
 
 function evidenceErrorDir() {
-  const base = process.env.FPB_DATA_DIR
-    ? path.resolve(process.env.FPB_DATA_DIR)
-    : path.join(__dirname, '..', 'data'); // server/agent → server/data（与 storage/index.js resolveDataDir 一致）
-  return path.join(base, 'evidence', 'attempt_errors');
+  return path.join(aiStoreRoot(), 'evidence', 'attempt_errors');
 }
 
 function externalizeEvidence(attemptId, field, value) {
@@ -245,4 +248,5 @@ module.exports = {
   createAttempt, getAttempt, updateAttempt, succeedAttempt, failAttempt, listAttempts, finalizeOrphanAttempts,
   orphanCodeFor,
   normalizeErrorShape, // 导出供测试（仅暴露既有纯函数，不改运行时行为）
+  evidenceErrorDir, // C116：导出供守护测试断言 AI store 根解析（C46 先例）
 };

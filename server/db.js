@@ -8,10 +8,12 @@ const path = require('path');
 // 避免明文 JSON 残留（与 vault 凭据加密策略一致）。
 const vault = require('./vault');
 
-// CAP-O1：FPB_DATA_DIR 供测试/部署隔离（identity.js 与 agent/storage 同步支持）
-const DATA_DIR = process.env.FPB_DATA_DIR
-  ? path.resolve(process.env.FPB_DATA_DIR)
-  : path.join(__dirname, '..', 'data');
+// C116：db 根改由 server/dataRoot.js 的 dataRoot() 单一裁定（此前本文件自持一份解析
+// 逻辑，与 browserManager/identityStore 重复）。语义逐字不变：FPB_DATA_DIR 优先，
+// 否则 <repo>/data（db.js 的 profiles/proxies/tasks 属该根，见 .gitignore:22）。
+const { dataRoot } = require('./dataRoot');
+
+const DATA_DIR = dataRoot();
 const PROFILES_FILE = path.join(DATA_DIR, 'profiles.json');
 const PROXIES_FILE = path.join(DATA_DIR, 'proxies.json');
 const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');

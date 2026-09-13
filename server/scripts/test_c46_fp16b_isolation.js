@@ -12,8 +12,10 @@
 //   P3 identityStore.PROFILES_ROOT 同步隔离 + writeIdentity/readIdentity roundtrip
 //      落在 tmp 根内、repo data/profiles 零写入
 //   P4 两个 launch 测试源码契约：FPB_DATA_DIR 在 require browserManager 之前 mkdtemp 注入
-//   P5 静态守护：browserManager 内硬编码 profiles 路径仅剩 PROFILES_ROOT 定义一处
-//      （killOrphanChromium 已改用 PROFILES_ROOT，防回归）
+//   P5 静态守护（C116 锚点上移）：profiles 根必须由单一事实源 dataRoot() 派生——
+//      browserManager / identityStore 内零内联数据根解析，且 FPB_DATA_DIR 认知只存在于
+//      dataRoot.js（消费者不得自行读 env）。旧版锚定「源码里出现某串文本」，
+//      在 C116 D2 把内联解析收敛到 dataRoot() 后锚点失效（count=0）而语义未变。
 
 const fs = require('fs');
 const os = require('os');
@@ -28,6 +30,18 @@ function chk(name, ok, detail) {
   if (ok) { pass++; console.log('PASS ' + name); }
   else { fail++; failures.push(name + (detail !== undefined ? ' :: ' + String(detail).slice(0, 300) : '')); console.log('FAIL ' + name); }
 }
+
+// C116：静态断言必须先剥离注释——两个被守护文件的行内注释里合法地提到
+// data/profiles 与 FPB_DATA_DIR（正是它们解释为何要走 dataRoot），不剥离即假阳性。
+// 实现与 test_c116_backup_dual_root.js 保持一致（同源同语义，避免两套正则漂移）。
+function stripComments(s) {
+  return String(s)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .split(/\r?\n/)
+    .map((l) => l.replace(/(^|[^:"'`\\])\/\/.*$/, '$1'))
+    .join('\n');
+}
+const readText = (p) => fs.readFileSync(p, 'utf8');
 
 // 子进程内真实 require + 打印 PROFILES_ROOT 解析结果（避免污染本进程 env/require 缓存）
 function probeRoots(env) {
@@ -100,16 +114,40 @@ function probeRoots(env) {
       '');
   }
 
-  // ---- P5：静态守护——硬编码 profiles 路径仅剩 PROFILES_ROOT 定义一处 ----
+  // ---- P5：静态守护——数据根解析必须走单一事实源（C116 锚点上移 + 加强） ----
+  // 原语义：profiles 根只能有一处定义、且两处都受 FPB_DATA_DIR 隔离。
+  // C116 D2 后 env 认知上移到 dataRoot.js ⇒ 断言升级为三条更强不变量：
+  //   (a) 消费者零内联数据根解析（catch 任何 path.join(__dirname,..,'data') 复辟）
+  //   (b) PROFILES_ROOT 恰由 dataRoot() 派生一处
+  //   (c) FPB_DATA_DIR 认知唯一集中于 dataRoot.js，消费者不自行读 env
   {
-    const bmSrc = fs.readFileSync(path.join(ROOT, 'server', 'browserManager.js'), 'utf8');
-    const isSrc = fs.readFileSync(path.join(ROOT, 'server', 'fp', 'identityStore.js'), 'utf8');
-    const bmHardcoded = (bmSrc.match(/path\.join\(__dirname, '..', 'data', 'profiles'\)/g) || []).length;
-    const isHardcoded = (isSrc.match(/path\.join\(__dirname, '..', '..', 'data', 'profiles'\)/g) || []).length;
-    chk('P5a browserManager 硬编码 profiles 路径仅 1 处（PROFILES_ROOT 定义；killOrphanChromium 走常量）', bmHardcoded === 1, 'count=' + bmHardcoded);
-    chk('P5b identityStore 硬编码 profiles 路径仅 1 处（PROFILES_ROOT 定义）', isHardcoded === 1, 'count=' + isHardcoded);
-    chk('P5c 两处 PROFILES_ROOT 均读 FPB_DATA_DIR',
-      bmSrc.includes("process.env.FPB_DATA_DIR") && isSrc.includes("process.env.FPB_DATA_DIR"), '');
+    const bmSrc = stripComments(readText(path.join(ROOT, 'server', 'browserManager.js')));
+    const isSrc = stripComments(readText(path.join(ROOT, 'server', 'fp', 'identityStore.js')));
+    const drSrc = stripComments(readText(path.join(ROOT, 'server', 'dataRoot.js')));
+
+    const INLINE = /path\.join\(\s*__dirname\s*,\s*(?:'\.\.'\s*,\s*)*'data'/g;
+    const DERIVE = /path\.join\(dataRoot\(\), 'profiles'\)/g;
+    const n = (src, re) => (src.match(re) || []).length;
+
+    chk('P5a browserManager 零内联数据根解析 + PROFILES_ROOT 由 dataRoot() 派生恰 1 处',
+      n(bmSrc, INLINE) === 0 && n(bmSrc, DERIVE) === 1,
+      'inline=' + n(bmSrc, INLINE) + ' derive=' + n(bmSrc, DERIVE));
+
+    chk('P5b identityStore 零内联数据根解析 + PROFILES_ROOT 由 dataRoot() 派生恰 1 处',
+      n(isSrc, INLINE) === 0 && n(isSrc, DERIVE) === 1,
+      'inline=' + n(isSrc, INLINE) + ' derive=' + n(isSrc, DERIVE));
+
+    const drEnv = n(drSrc, /process\.env\.FPB_DATA_DIR/g);
+    chk('P5c FPB_DATA_DIR 认知唯一集中于 dataRoot.js（两消费者零 env 读取），且 dataRoot 自身确实实现隔离',
+      drEnv >= 2 &&
+      !/process\.env\.FPB_DATA_DIR/.test(bmSrc) && !/process\.env\.FPB_DATA_DIR/.test(isSrc),
+      'drEnv=' + drEnv + ' bmEnv=' + /process\.env\.FPB_DATA_DIR/.test(bmSrc) + ' isEnv=' + /process\.env\.FPB_DATA_DIR/.test(isSrc));
+
+    // 机制有效性自证：正则必须真能命中复辟形态，否则是空断言（C116 双向验证纪律）
+    chk('P5d 内联检测正则对复辟形态有效（含多级 ../ 变体）',
+      /path\.join\(\s*__dirname\s*,\s*(?:'\.\.'\s*,\s*)*'data'/.test(
+        "const PROFILES_ROOT = path.join(__dirname, '..', '..', 'data', 'profiles');"),
+      '');
   }
 
   console.log('');

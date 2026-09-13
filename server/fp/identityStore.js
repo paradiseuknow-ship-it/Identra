@@ -17,12 +17,15 @@ const fs = require('fs');
 const path = require('path');
 const { assertSafeName, resolveWithin } = require('../security/safePath');
 const { assertValidIdentity, IdentityError, canonicalIdentityString } = require('./identitySchema');
+// C116：数据根唯一事实源（db 根）。见下方 PROFILES_ROOT 注释。
+const { dataRoot } = require('../dataRoot');
 
 // C46：补接 CAP-O1 FPB_DATA_DIR 隔离约定（与 browserManager.PROFILES_ROOT 同步解析），
 // 保证 identity.json 与 userDataDir 永远同根——测试环境两者随 FPB_DATA_DIR 一起落到 tmp。
-const PROFILES_ROOT = process.env.FPB_DATA_DIR
-  ? path.resolve(process.env.FPB_DATA_DIR, 'profiles')
-  : path.join(__dirname, '..', '..', 'data', 'profiles');
+// C116：改由 server/dataRoot.js 的 dataRoot() 单一裁定（此前本文件自持一份解析逻辑）。
+// 解析语义逐字不变：<数据根>/profiles —— 且与 browserManager.PROFILES_ROOT 真正同源，
+// 不再依赖「两处各自写对」。
+const PROFILES_ROOT = path.join(dataRoot(), 'profiles');
 
 function identityFilePath(profileId, rootOverride) {
   const root = rootOverride ? path.resolve(rootOverride) : PROFILES_ROOT;

@@ -8,10 +8,13 @@
 const path = require('path');
 const { JsonStore, FILES } = require('./jsonStore');
 const { SqliteStore } = require('./sqliteStore');
+// C116：AI store 根改由 server/dataRoot.js 的 aiStoreRoot() 单一裁定（此前本文件自持一份
+// 解析逻辑）。默认值语义逐字不变：<repo>/server/data。
+const { aiStoreRoot } = require('../../dataRoot');
 
 function run(opts) {
   opts = opts || {};
-  const jsonDir = opts.jsonDir || path.join(__dirname, '..', '..', 'data');
+  const jsonDir = opts.jsonDir || aiStoreRoot();
   const sqlitePath = opts.sqlitePath || path.join(jsonDir, 'agent.sqlite');
 
   const json = new JsonStore(jsonDir);

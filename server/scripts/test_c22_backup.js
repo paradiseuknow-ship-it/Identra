@@ -90,9 +90,11 @@ function chk(name, ok, detail) {
       exp.code + ' files=' + Object.keys(snap.files || {}).join(','));
 
     // B2 元数据 + vault
-    chk('B2 format/version/vault 齐备', snap.format === 'identra-backup' && snap.version === 1 &&
+    // C116：写入版本 1 → 2（v2 新增 fileRoots/roots，使快照覆盖两个数据根；见 server/backup.js 头部）。
+    // 断言随契约走：v1 备份仍可恢复（test_c54/c115 覆盖），但**导出的**版本就是 2。
+    chk('B2 format/version/vault 齐备', snap.format === 'identra-backup' && snap.version === 2 &&
       snap.files && snap.files['vault.json'] !== undefined,
-      'format=' + snap.format + ' hasVault=' + !!(snap.files && snap.files['vault.json']));
+      'format=' + snap.format + ' version=' + snap.version + ' hasVault=' + !!(snap.files && snap.files['vault.json']));
 
     // B3 删除 → 恢复
     await req('DELETE', '/api/profiles/' + pid);

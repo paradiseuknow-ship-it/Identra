@@ -69,15 +69,17 @@ async function checkHopPortAvailable() {
 const SYSTEM_CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 
 const { assertSafeName, resolveWithin } = require('./security/safePath');
+// C116：数据根唯一事实源（db 根）。见下方 PROFILES_ROOT 注释。
+const { dataRoot } = require('./dataRoot');
 
 // C46 真实缺陷（B 类基建）：PROFILES_ROOT 此前硬编码 data/profiles，漏接 CAP-O1 FPB_DATA_DIR
 // 隔离约定（db.js / agent/storage / backup.js / identity.js 均已支持）→ fp16b 真实 launch 测试
 // 与所有 launch 路径固定写 data/profiles/<id>，跨回归实例/相邻套件争用同一 Chrome profile
 // 目录（SingletonLock）→ 偶发 launch 崩溃 FATAL「无统计行」（2026-09-07 C44/C45 两轮实证）。
 // 补齐约定：FPB_DATA_DIR 设置时 profile 目录随数据根隔离；默认路径零变化。
-const PROFILES_ROOT = process.env.FPB_DATA_DIR
-  ? path.resolve(process.env.FPB_DATA_DIR, 'profiles')
-  : path.join(__dirname, '..', 'data', 'profiles');
+// C116：改由 server/dataRoot.js 的 dataRoot() 单一裁定（此前本文件自持一份解析逻辑，
+// 与 db.js / identityStore 重复）。解析语义逐字不变：<数据根>/profiles。
+const PROFILES_ROOT = path.join(dataRoot(), 'profiles');
 
 // STEP 0.5 §2.2：profileId 参与文件系统路径拼接，必须过段名白名单 + 根内解析。
 // 合法 id 形如 p_lz3k9x（字母数字 + 下划线），白名单不会误伤。

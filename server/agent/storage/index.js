@@ -13,13 +13,15 @@ const path = require('path');
 const { JsonStore } = require('./jsonStore');
 const { SqliteStore } = require('./sqliteStore');
 const { StoreInterface } = require('./store.interface');
+// C116：AI store 根改为由 server/dataRoot.js 的 aiStoreRoot() 单一裁定。
+// 此前本文件自持一份解析逻辑，而 agent/stepManager.js、scripts/archiveAiStore.js、
+// storage/migrationJsonToSqlite.js 又各复制一份 —— 4 份同义实现（C58 D2「重复定义会
+// 各自漂移」）。解析语义逐字不变：FPB_DATA_DIR 优先，否则 <repo>/server/data
+//（即 aiStoreRoot() 的默认分支）⇒ 生产路径零行为变化。
+const { aiStoreRoot } = require('../../dataRoot');
 
 function resolveDataDir() {
-  // 与旧 store.js 默认目录保持一致：server/data（JsonStore 的 FILES 集合根）
-  // CAP-O1：FPB_DATA_DIR 供测试/部署隔离（与 server/db.js、identity.js 同步支持）
-  return process.env.FPB_DATA_DIR
-    ? path.resolve(process.env.FPB_DATA_DIR)
-    : path.join(__dirname, '..', '..', 'data');
+  return aiStoreRoot();
 }
 
 function resolveSqlitePath() {
@@ -48,6 +50,9 @@ const backend = createBackend();
 module.exports = Object.assign(backend.store, {
   driver: backend.driver,
   backend: backend.store,
+  // C116：暴露解析出的 AI store 根，供守护测试断言 FPB_DATA_DIR 隔离解析（C46 先例：
+  // browserManager 同样导出 PROFILES_ROOT「供守护测试断言隔离解析」）。
+  dataDir: resolveDataDir(),
   // 便于测试/切换：手动构造另一驱动实例（不污染全局）。
   JsonStore,
   SqliteStore,
