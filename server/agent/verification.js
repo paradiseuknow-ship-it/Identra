@@ -49,6 +49,22 @@ function surfaceContains(url, expect) {
   return surface.includes(e);
 }
 
+// C123：存在性索引（observation.contentLeaves）匹配的**唯一实现**。
+// element_present 与 element_absent 必须共用同一函数 —— 只给其中一个回落，就会制造
+// 「present 说在、absent 也说不在」的形式矛盾（L6：绝不留第二份同义实现）。
+// 索引按**叶子文本元素**粒度采集（observation.js），因此这是元素级证据，
+// 不是「整页文本 substring」那种退化判定。
+function matchContentLeaf(after, expect) {
+  const e = String(expect || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (e.length < 2) return null;
+  const leaves = (after && after.contentLeaves) || [];
+  for (const lf of leaves) {
+    const t = String((lf && lf.text) || '').replace(/\s+/g, ' ').toLowerCase();
+    if (t && t.includes(e)) return lf;
+  }
+  return null;
+}
+
 // 输入：{ verification: {type, expect}, after: observation, before?: observation }
 // 输出：{ success, confidence, evidence[] }
 function verify(v, after, before) {
@@ -103,15 +119,32 @@ function verify(v, after, before) {
     }
     case 'element_present': {
       const cands = expect ? semanticResolver.resolve(expect, after) : [];
-      const ok = cands.length > 0;
-      evidence.push(ok ? `找到语义元素 "${expect}" (top=${cands[0].score})` : `未找到元素 "${expect}"`);
-      return { success: ok, confidence: ok ? Math.min(0.95, 0.6 + cands[0].score * 0.4) : 0.7, evidence };
+      let ok = cands.length > 0;
+      if (ok) {
+        evidence.push(`找到语义元素 "${expect}" (top=${cands[0].score})`);
+      } else {
+        // C123 回落：elements[] 是 semanticResolver 的唯一候选池，但它刻意不含
+        // div/span/p（observation.js 的容量取舍），页面上真实存在的展示性条目
+        // （榜单项、价格、状态文本）因此恒被判「未找到元素」。这里按元素级证据确认存在。
+        const lf = matchContentLeaf(after, expect);
+        if (lf) {
+          ok = true;
+          evidence.push(`找到内容元素 "${expect}"（存在性索引 <${lf.tag}${lf.cls ? '.' + String(lf.cls).split(/\s+/)[0] : ''}>："${String(lf.text).slice(0, 40)}"）`);
+        } else {
+          evidence.push(`未找到元素 "${expect}"`);
+        }
+      }
+      const conf = ok ? (cands.length ? Math.min(0.95, 0.6 + cands[0].score * 0.4) : 0.75) : 0.7;
+      return { success: ok, confidence: conf, evidence };
     }
     case 'element_absent': {
       // C105 M3：同 element_present，存在性通道不施加可操作性否决。
       const cands = expect ? semanticResolver.resolve(expect, after, { requireActionable: false }) : [];
-      const ok = cands.length === 0;
-      evidence.push(ok ? `元素 "${expect}" 不存在` : `元素 "${expect}" 仍存在`);
+      // 与 element_present 共用同一存在性索引：只因 elements[] 池不含展示性元素就判
+      // 「不存在」，会和 present 通道的 C123 回落互相矛盾。
+      const lf = cands.length ? null : matchContentLeaf(after, expect);
+      const ok = cands.length === 0 && !lf;
+      evidence.push(ok ? `元素 "${expect}" 不存在` : (lf ? `元素 "${expect}" 仍存在（存在性索引命中："${String(lf.text).slice(0, 40)}"）` : `元素 "${expect}" 仍存在`));
       return { success: ok, confidence: ok ? 0.85 : 0.6, evidence };
     }
     case 'field_value': {

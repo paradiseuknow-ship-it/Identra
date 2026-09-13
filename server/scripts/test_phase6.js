@@ -155,7 +155,17 @@ console.log('\n=== 回归：verification 成功逻辑未变 / benchmark 口径�
 (function () {
   // verification.js 中 element_present 仍由 cands.length>0 决定（未改成功逻辑），且 previousObservationDiff 计数不变
   const vf = fs.readFileSync(path.join(__dirname, '..', 'agent', 'verification.js'), 'utf8');
-  ok(/const ok = cands\.length > 0;/.test(vf), 'verification.element_present 成功判定仍为 cands.length>0');
+  // C123 锚点上移（L3：断言过时 ≠ 缺陷，不删不降标准）：
+  // element_present 的成功判定由「仅 cands.length>0」演进为
+  // 「elements 池命中 **或** 池为空时回落到存在性索引 contentLeaves」。
+  // 原断言锚定的语义（**elements 池仍是主判定、成功逻辑未被改写**）依然成立，
+  // 因此把静态锚点上移到新形态，并补一条行为断言：池命中时不得依赖回落。
+  ok(/let ok = cands\.length > 0;/.test(vf), 'verification.element_present 主判定仍以 elements 池为准（cands.length>0）');
+  ok(/matchContentLeaf\(after, expect\)/.test(vf), 'verification.element_present 具备存在性索引回落（C123）');
+  // 行为锚点：本地重建 elements 池命中的观察（本 IIFE 作用域内无上层 obs）。
+  const poolObs = { url: 'http://x/saas/login', elements: [{ id: 'u1', tag: 'input', name: 'username', type: 'text', cls: '', placeholder: '', ariaLabel: '', role: '', text: '', visible: true }] };
+  const vPool = verification.verify({ type: 'element_present', expect: "input[name='username'][value='admin']" }, poolObs);
+  ok(vPool.success === true, 'elements 池命中时与存在性索引无关（回落不得架空原通道）');
   const vi = fs.readFileSync(path.join(__dirname, '..', 'agent', 'verification', 'verificationIntelligence.js'), 'utf8');
   const cnt = (vi.match(/previousObservationDiff/g) || []).length;
   ok(cnt === 4, 'verificationIntelligence previousObservationDiff 计数仍为 4（未改动）');

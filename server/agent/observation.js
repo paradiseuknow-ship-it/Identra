@@ -445,11 +445,44 @@ const COLLECT_JS = `(() => {
   // 修复 Phase 5 发现的 text_present 对 <div> 动态渲染内容的盲区（verification 读取本字段）。
   const texts = [];
   const seenT = new Set();
+  // ── C123：存在性索引 contentLeaves ─────────────────────────────────────────
+  // elements[] 是 semanticResolver 的唯一候选池，而它**刻意不收 div/span/p**
+  // （见上：数量大、会挤爆 80 上限并稀释排序）。该取舍的理由是「它们的文本已由
+  // textSummary 覆盖，text_present 验证不受影响」——**只覆盖了 text_present**：
+  // element_present 同为 elements[] 的消费者，却被这个取舍一起牺牲了。
+  // 后果（P1 六例实证）：榜单条目文本（<span class="name">商品名…</span>）在页面上真实存在、
+  // textSummary 里也有，但 elements[] 为空 ⇒ element_present 恒「未找到元素」
+  // ⇒ 4 次验证全败 ⇒ HEALING ⇒ 重试耗尽 ⇒ HUMAN_ESCALATION。
+  // 这里按**文本载体元素**粒度另建索引，只服务于存在性判定：
+  //   · 有直接文本（不为容器重复计数）· 带 class/id（无身份的裸标签是布局噪声）
+  //   · 文本非空且 ≤120 字符      · 全页上限 40 条
+  // 刻意**不进 elements[]**：动作目标候选池的语义与排序不得被展示性元素稀释。
+  const leaves = [];
+  const MAX_LEAVES = 40;
   for (const el of body.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,summary,span,div,td,th,label,button,a,option,strong,b,em,code')) {
     if (!isVisible(el)) continue;
     const t = (el.innerText || '').trim();
     if (t && t.length > 1 && !seenT.has(t)) { seenT.add(t); texts.push(t); }
+    if (leaves.length >= MAX_LEAVES) continue;
+    if (!t || t.length > 120) continue;
+    // 「有直接文本」而非「无子元素」：真实文本容器常含内联子元素
+    // （<div id="cartbar">购物车：<b id="cart">0</b> 件</div>），按「无子元素」判据会整条丢失；
+    // 而纯布局 wrapper 的直接文本为空 —— 用它区分「内容载体」与「布局容器」最准。
+    let direct = '';
+    for (const n of el.childNodes) { if (n.nodeType === 3) direct += (n.nodeValue || ''); }
+    if (direct.replace(/\\s+/g, ' ').trim().length < 2) continue;
+    const clsRaw = (el.className && el.className.toString) ? el.className.toString() : (el.className || '');
+    const cls = String(clsRaw || '').trim();
+    const idv = String(el.id || '').trim();
+    if (!cls && !idv) continue;
+    leaves.push({
+      tag: String(el.tagName || '').toLowerCase(),
+      cls: cls.slice(0, 60) || null,
+      id: idv || null,
+      text: redact(t).slice(0, 200),
+    });
   }
+  out.contentLeaves = leaves;
   out.textSummary = redact(texts.slice(0, 120).join(' ')).slice(0, 5000);
 
   // 完整可见文本（全页面 innerText，去重行、截断）—— 富文本通道，供 Planner / 验证消费
@@ -590,6 +623,9 @@ async function inspect(page, opts = {}) {
     visibleText: data.visibleText || '',
     roleText: data.roleText || '',
     elements: (data.elements || []).slice(0, 80),
+    // C123 存在性索引：element_present/element_absent 的元素级证据面（不进 elements 池）。
+    // 不进 contextBuilder（白名单构造）⇒ 零 LLM token 成本、零 prompt 噪声。
+    contentLeaves: (data.contentLeaves || []).slice(0, 40),
     errors: (data.errors || []).slice(0, 10),
     // v0.2.1 新增真实字段（向后兼容：旧消费者忽略）
     timestamp: capturedAt,
