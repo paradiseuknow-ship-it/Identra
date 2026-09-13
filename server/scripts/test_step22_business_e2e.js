@@ -624,12 +624,14 @@ async function main() {
       ],
     });
     await api('POST', '/api/ai/tasks/' + t1.json.id + '/start', { headers: AUTH });
-    // C108 时序窗重基线（C79 专门批次承诺的收口）：mock plan strict 契约修复后 runtime REPLAN
-    // 真实可用，F1 恢复链多走「repair 耗尽 → replan#1 → 执行 → repair 耗尽 → replan#2 → … →
-    // 升级」全程，实测 193.4s 到 HUMAN_ESCALATION（c108_run1/run2 双跑一致，事件级证据
-    // .benchmark/c108_step22_run1.log）。旧 180s 等待窗在终态前截断（62/1 RUNNING）。
-    // 断言口径零变化（FAILED/HUMAN_ESCALATION 判定不动），仅延长轮询窗至 300s 观测真实终态。
-    const fin1 = await waitTaskTerminal(t1.json.id, 300000);
+    // C118 时序窗重基线（父级 MEMORY 登记「须独立批次」的收口）：C116/C117 取证证明 F1 恢复链
+    // 链长随执行环境负载漂移——C108 实测 193.4s → C116 实测 267.9–305.6s（4 红全 >300s /
+    // 3 绿全 <300s 完美分离）→ C117 runRegression 实测 377.6s（.benchmark/c117_runregression.log）。
+    // 300s 窗余量塌到负值：断言在真实终态（HUMAN_ESCALATION）到达前截断读到 RUNNING = 假红，
+    // 每次假红都要烧一轮全量复跑证清白。新窗 = 实测上界 377.6s + >50% 余量 = 600s；
+    // waitTaskTerminal 终态 1s 轮询早退 => 绿路径零成本，只有真悬挂才耗满窗。
+    // 断言口径零变化（FAILED/HUMAN_ESCALATION 判定不动），仅延长观测窗至实测链长上界+余量。
+    const fin1 = await waitTaskTerminal(t1.json.id, 600000);
     const ev1 = await getEvents(t1.json.id);
     const re1 = ev1.filter((e) => e.type === 'ai.verification.persist_reload' && e.payload && e.payload.stage === 'reverified');
     ok(re1.length >= 1 && re1[re1.length - 1].payload.success === false, 'F1 状态丢失：reverified success=false（reload 后 sessionStorage.once 消失）');
