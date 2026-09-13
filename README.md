@@ -56,7 +56,7 @@ npm test        # 全量回归（runRegression.js 227 项 + phase9 220 项双护
 | 能力 | 说明 |
 |------|------|
 | Profile 与指纹身份 | 种子化可复现指纹（UA/UA-CH/screen/时区/语言/字体/WebGL/Canvas/Audio/硬件），headful 真实分辨率回填，headless CDP metrics 对齐；运行态快照（时长/当前页面/页签数/代理，5s 轮询） |
-| Native 身份架构（16-B） | **10 个 Chromium native patch 全 ACTIVE**（identity-config-plumbing / navigator.webdriver / navigator.platform / userAgentData.platformVersion / userAgentMetadata.platform / userAgentMetadata.mobile / CDP platform 让位回退 / hardwareConcurrency / deviceMemory / maxTouchPoints）；`server/fp/nativePatchManifest.js` 为**唯一事实源**（`enabled` 仅在该 patch 走完 source→patch→build→runtime→行为测试→ownership→回归**全链**后才翻真），opt-in 缺省逐字节 stock；languages 走 CONFIG 层 pref 注入三端同源 |
+| Native 身份架构（16-B） | **10 个 Chromium native patch 全 ACTIVE**（identity-config-plumbing / navigator.webdriver / navigator.platform / navigator.userAgentData.platformVersion / userAgentMetadata.platform / userAgentMetadata.mobile / cdp-platform-surrender-fallback / navigator.hardwareConcurrency / navigator.deviceMemory / navigator.maxTouchPoints）；`server/fp/nativePatchManifest.js` 为**唯一事实源**（`enabled` 仅在该 patch 走完 source→patch→build→runtime→行为测试→ownership→回归**全链**后才翻真），opt-in 缺省逐字节 stock；languages 走 CONFIG 层 pref 注入三端同源 |
 | 代理管理 | HTTP/SOCKS5，出口 IP 预检、代理-指纹一致性（基于 IP 的时区/语言/地理推导） |
 | 加密保险库 | 邮箱/密码/卡号/CVV 加密存储；LLM 永不见明文 CVV/卡号（credentialRef + masked） |
 | AI 自动化引擎 | Planner→Runtime→Verification→Repair→Escalation 全链：业务状态核验、失败诊断、churn 熔断、replan 契约、凭据启动预检、可信升级（CREDIBLE_BUSINESS） |
@@ -65,7 +65,7 @@ npm test        # 全量回归（runRegression.js 227 项 + phase9 220 项双护
 | 智能记忆 | 站点画像 / 元素记忆 / 流记忆 / 失败知识只读面板 + 经验包导出导入（跨环境迁移）+ Router 决策试算 / 环境推荐 / 经验健康看板（准确率、LLM 节省、Memory ROI、站点×环境矩阵） |
 | 治理与合规 | API Keys 自管（明文仅创建时出现一次、只读标记、撤销即失效）、凭据引用注册表（credentialRef 脱敏视图 + 明文就绪状态现算）、安全审计日志（只写不可篡改 + 过滤查询 + JSON 导出）、工作空间与成员 RBAC |
 | 任务取证 | 单任务详情：结构化诊断（根因/置信/重试策略/证据/失败快照）、修复尝试与策略成功率、执行记录、动作链重放 |
-| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（runRegression 227 项 **227/0** 全绿；phase9 **OK=220/BAD=0** 全绿；step22 观测窗（C118）与执行器超时（C119）已按跨层不变量分层重基线） |
+| 评估基准 | 冻结 v2 任务池（100 任务）+ canonical240 基线 + 双回归护栏（runRegression 228 项 **228/0** 全绿；phase9 **OK=221/BAD=0** 全绿；step22 观测窗（C118）与执行器超时（C119）已按跨层不变量分层重基线） |
 
 ## 发布包（portable）
 ```bash
