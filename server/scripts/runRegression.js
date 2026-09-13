@@ -43,12 +43,29 @@ const TMP_ENV = ensureListableTemp();
 // 每个测试文件的超时上限（毫秒）。超时按失败计，避免 CI 被悬挂进程卡死。
 const PER_TEST_TIMEOUT_MS = Number(process.env.REGRESSION_TIMEOUT_MS) || 180000;
 
-// C108（2026-09-10）每套件超时覆盖表：mock plan strict 契约修复后 runtime REPLAN 真实可用，
-// step22 受控失败注入场景（F1）恢复链实测 193.4s 到 HUMAN_ESCALATION（C79 曾 4/4 复现
-// 200–260s 击穿旧 180s 全局窗）→ suite 总时长 ~70–94s 升至 ~250–280s。仅对该套件提高
-// 执行时间窗（断言口径零变化，非降阈值；重基线证据 .benchmark/c108_step22_run*.log）。
+// 每套件超时覆盖表。语义 = **防悬挂保险丝**（超时按失败计，避免卡死全量回归），
+// 它**不参与**任何业务判定 —— 断言口径与它无关。
+//
+// ★ 跨层不变量（C119 建立并守护，`test_c119_suite_timeout_consistency.js`）：
+//   执行器超时  >  该套件内部最大观测窗（`waitTaskTerminal(id, N)` 的 max N）
+//   否则最长的那个内部窗**永远无法兑现** —— 断言还没等到终态，进程已被执行器杀掉，
+//   报出来的形态从「假红（读到中间态）」退化成「套件被超时截断」，更难归因。
+//
+// 演进：
+//   C108（2026-09-10）mock plan strict 契约修复后 runtime REPLAN 真实可用，step22 受控失败
+//     注入场景（F1）恢复链实测 193.4s 到 HUMAN_ESCALATION（C79 曾 4/4 复现 200–260s 击穿旧
+//     180s 全局窗）→ suite 总时长 ~70–94s 升至 ~250–280s。设 480000。
+//     **当时成立**：F1 观测窗 300s < 执行器 480s ✓（重基线证据 .benchmark/c108_step22_run*.log）
+//   C118（2026-09-13）F1 观测窗 300s → 600s（余量塌缩修复）。
+//     ✗ **但不变量未同步**：480s < 600s ⇒ 若 F1 链长落在 480–600s 区间，断言本会绿，
+//     却先被执行器杀掉 —— C118 的修复在该区间**完全无法兑现**。同一类「阈值余量不足」
+//     缺陷在新阈值上重演（C116 实测 267.9–305.6s → C117 377.6s，距 480s 仅 ~27%）。
+//   C119（本批次）重基线 480000 → 720000：= 最大内部窗 600s + 120s（站点启动 + A/C/E/F2
+//     区典型耗时 + 负载波动余量），且 ≤ 2× 最大内部窗（1200s）防真悬挂拖死全量回归。
+//     720s / 实测套件最大耗时 377.6s（C117）= 1.91× 余量。
+//     **断言口径零变化**：只放宽保险丝，不放松任何判定。
 const PER_TEST_TIMEOUT_OVERRIDES = {
-  'test_step22_business_e2e.js': Number(process.env.REGRESSION_TIMEOUT_STEP22_MS) || 480000,
+  'test_step22_business_e2e.js': Number(process.env.REGRESSION_TIMEOUT_STEP22_MS) || 720000,
 };
 
 const argv = process.argv.slice(2);
