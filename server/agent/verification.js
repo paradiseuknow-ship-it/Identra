@@ -8,6 +8,11 @@ const contract = require('./verification/contract');
 // C124：存在性裁决的唯一实现下沉到共用原语（避免验证层与诊断层各留一份同义实现）。
 // verification.js 只保留调用点；新增/修改这里必然同步 test_c124 的跨层 parity 断言。
 const { matchContentLeaf } = require('./existence');
+// C125：业务子句判定（storage / url_pattern / login_state）的唯一实现下沉到共用模块。
+// 此前 verification.js 与 verificationIntelligence.js 各有一份 switch，覆盖面不一致：
+// 三个类型在诊断层落 default ⇒ 恒假 ⇒ 含这些子句的业务契约在诊断层结构性不可能成立。
+// 置信度随判定一并返回（它是裁决的一部分，分开摆必然再次各自漂移）。
+const clause = require('./verification/clause');
 
 // 关键业务动作：仅 action_success 不足以证明业务完成（Phase 11 P0）。
 function isKeyBusiness(t) {
@@ -21,36 +26,8 @@ const VERIFICATION_TYPES = [
 ];
 
 // C105 F3：URL 恒真判定的「表面键」——只取 host + pathname，query 一律不参与。
-// 背景（C105 实锤）：联盟落地页 before.url = webflowmarketingmain.com/fr?...&pscd=try.webflow.com
-// 旧实现整串 includes(expect) → query 参数 pscd=try.webflow.com 命中 expect「webflow.com」
-// → 真实点击 CTA 后成功导航到 webflow.com 的证据被 P2 守卫误判「动作前已成立」而拒绝，
-// 任务被拖入重试泥潭。query 是可被第三方注入的污染面，不构成「URL 表面已存在」的证据。
-function urlSurfaceKey(u) {
-  const s = String(u || '');
-  try {
-    const p = new URL(s);
-    return ((p.hostname || '').toLowerCase()) + (p.pathname || '/');
-  } catch (e) {
-    // 回归修订（R-F3）：URL 解析失败（如测试伪端口 http://127.0.0.1:PORT0/...）不得让
-    // P2 恒真守卫静默失效（返回 null → surfaceContains 恒 false → 守卫永远不触发）。
-    // 回退为「剥掉 query/hash 的原始串」——保持 F3 的核心语义（query 是可被第三方注入的
-    // 污染面，不参与恒真判定），同时对任意字符串都能给出确定性表面键。
-    return s.split('?')[0].split('#')[0];
-  }
-}
-
-// expect 在 URL 表面（host+pathname）上是否成立。expect 为完整 URL 时取其 host+path 再比对。
-function surfaceContains(url, expect) {
-  const surface = urlSurfaceKey(url);
-  if (!surface) return false;
-  const e = String(expect || '');
-  if (!e) return false;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(e)) {
-    const es = urlSurfaceKey(e);
-    return !!es && surface.includes(es);
-  }
-  return surface.includes(e);
-}
+// 背景与语义见 server/agent/verification/clause.js（C125 起唯一实现在此处委托）。
+const { urlSurfaceKey, surfaceContains } = clause;
 
 // C123：存在性索引（observation.contentLeaves）匹配。
 // ── C124 起实现移入 server/agent/existence.js ──────────────────────────────
@@ -187,75 +164,29 @@ function verify(v, after, before) {
       return { success: ok, confidence: ok ? 0.85 : 0.5, evidence };
     }
     case 'login_state': {
-      const loggedOut = /(sign in|log in|login|register|create account)/i.test(text);
-      const loggedIn = /(logout|sign out|my account|dashboard|welcome|profile)/i.test(text);
-      const ok = !loggedOut || loggedIn;
-      evidence.push(`文本登录态线索: 未登录=${loggedOut} 已登录=${loggedIn}`);
-      return { success: ok, confidence: ok ? 0.75 : 0.6, evidence };
+      // C125：判定下沉到 clause.js（诊断层共用同一份），此处只组装证据。
+      const r = clause.evalLoginState(text);
+      evidence.push(r.reason);
+      return { success: r.ok, confidence: r.confidence, evidence };
     }
     case 'storage': {
       // STEP 22 (V1)：真实页面 Web Storage 证据（登录态 / 业务状态持久化断言）。
       // 数据来自 observation.storage（页内只读真实采集），绝不从任务元数据推断成功。
-      // 缺 key → FAIL；值不匹配 → FAIL；观察层无 storage 数据（旧观察/采集失败）→ FAIL（fail-closed）。
-      // 子句形态：{ type:'storage', storageType:'localStorage'|'sessionStorage', key, equals? , exists? }
-      const st = (v && v.storageType) === 'sessionStorage' ? 'sessionStorage' : 'localStorage';
-      const key = String((v && v.key) || '');
-      const store = (after && after.storage && after.storage[st]) || null;
-      if (!key) {
-        evidence.push('storage: 子句缺少 key');
-        return { success: false, confidence: 0.5, evidence };
-      }
-      if (!store) {
-        evidence.push('storage: 观察结果不含 ' + st + ' 数据（观察层未采集或页面不可访问）');
-        return { success: false, confidence: 0.5, evidence };
-      }
-      const present = Object.prototype.hasOwnProperty.call(store, key);
-      if (v.equals !== undefined) {
-        const want = String(v.equals);
-        const actual = String(store[key]);
-        const ok = present && actual === want;
-        evidence.push(`storage: ${st}["${key}"] 实际="${actual.slice(0, 60)}" 期望="${want.slice(0, 60)}" → ${ok ? '匹配' : (present ? '不匹配' : '键不存在')}`);
-        return { success: ok, confidence: ok ? 0.95 : 0.6, evidence };
-      }
-      const wantExists = v.exists === undefined ? true : !!v.exists;
-      const ok = wantExists ? present : !present;
-      evidence.push(`storage: ${st}["${key}"] ${present ? '存在' : '不存在'}（期望${wantExists ? '存在' : '不存在'}）`);
-      return { success: ok, confidence: ok ? 0.85 : 0.6, evidence };
+      // 判定与 fail-closed 语义见 clause.js（C125 起唯一实现，诊断层共用）。
+      const r = clause.evalStorage(v, after);
+      evidence.push(r.reason);
+      return { success: r.ok, confidence: r.confidence, evidence };
     }
     case 'url_pattern': {
       // STEP 22 (V1)：基于真实 page.url() 的正则匹配（业务导航状态断言）。
       // 非法 pattern → 验证失败（fail-closed），绝不抛异常崩 Runtime。
       // 不改动既有 url_contains 行为；仅当 contract 显式声明本类型时生效。
-      const pat = (v && v.pattern) != null ? String(v.pattern) : '';
-      if (!pat) {
-        evidence.push('url_pattern: 缺少 pattern');
-        return { success: false, confidence: 0.5, evidence };
-      }
-      if (pat.length > 200) {
-        evidence.push('url_pattern: pattern 超长(>200)，拒绝评估');
-        return { success: false, confidence: 0.5, evidence };
-      }
-      let re = null;
-      try { re = new RegExp(pat); } catch (e) {
-        evidence.push('url_pattern: 非法正则 "' + pat.slice(0, 80) + '" → 验证失败（fail-closed）');
-        return { success: false, confidence: 0.5, evidence };
-      }
-      let ok = false;
-      try { ok = re.test(url); } catch (e) { ok = false; }
-      // P2 无效证据守卫（与 url_contains 同理）：pattern 在 before url 上已匹配 = 恒真证据。
-      // C105 F3：匹配只在 URL 表面（host+pathname）上进行 —— query 注入（如 pscd=域名）
-      // 不构成「动作前已成立」的证据。
-      if (ok && before && before.url && pat) {
-        let preHit = false;
-        const preSurface = urlSurfaceKey(before.url);
-        try { preHit = preSurface ? re.test(preSurface) : false; } catch (e) { preHit = false; }
-        if (preHit) {
-          evidence.push('P2 无效证据守卫: url_pattern 在动作执行前已匹配（before url 表面=' + (preSurface || String(before.url)) + '，恒真证据与本次动作无因果），不能作为本动作成功的证明');
-          return { success: false, confidence: 0.7, evidence, invalidEvidence: 'precondition_true' };
-        }
-      }
-      evidence.push(`url_pattern: url=${url} ${ok ? '匹配' : '不匹配'} /${pat.slice(0, 80)}/`);
-      return { success: ok, confidence: ok ? 0.95 : 0.7, evidence };
+      // 判定、长度上限、非法正则 fail-closed、P2 无效证据守卫全部见 clause.js（C125 起唯一实现）。
+      const r = clause.evalUrlPattern(v, after, before);
+      evidence.push(r.reason);
+      const out = { success: r.ok, confidence: r.confidence, evidence };
+      if (r.invalidEvidence) out.invalidEvidence = r.invalidEvidence;
+      return out;
     }
     case 'page_change': {
       if (!before) {

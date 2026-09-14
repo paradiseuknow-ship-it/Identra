@@ -19,6 +19,10 @@
 //   { decision, failureType, confidence, evidence }
 
 const semanticResolver = require('../semanticResolver');
+// C125：storage / url_pattern / login_state 的判定与验证引擎共用同一份实现。
+// 此前本文件的 clausePresent 缺这三个分支 ⇒ 落 default:false ⇒ 含它们的业务契约在
+// 诊断层结构性不可能成立（与 C124 D1 同族），真实达成也无法识别 ⇒ 误升级人工。
+const clause = require('./clause');
 // C124：存在性裁决共用 verification.js 的同一份实现。
 // 本文件此前自带一份（elements 池子串 / 裸 resolver），与 verification.js 在
 // ① element_present 分支缺失（恒 false）② div/span 无存在性索引（假「已消失」）
@@ -275,6 +279,18 @@ function clausePresent(cl, after, before) {
       const checked = !!st.checked;
       return (want === 'unchecked') ? !checked : checked;
     }
+    // C125：以下三个分支此前缺失 ⇒ 落 default:false（恒假）。
+    // 危害方向：businessStatePresent 用于 4b「期望业务结果其实已达成 ⇒ TOO_STRICT」，
+    // 恒假 ⇒ AND 契约只要含其中任一条就永远走不到 4b ⇒ 真实成功被 4c 判「证据不足」
+    // 升级人工（HUMAN_ESCALATION 上升）。与 C124 D1（element_present 恒假）完全同族。
+    // 主链路实证：planner 契约文本明确引导 LLM 产出 storage/login_state/url_pattern
+    // （planner.js:86/103）；skillBuilder.js:284/369 直接产出 url_pattern 作为 observable。
+    // 注意：login_state 的 4c 兜底只覆盖 expectedVerification.type 这一条路径，
+    // businessState.requiredEvidence 里的 login_state 到不了 4c —— 同文件内的不对称（L6）。
+    case 'login_state': return clause.evalLoginState(text).ok;
+    case 'storage': return clause.evalStorage(cl, after).ok;
+    // before 一并传入 ⇒ P2 无效证据守卫（动作前已匹配的恒真证据不算存在）与验证引擎同口径。
+    case 'url_pattern': return clause.evalUrlPattern(cl, after, before).ok;
     default: return false;
   }
 }
