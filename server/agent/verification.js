@@ -5,6 +5,9 @@
 
 const semanticResolver = require('./semanticResolver');
 const contract = require('./verification/contract');
+// C124：存在性裁决的唯一实现下沉到共用原语（避免验证层与诊断层各留一份同义实现）。
+// verification.js 只保留调用点；新增/修改这里必然同步 test_c124 的跨层 parity 断言。
+const { matchContentLeaf } = require('./existence');
 
 // 关键业务动作：仅 action_success 不足以证明业务完成（Phase 11 P0）。
 function isKeyBusiness(t) {
@@ -49,21 +52,15 @@ function surfaceContains(url, expect) {
   return surface.includes(e);
 }
 
-// C123：存在性索引（observation.contentLeaves）匹配的**唯一实现**。
+// C123：存在性索引（observation.contentLeaves）匹配。
+// ── C124 起实现移入 server/agent/existence.js ──────────────────────────────
+// 原因：同一份「存在性语义」在 verificationIntelligence.js 里还有第二份实现（clausePresent /
+// expectedActuallyPresent），它没有 contentLeaves 回落、也缺 element_present 分支 ⇒
+// 验证层说「存在」、诊断层说「不存在」。修法是抽共用原语而非在第二个文件里再抄一遍。
 // element_present 与 element_absent 必须共用同一函数 —— 只给其中一个回落，就会制造
 // 「present 说在、absent 也说不在」的形式矛盾（L6：绝不留第二份同义实现）。
 // 索引按**叶子文本元素**粒度采集（observation.js），因此这是元素级证据，
 // 不是「整页文本 substring」那种退化判定。
-function matchContentLeaf(after, expect) {
-  const e = String(expect || '').replace(/\s+/g, ' ').trim().toLowerCase();
-  if (e.length < 2) return null;
-  const leaves = (after && after.contentLeaves) || [];
-  for (const lf of leaves) {
-    const t = String((lf && lf.text) || '').replace(/\s+/g, ' ').toLowerCase();
-    if (t && t.includes(e)) return lf;
-  }
-  return null;
-}
 
 // 输入：{ verification: {type, expect}, after: observation, before?: observation }
 // 输出：{ success, confidence, evidence[] }

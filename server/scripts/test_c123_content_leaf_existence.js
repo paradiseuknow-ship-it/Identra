@@ -105,7 +105,17 @@ function serve() {
   const callSites = vsrc.split('\n').filter((l) => !/function matchContentLeaf/.test(l)).join('\n');
   const nPresent = (callSites.match(/matchContentLeaf\(after, expect\)/g) || []).length;
   ok(nPresent === 2, 'E1 present 与 absent 共用同一 matchContentLeaf 回落（各一次调用，共 2 处）', 'n=' + nPresent);
-  ok(/function matchContentLeaf\(/.test(vsrc), 'E2 回落实现是唯一函数（非内联重复逻辑）');
+  // C124 锚点上移（不降标准）：实现从 verification.js 下沉为全仓唯一共用原语 existence.js，
+  // verification.js 与 verificationIntelligence.js 只能委托调用 —— 两个消费层各留一份
+  // 正是本批修掉的 L6 不对称，故此处从「本文件内的唯一函数」加严为「全仓唯一 + 两处委托」。
+  const xsrc = fs.readFileSync(path.join(ROOT, 'server/agent/existence.js'), 'utf8');
+  const isrc2 = fs.readFileSync(path.join(ROOT, 'server/agent/verification/verificationIntelligence.js'), 'utf8');
+  ok((xsrc.match(/function matchContentLeaf\(/g) || []).length === 1,
+    'E2 回落实现在全仓唯一（existence.js 定义且仅定义一次）');
+  ok(!/function matchContentLeaf\(/.test(vsrc) && /require\('\.\/existence'\)/.test(vsrc),
+    'E2b verification.js 只委托、不再自带实现');
+  ok(!/function matchContentLeaf\(/.test(isrc2) && /require\('\.\.\/existence'\)/.test(isrc2),
+    'E2c verificationIntelligence.js 只委托、不再自带实现');
   ok(/out\.contentLeaves = leaves;/.test(osrc), 'E3 observation 采集产出 contentLeaves');
   ok(/contentLeaves: \(data\.contentLeaves \|\| \[\]\)\.slice\(0, 40\)/.test(osrc), 'E4 inspect 侧限量 40（容量受控）');
   ok(/MAX_LEAVES = 40/.test(osrc), 'E5 页面内采集限量 40');

@@ -19,6 +19,12 @@
 //   { decision, failureType, confidence, evidence }
 
 const semanticResolver = require('../semanticResolver');
+// C124：存在性裁决共用 verification.js 的同一份实现。
+// 本文件此前自带一份（elements 池子串 / 裸 resolver），与 verification.js 在
+// ① element_present 分支缺失（恒 false）② div/span 无存在性索引（假「已消失」）
+// 两处分歧 —— 同一份语义两份答案是典型 L6 不对称。此后一律走共用原语。
+const existence = require('../existence');
+const elementExists = (after, expect, opts) => existence.elementExists(after, expect, semanticResolver.resolve, opts);
 
 // failureType 枚举
 const FAILURE_TYPES = {
@@ -185,8 +191,16 @@ function expectedActuallyPresent(expectedVerification, afterObservation) {
     return url.includes(String(expect).toLowerCase());
   }
   if (type === 'element_present' && expect) {
-    const pool = (afterObservation.elements || []).map((e) => [e.text, e.placeholder, e.ariaLabel, e.label, e.innerText, e.roleText].join(' ')).join(' ').toLowerCase();
-    return pool.includes(String(expect).toLowerCase());
+    // C124：改走共用原语的 loose 档。
+    // loose 是**有意的**更宽口径 —— 本函数回答的是「页面上有没有字面痕迹（说明验证规则写得过严）」，
+    // 不是「元素存在与否」的成功裁决，所以允许单元素字段子串这种弱信号。
+    // 但必须走同一份实现：旧的代码在这里把整页 elements 的所有字段串成一条字符串再 includes，
+    // 语义作用域是「整页面」而不是「某个元素」，且逐字 includes 不折叠空白 —— 元素文本自带
+    // 换行/多空格时，视觉上完全相同的 expect 反而匹配不上。共用原语改为按单元素各自拼接
+    // 并统一折叠空白，同时补上 contentLeaves 存在性索引。
+    // 注（核查结论，勿夸大成 bug）：旧口径的元素间接缝恒含 ≥6 个空白，要跨元素误命中须 expect
+    // 自带同样长的空白串，现实不可达 —— 所以本批**不声称**修掉了跨元素假阳性。
+    return elementExists(afterObservation, expect, { loose: true }).found;
   }
   // businessState 契约：委托 businessStatePresent 做精准判定（B2 真实归因）
   if (expectedVerification.businessState) {
@@ -207,13 +221,36 @@ function clausePresent(cl, after, before) {
     case 'text_absent': return !cl.expect || !text.includes(String(cl.expect).toLowerCase());
     case 'url_contains': return !!cl.expect && url.includes(String(cl.expect).toLowerCase());
     case 'page_change': {
+      // C124 D5：两侧必须**同口径构造**。旧实现 after 侧是
+      // `(visibleText||textSummary) + ' ' + (roleText||'')`、before 侧是不带 roleText 的裸串 ——
+      // roleText 为空时 after 恒比 before 多一个尾随空格 ⇒ 两侧永不可能相等 ⇒
+      // 只要 before 的文本非空，page_change 子句**恒真** ⇒ 任何含该子句的 OR 契约都被判「已达成」
+      // ⇒ VIL 恒谎报业务结果达成。同一组完全相同的观察，verification.js 判「未变化」而 VIL 判
+      // 「已变化」—— 与本次 D1/D2 同源的跨层口径分歧。
+      // 这里两侧都按同一构造函数 + 同一归一化（折叠空白并去首尾）后再比较。
       const b = before || {};
-      const bText = (b.visibleText || b.textSummary || '').toLowerCase();
-      return (b.url && b.url !== url) || (bText && bText !== text);
+      const sideText = (o) => existence.normalizeText((o && (o.visibleText || o.textSummary) || '') + ' ' + (o && o.roleText || ''));
+      const bText = sideText(b);
+      const aText = sideText(after);
+      return (b.url && b.url !== url) || (!!bText && bText !== aText);
     }
+    // C124 D1：此前**没有** element_present 分支 ⇒ default 返回 false ⇒
+    // 任何 requiredEvidence 含 element_present 的业务契约在 VIL 里结构性不可能成立。
+    // 而 planner 契约文本（planner.js P3/P6）明确鼓励把 element_present 写进 requiredEvidence，
+    // contract.deriveContract 对 SEARCH_SUCCESS 也直接产出该子句 —— 缺口落在主链路上。
+    // 存在性通道不得施加可操作性否决（C105 M3），故 requireActionable:false。
+    case 'element_present': {
+      const t = cl.expect || '';
+      return !!t && elementExists(after, t, { requireActionable: false }).found;
+    }
+    // C124 D2/D4：原实现是 semanticResolver.resolve(t, after).length === 0 —— 两份缺陷叠加：
+    //   ① 缺 contentLeaves ⇒ 目标以 div/span 形态**仍在页面上**时判「已消失」，
+    //      于是 TOO_STRICT 误判为「业务结果其实达成了」（假阳性成功证据）；
+    //   ② 存在性通道施加了 actionable 否决（C105 M3 明令禁止），进一步放大 ①。
+    // 必须与 verification.js 的 element_absent 同口径：共用原语 + requireActionable:false。
     case 'element_absent': {
       const t = cl.expect || '';
-      return t ? semanticResolver.resolve(t, after).length === 0 : false;
+      return !!t && !elementExists(after, t, { requireActionable: false }).found;
     }
     case 'field_value': {
       const tgt = cl.target || cl.expect || '';
