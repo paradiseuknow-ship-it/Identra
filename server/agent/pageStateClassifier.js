@@ -93,8 +93,34 @@ function elHaystack(el) {
   ).toLowerCase();
 }
 
+// ── 输入形状契约（C128 A1）──────────────────────────────────────────────────
+// 本函数的入参是 `extractText(obs)` 的**抽取形状** `{ text, url, elements }`，
+// **不是**原始 observation —— 原始观测没有 `text` 字段（observation.js:64 的 out 初值表里
+// 只有 textSummary / visibleText / roleText）。
+//
+// 为什么把契约写成显式断言：下游 contextGuard 的「兜底现算」会 catch 本函数抛出的异常。
+// 没有断言时，形状用错表现为 `text.toLowerCase()` 的**裸 TypeError**，被下游 catch 静默吞掉
+// ⇒ 症状变成「能力集合为空」，而空集在守卫里是 fail-open 的合法输入 ⇒ **无痕、不报错**。
+// 带上 code 的错误让「形状用错」可归因（C127 §V.2 同族：错误被静默吸收）。
+const SHAPE_ERROR_CODE = 'E_CAPABILITY_SHAPE';
+
+function assertExtractedShape(obs) {
+  if (!obs || typeof obs !== 'object' || typeof obs.text !== 'string') {
+    const e = new TypeError(
+      'detectCapabilities 需要 extractText(obs) 的抽取形状 { text, url, elements }；实际收到 '
+      + (obs === null ? 'null' : typeof obs)
+      + (obs && typeof obs === 'object' && !('text' in obs)
+        ? '（对象缺 text 字段 —— 原始 observation 正是这种形状）' : '')
+      + '。请先调用 pageStateClassifier.extractText（C128 A1）'
+    );
+    e.code = SHAPE_ERROR_CODE;
+    throw e;
+  }
+}
+
 // ── 能力标签识别（结构性证据优先于文本关键词）──────────────────────────────
 function detectCapabilities(obs, state) {
+  assertExtractedShape(obs);
   const { text, url, elements } = obs;
   const low = text.toLowerCase();
   const caps = new Set();
@@ -244,4 +270,7 @@ function toBucket(state) {
   return STATE_LABEL[state] || STATE_LABEL.GENERIC;
 }
 
-module.exports = { classify, extractText, detectCapabilities, toBucket, STATE_LABEL, STATES };
+module.exports = {
+  classify, extractText, detectCapabilities, assertExtractedShape, SHAPE_ERROR_CODE,
+  toBucket, STATE_LABEL, STATES,
+};

@@ -39,6 +39,10 @@ const store = require('../store');
 const lifecycle = require('./skillLifecycle');
 const builder = require('./skillBuilder');
 const { normalizeGoal } = require('../intelligence/flowSchema');
+// C128 B3：页面文本唯一口径（server/agent/pageText.js）。
+// 本文件此前为 `text_present` 自建了一份同义实现（拼 textSummary + visibleText），
+// 是「同一语义两份实现」的同族事故（L6/L12）—— 已收敛为委托，见 clauseVerdict。
+const { pageText } = require('../pageText');
 
 const ROUTING_COLLECTION = 'aiSkillRouting';
 const SKILL_COLLECTION = builder.SKILL_COLLECTION;
@@ -171,7 +175,11 @@ function clauseVerdict(clause, obs) {
   }
 
   if (type === 'text_present') {
-    const text = [obs && obs.textSummary, obs && obs.visibleText].filter((x) => typeof x === 'string' && x).join(' ');
+    // C128 B3：文本构造走唯一口径（pageText.js）—— 此前是本文件**自建的同义实现**
+    // （`[obs.textSummary, obs.visibleText]` 拼串），是 L6/L12「同一语义两份实现」的同族事故：
+    // 既不认历史快照形状（visibleTexts 复数 / 单数 text），也与 clause.js 的 text_present 分叉。
+    // 判定**策略**不变（三态：文本为空 ⇒ INDETERMINATE），expect 的归一化口径（norm）也不变。
+    const text = pageText(obs);
     if (!text.trim()) return CLAUSE_VERDICT.INDETERMINATE;
     const e = norm(clause.expect);
     if (!e) return CLAUSE_VERDICT.INDETERMINATE;

@@ -9,11 +9,19 @@ const failureSnapshot = require('../recovery/failureSnapshot');
 const memory = require('../memory');
 const diagnosisSchema = require('./diagnosisSchema');
 const diagnosisPrompt = require('./diagnosisPrompt');
+// C128 B1：页面文本唯一口径（server/agent/pageText.js）——
+// 本模块此前直读 `observation.textSummary`，是 C126/C127 收口后剩下的少数派。
+const { pageText, pageTextLines } = require('../pageText');
 
 // 确定性兜底：基于分类 + 观察文本的启发式（保证无 key 也可用）
 function fallbackDiagnosis({ classifier, failure, observation, step }) {
-  const text = (observation && observation.textSummary) || '';
-  const low = text.toLowerCase();
+  // C128 B1：页面文本走**唯一口径**（server/agent/pageText.js），不再直读 `textSummary`。
+  // 改前只读 textSummary = 前 120 个筛选元素的文本（截断 5000）；页脚/横幅/弹层里的
+  // 「session expired / cookie / 403」提示落在窗口外时，下面三条判定**恒不命中**，
+  // 兜底只能回落 to classifier.type —— 与验证层/诊断层其余消费方（读全文）口径分叉（C126 同族）。
+  // 口径分层（pageText.js 的规则）：判定用归一化全文；取证行保留原始大小写。
+  const lines = pageTextLines(observation);
+  const low = pageText(observation);
   const url = failure.url || '';
   let category = classifier.type;
   const facts = [];
@@ -34,7 +42,7 @@ function fallbackDiagnosis({ classifier, failure, observation, step }) {
   } else if (/session expired|please login|please sign in|log in again|login again|your session/i.test(low)) {
     category = 'SESSION_EXPIRED';
     facts.push('页面出现登录/会话失效提示');
-    evidence.push(`可见文本片段: ${text.slice(0, 100)}`);
+    evidence.push(`可见文本片段: ${(lines[0] || '').slice(0, 100)}`);
     inference = '会话已过期，需要重新登录';
     recommendation = '若已配置凭据，执行重新登录后回到目标页';
   } else if (/cookie|consent|accept all|reject all|accept cookies/i.test(low)) {

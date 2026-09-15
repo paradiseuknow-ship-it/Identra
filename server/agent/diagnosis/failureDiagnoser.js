@@ -33,6 +33,11 @@
 const detector = require('../network/businessErrorDetector');
 // CAP-L2：支付五态（authorized / declined / 3ds_challenge / pending / failed）
 const paymentStateClassifier = require('../paymentStateClassifier');
+// C128 B2：页面文本唯一口径（server/agent/pageText.js）。
+// 本模块此前自行挑字段（`obs.textSummary || obs.visibleText`），而这两个字段
+// 是**判定**消费方（businessErrorDetector 的 PAGE_TEXT_* / paymentStateClassifier）
+// 的唯一文本输入 —— 口径必须是页面全文，不能是「前 120 个筛选元素」。
+const { pageText } = require('../pageText');
 
 // 业务/HTTP 诊断码 → 重试策略
 const RETRY_POLICY_BY_CODE = {
@@ -343,7 +348,10 @@ function fromObservation(error, category, observation, extra = {}) {
     network: obs.network || null,
     // Phase 15.0（GAP-1）：observation.inspect 携带的 challenge 检测结果
     challenge: obs.challenge || null,
-    pageText: obs.textSummary || obs.visibleText || '',
+    // C128 B2：页面文本走唯一口径（页面全文 = textSummary + visibleText，归一化），
+    // 不再由本模块自行挑字段。下游两个判定消费方（businessErrorDetector 的 PAGE_TEXT_*、
+    // paymentStateClassifier）的正则全带 /i，只依赖文本内容，不依赖大小写。
+    pageText: pageText(obs),
     pageState: extra.pageState || null,
     diff: obs.previousObservationDiff || extra.diff || null,
     attempted: extra.attempted !== false,

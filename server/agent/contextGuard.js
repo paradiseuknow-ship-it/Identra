@@ -130,6 +130,33 @@ function deriveActionGoal(action) {
   return null;
 }
 
+// ── 兜底失败留痕（C128 A1）──────────────────────────────────────────────────
+// 兜底**必须**保持 fail-open（能力证据不足时放行 = 避免过度阻断的关键闸门，见文件头「保守原则」），
+// 但**不得静默**：改前 `catch (e) { /* 兜底失败即视为无能力证据 */ }` 把「形状契约违反」
+// 与「真的没有能力证据」压成同一个返回值 `[]`，于是本条兜底在生产上**恒返回 []**
+// 却没有任何痕迹可查（C127 §V.2 同族：错误被静默吸收）。
+// 现在：保留 fail-open，同时把失败记入有界环形（内存态，不落盘、不进存储治理三表）。
+const MAX_FALLBACK_ERRORS = 20;
+const CAPABILITY_FALLBACK_ERRORS = [];
+
+function recordCapabilityFallbackError(err) {
+  CAPABILITY_FALLBACK_ERRORS.push({
+    at: Date.now(),
+    code: (err && err.code) || 'E_CAPABILITY_FALLBACK',
+    message: String((err && err.message) || err).slice(0, 200),
+  });
+  while (CAPABILITY_FALLBACK_ERRORS.length > MAX_FALLBACK_ERRORS) CAPABILITY_FALLBACK_ERRORS.shift();
+}
+
+// 最近若干条兜底失败（归因用；顺序 = 发生顺序）
+function capabilityFallbackErrors() {
+  return CAPABILITY_FALLBACK_ERRORS.slice();
+}
+
+function resetCapabilityFallbackErrors() {
+  CAPABILITY_FALLBACK_ERRORS.length = 0;
+}
+
 // 解析能力标签：优先取分类器输出；观察可得时兜底现算（分类器不依赖本模块，无循环依赖）
 function resolveCapabilities(pageState, opts) {
   if (pageState && Array.isArray(pageState.capabilities) && pageState.capabilities.length) {
@@ -137,13 +164,18 @@ function resolveCapabilities(pageState, opts) {
   }
   const obs = opts && opts.observation;
   if (obs && typeof obs === 'object') {
+    const st = (pageState && pageState.state) || 'GENERIC';
     try {
       const classifier = require('./pageStateClassifier');
-      if (typeof classifier.detectCapabilities === 'function') {
-        const st = (pageState && pageState.state) || 'GENERIC';
-        return classifier.detectCapabilities(obs, st);
-      }
-    } catch (e) { /* 兜底失败即视为无能力证据 */ }
+      // ★ C128 A1：`detectCapabilities` 的契约入参是 `extractText(obs)` 的**抽取形状**
+      //   `{ text, url, elements }`，**不是**原始 observation —— 原始观测没有 `text` 字段
+      //   （observation.js:64 的 out 初值表）。改前直接传 `obs` ⇒ `text.toLowerCase()`
+      //   抛 TypeError 被下面的 catch 吞掉 ⇒ 本条兜底**恒返回 []**（死兜底，从未生效过一次）。
+      return classifier.detectCapabilities(classifier.extractText(obs), st);
+    } catch (e) {
+      // 兜底异常仍按「无能力证据」处理（fail-open 不放宽也不收紧），但留痕可归因。
+      recordCapabilityFallbackError(e);
+    }
   }
   return [];
 }
@@ -244,6 +276,10 @@ function guard(action, pageState, opts) {
 module.exports = {
   guard,
   deriveActionGoal,
+  resolveCapabilities,
+  capabilityFallbackErrors,
+  resetCapabilityFallbackErrors,
+  MAX_FALLBACK_ERRORS,
   ACTION_CAPABILITY_REQUIREMENT,
   ELEMENT_ACTIONS,
   PAGE_TRANSITION_ACTIONS,
