@@ -29,6 +29,13 @@ const clause = require('./clause');
 // 两处分歧 —— 同一份语义两份答案是典型 L6 不对称。此后一律走共用原语。
 const existence = require('../existence');
 const elementExists = (after, expect, opts) => existence.elementExists(after, expect, semanticResolver.resolve, opts);
+// C133：契约求值收口到唯一实现 verification/contract.js（纯模块，无循环 require ——
+// 其头部自述 "does not import verification.js (avoids a circular require)"）。
+// 本文件此前的 businessStatePresent 是 evaluateContract 的**第二份实现**，且**完全缺
+// forbidden 通道** ⇒ 同一份合约 + 同一对 before/after，裁决面判「硬失败（禁止证据命中）」
+// 而诊断面判「期望业务结果其实已达成」⇒ VERIFICATION_TOO_STRICT + RETRY_VERIFY
+// （把「页面出现错误信号」的真实失败说成「验证规则太严」）。
+const contractLib = require('./contract');
 
 // failureType 枚举
 const FAILURE_TYPES = {
@@ -338,15 +345,34 @@ function clausePresent(cl, after, before) {
   }
 }
 
-// 业务态契约是否在 after 中真实达成（按 evidenceLogic OR/AND 组合 requiredEvidence）。
+// 业务态契约是否在 after 中真实达成。
+//
+// C133：**委托唯一实现** contract.evaluateContract，本文件不再保留第二份契约组合逻辑。
+// 改前形态（逐条 requiredEvidence 按 evidenceLogic 组合，无 forbidden 概念）的实测后果：
+// 同一份合约 + 同一对 before/after ——
+//   A 裁决面 verification.js:verify → evaluateContract :260-267「Forbidden evidence: ANY
+//     match => hard fail (never override)」⇒ success=false，confidence 0.95，带 forbiddenHit；
+//   C 诊断面 本函数 ⇒ 期望业务结果「已达成」⇒ 4b 报 VERIFICATION_TOO_STRICT + RETRY_VERIFY。
+//   ⇒ 把「页面出现错误信号」的真实失败诊断为「验证规则太严」，并交给 repair 找替代态。
+// 权威依据（消费方契约，代码自身声明）：verification/verificationWindow.js:47 注释
+//   「完整契约（含 requiredEvidence / stateType）直接透传，走 evaluateContract
+//    （含 forbidden / AND-OR 语义）」；contract.js:5-6 自述 "The single source of truth
+//    for 'did the BUSINESS outcome complete'"。
+// 面基数：DERIVABLE 10 个动作类型中 4 个带 forbiddenEvidence（login/logout/search/submit）
+//   ⇒ 100% 落在分歧面内，非边角。
+// 口径保持：clauseVerify 注入本文件 clausePresent（**诊断层逐子句第二意见**不变），
+//   element_present 沿用 requireActionable:false（与裁决面 clausePresent 支同口径）；
+//   不改用 verification.js:verify 的全量 switch —— 否则会引入新的口径差。
+// 收口后一并继承：forbidden 硬失败 / normalizeContract（含 timeout clamp、缺省 AND）/
+//   allowedAlternatives 递归 OR（★对诊断层是**新增能力**，非等价替换，见 C133 报告）。
 function businessStatePresent(contract, after, before) {
   if (!contract || !after) return false;
-  const clauses = contract.requiredEvidence || [];
-  if (!clauses.length) return false;
-  const logic = contract.evidenceLogic === 'OR' ? 'OR' : 'AND';
-  let matched = 0;
-  for (const cl of clauses) if (clausePresent(cl, after, before)) matched++;
-  return logic === 'OR' ? matched > 0 : matched === clauses.length;
+  const r = contractLib.evaluateContract(contract, after, before, (cl, a, b) => ({
+    success: clausePresent(cl, a, b),
+    confidence: 0,
+    evidence: [],
+  }));
+  return !!r.success;
 }
 
 // B2：动作成功但目标字段为空（值未真正写入）→ 真实动作失败，应 RE_EXECUTE 而非 RECHECK。
