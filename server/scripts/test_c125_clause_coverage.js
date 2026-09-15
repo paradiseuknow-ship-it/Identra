@@ -206,9 +206,29 @@ ok((vSrc.match(/new RegExp\(/g) || []).length === 0, 'E5 url_pattern 编译不�
 // 三值裁决），验证引擎用 **pattern** 字段且匹配完整 url —— 这是两层的字段与语义约定不同，
 // **不得顺手做 expect 兜底**：skillBuilder.js:369 的默认模式是 '/'，正则 '/' 在任意 url 上
 // 都命中 ⇒ 一旦兼容就会把恒假翻成恒真（伪造成功）。故登记为有意不兼容，并守护住。
+//
+// ⚠️ C131 修订：原断言是**全文件** `!/v\.expect/`。C131 新增 `evalUrlContains(cl,...)`
+//    后该断言变**过宽**并假红 —— `url_contains` 子句的字段名**本来就叫 `expect`**
+//    （契约 `{type:'url_contains', expect}`，见 deriveContract / planner.js:86），
+//    与 skill 层 url_pattern 的 `expect` 是**同名字段、不同子句**。
+//    ⇒ 锚定到**该断言真正要守的那一个函数体**（evalUrlPattern），判据不变、作用域收敛：
+//    禁止的是「url_pattern 兼容 expect」，不是「全文件出现 expect 字样」。
+//    防真空：E7 仍要求 url_pattern 只读 pattern；此处另加「evalUrlContains 必须读 expect」
+//    的**正向**断言，确保收敛不是靠删代码达成。
 const clauseSrc = stripComments(fs.readFileSync(path.join(ROOT, 'server', 'agent', 'verification', 'clause.js'), 'utf8'));
-ok(!/v\.expect/.test(clauseSrc),
-  'E6 clause.js 不得兼容 skill 层的 expect 字段（skill 默认模式 "/" 会让 url_pattern 恒真）');
+const clauseFnBody = (name) => {
+  const m = clauseSrc.match(new RegExp('function\\s+' + name + '\\b[\\s\\S]*?\\n\\}'));
+  return m ? m[0] : '';
+};
+const urlPatternBody = clauseFnBody('evalUrlPattern');
+ok(urlPatternBody.length > 0, 'E6a 锚点定位：clause.js 的 evalUrlPattern 函数体已定位到（锚点失配即红）');
+ok(!/v\.expect|cl\.expect/.test(urlPatternBody),
+  'E6 clause.js 的 **url_pattern** 不得兼容 skill 层的 expect 字段'
+  + '（skill 默认模式 "/" 会让 url_pattern 恒真）',
+  'bodyHasExpect=' + /v\.expect|cl\.expect/.test(urlPatternBody));
+ok(/v\.expect/.test(clauseFnBody('evalUrlContains')),
+  'E6c 正向：clause.js 的 evalUrlContains **必须**读 expect 字段'
+  + '（url_contains 的契约字段名就是 expect；防 E6 收敛后因删字段而真空成立）');
 ok(/v\.pattern/.test(clauseSrc), 'E7 url_pattern 只读 pattern 字段（字段约定与 skill 层有意分离）');
 
 // ── F 组：主链路实证（这些类型真的会被产出，不是纸面类型）───────────────────────

@@ -27,7 +27,9 @@ const VERIFICATION_TYPES = [
 
 // C105 F3：URL 恒真判定的「表面键」——只取 host + pathname，query 一律不参与。
 // 背景与语义见 server/agent/verification/clause.js（C125 起唯一实现在此处委托）。
-const { urlSurfaceKey, surfaceContains } = clause;
+// C131：原 `const { urlSurfaceKey, surfaceContains } = clause;` 已删除 ——
+// url_contains 的 P2 守卫搬入 clause.evalUrlContains（唯一实现）后，本文件不再直接
+// 消费这两个原语。保留会形成「看起来还在用 P2」的伪痕迹（L3：不留过时断言/死引用）。
 
 // C123：存在性索引（observation.contentLeaves）匹配。
 // ── C124 起实现移入 server/agent/existence.js ──────────────────────────────
@@ -67,19 +69,18 @@ function verify(v, after, before) {
 
   switch (type) {
     case 'url_contains': {
-      const ok = !!expect && url.includes(String(expect));
-      // P2 无效证据守卫：URL 条件若在动作执行前（before 观察）已经成立，
-      // 则它是「恒真证据」——与本次动作的因果无关，不能单独作为本动作成功的证明。
-      // 背景（2026-08-31 run6 实证）：/saas/login.html 上 url_contains "saas" 恒真，
-      // 错误凭据也被判 SUCCESS（假阳性）。守卫只拒绝「无效证据」，不改变 Success Definition。
-      // C105 F3：恒真判定只在 URL 表面（host+pathname）上进行，query 不参与 ——
-      // pscd=try.webflow.com 这类第三方注入的 query 参数不能把真导航证据误判为恒真。
-      if (ok && before && before.url && surfaceContains(before.url, expect)) {
-        evidence.push('P2 无效证据守卫: url 条件在动作执行前已成立（before url 表面=' + (urlSurfaceKey(before.url) || String(before.url)) + ' 已包含 "' + String(expect) + '"，恒真证据与本次动作无因果），不能作为本动作成功的证明');
-        return { success: false, confidence: 0.8, evidence, invalidEvidence: 'precondition_true' };
+      // C131：本判定的**唯一实现**已下沉到 clause.evalUrlContains（含 P2 无效证据守卫）。
+      // 改前本处内联裸 includes + P2，而 VIL 的 url_contains 分支（:248）与
+      // expectedActuallyPresent（:206）各自内联了一份**不带 P2** 的裸 includes ⇒
+      // 同一 clause + 同一 before/after，裁决面说 false（precondition_true）而诊断面
+      // 说 true ⇒ 4b 误报 VERIFICATION_TOO_STRICT。三处现统一委托同一实现（L6/L15）。
+      // 本处行为**逐字不变**（P2 语义与证据文案原样搬移，方向=未动），仅消除第二份实现。
+      const r = clause.evalUrlContains(v, after, before);
+      evidence.push(r.reason);
+      if (r.invalidEvidence) {
+        return { success: false, confidence: r.confidence, evidence, invalidEvidence: r.invalidEvidence };
       }
-      evidence.push(`url=${url} ${ok ? '包含' : '不包含'} "${expect}"`);
-      return { success: ok, confidence: ok ? 0.95 : 0.8, evidence };
+      return { success: r.ok, confidence: r.confidence, evidence };
     }
     case 'text_present': {
       // C126：证据源从 `textSummary`（前 120 个筛选元素，截断 5000）改为**可见文本全量**

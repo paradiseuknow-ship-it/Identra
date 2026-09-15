@@ -178,8 +178,11 @@ const MATRIX = [
   const ANCHORS = [
     {
       f: 'server/agent/verification.js', name: 'A 裁决面',
-      shape: /case 'url_contains':[\s\S]{0,120}?url\.includes\(/,
-      revert: null, // 本批一字未改 ⇒ 无回退形态
+      // C131 修订：A 裁决面此前是**内联** `url.includes(`。C131 把 P2 守卫下沉到
+      // clause.evalUrlContains（唯一实现）⇒ 本处改为委托。锚点从「内联 includes 形状」
+      // 升级为「分支存在 + 委托唯一实现」——不变量（裁决面必须走同一份实现）不变，形态解耦。
+      shape: /case 'url_contains':[\s\S]{0,600}?(clause\.evalUrlContains\(v, after, before\)|url\.includes\()/,
+      revert: null, // 本批一字未改语义 ⇒ 无回退形态
     },
     {
       f: 'server/agent/skill/skillRouter.js', name: 'B skill 前置态',
@@ -209,7 +212,11 @@ const MATRIX = [
     },
     {
       f: 'server/agent/verification/verificationIntelligence.js', name: 'C4 VIL clausePresent 判定',
-      shape: /case 'url_contains': return !!cl\.expect && url\.includes\(String\(cl\.expect\)\);/,
+      // C131 修订：C4 的 C130 形态（裸 includes，无 P2）**本身**已构成新缺陷（缺 P2 无效证据
+      // 守卫 ⇒ 与 A 裁决面跨层相反答案）。C131 改为委托 clause.evalUrlContains。
+      // shape 升级为「分支存在且已委托」；revert 保留 C130 之前的大小写折叠形态（仍须咬住）。
+      // ⇒ 大小写轴的不变量由 shape 中的 `(?!.*toLowerCase)` + A3b 片段扫描继续守住。
+      shape: /case 'url_contains': return clause\.evalUrlContains\(cl, after, before\)\.ok;/,
       revert: /case 'url_contains': return !!cl\.expect && url\.includes\(String\(cl\.expect\)\.toLowerCase\(\)\);/,
     },
   ];
@@ -316,8 +323,13 @@ ok(/\(\(p\.hostname \|\| ''\)\.toLowerCase\(\)\) \+ \(p\.pathname \|\| '\/'\)/.t
 //    它是「动作前是否已成立」的守卫，放宽会让真导航证据被误拒（C105 F3 实锤的反面）
 ok(/return surface\.includes\(e\);/.test(CLAUSE_SRC),
   'C2a 登记：clause.surfaceContains 的片段比较用裸 includes（大小写敏感，不得放宽）');
-ok(/const \{ urlSurfaceKey, surfaceContains \} = clause;/.test(VERIF_SRC),
-  'C2b 登记：verification.js 的 P2 守卫委托 clause.surfaceContains（唯一实现，未另造一份）');
+// C131 修订：C130 时 verification.js 是「内联 P2 守卫 + 解构 clause.surfaceContains」。
+// C131 把 P2 守卫下沉到 clause.evalUrlContains（唯一实现）⇒ 本处不再直接引用 surfaceContains
+// （那个解构已成死引用并删除，L3：不留过时断言）。不变量升级为：**P2 守卫仍委托 clause 层**。
+ok(/clause\.evalUrlContains\(v, after, before\)/.test(VERIF_SRC)
+  && /invalidEvidence: r\.invalidEvidence/.test(VERIF_SRC),
+  'C2b 登记：verification.js 的 P2 守卫委托 clause.evalUrlContains（唯一实现，未另造一份）'
+  + '（C131：原「解构 clause.surfaceContains」形态已随 P2 下沉而更新）');
 
 // C3 url_pattern 的大小写由 **pattern 作者**决定（无隐式折叠）—— 与 url_contains 的分离是有意的
 ok(/re = new RegExp\(pat\);/.test(CLAUSE_SRC) && !/new RegExp\(pat, 'i'\)/.test(CLAUSE_SRC),
@@ -380,9 +392,12 @@ ok(pageChangeHit('https://a.com/dashboard', 'https://a.com/dashboard') === false
 ok(pageChangeHit('https://a.com/a', 'https://a.com/b') === true,
   'E1c 连带面 no-op：路径真变化仍判 page_change（未因本批退化）');
 
-// E2 未动：成功裁决面（verification.js:70 的裸 includes 公式）
-ok(/const ok = !!expect && url\.includes\(String\(expect\)\);/.test(VERIF_SRC),
-  'E2a 未动：verification.js url_contains 的判定公式本批一字未改');
+// E2 未动：成功裁决面（verification.js url_contains 的判定公式）
+// C131 修订：C130 断言的是**内联字面公式**；C131 把公式下沉为 clause.evalUrlContains 的
+// 唯一实现 ⇒ 本处改为委托。**行为**未动由 C131 守护 A2/A6/A7 的真实调用逐字守住
+// （公式搬家 ≠ 语义改动），故此处锚定「委托发生」而非字面形状。
+ok(/clause\.evalUrlContains\(v, after, before\)/.test(VERIF_SRC),
+  'E2a 未动：verification.js 的 url_contains 判定委托唯一实现（C130 的一致语义由 C131 A2/A6/A7 真实调用守住）');
 
 // E3 未动：skill 层 url_contains 的判定公式
 ok(/return url\.includes\(e\) \? CLAUSE_VERDICT\.TRUE : CLAUSE_VERDICT\.FALSE;/.test(ROUTER_SRC),
@@ -395,8 +410,12 @@ ok(/return url\.includes\(String\(expect\)\);/.test(VIL_SRC),
   'E4b 收紧：expectedActuallyPresent 的 expect 侧不再 toLowerCase');
 ok(/const url = String\(\(after && after\.url\) \|\| ''\);/.test(VIL_SRC),
   'E4c 收紧：clausePresent 的 url 改为原样 String(...)');
-ok(/case 'url_contains': return !!cl\.expect && url\.includes\(String\(cl\.expect\)\);/.test(VIL_SRC),
-  'E4d 收紧：clausePresent 的 expect 侧不再 toLowerCase');
+// C131 修订：clausePresent 的 expect 侧判定已委托 clause.evalUrlContains（P2 下沉）。
+// 大小写轴的不变量（不得折叠）改由 E6 的 loosening 形状扫描 + C131 守护 E3 双向守住，
+// 此处锚定「已委托唯一实现」这一结构事实（形态解耦，防后续合法重构假红）。
+ok(/case 'url_contains': return clause\.evalUrlContains\(cl, after, before\)\.ok;/.test(VIL_SRC),
+  'E4d 收紧：clausePresent 的 url_contains 判定已委托 clause.evalUrlContains'
+  + '（P2 生效 + expect 侧不折叠大小写，双轴由委托实现保证）');
 
 // E5 未动：decision / failureType 取值集合未变（本批不动决策路径）
 {
@@ -435,16 +454,30 @@ ok(/case 'url_contains': return !!cl\.expect && url\.includes\(String\(cl\.expec
     'loosened=' + loosened.length);
 
   // E6b 反向：4 条收紧形状必须齐全（否则是漏改，而不是"放宽 0"）
+  // ⚠️ C131 修订：第 4 条原断言 `case 'url_contains': return !!cl.expect && url.includes(String(cl.expect));`
+  //    是 **C130 当时的收紧形态**。C131 发现该形态仍缺 P2 无效证据守卫（与相邻 url_pattern 不对称），
+  //    已把它改为 `clause.evalUrlContains(cl, after, before).ok`（P2 下沉为唯一实现）。
+  //    ⇒ 本断言从「锚定某个字面形状」升级为「锚定**大小写口径**这一个不变量」：
+  //    只要求该分支**存在**且**不折叠大小写**，不再绑死具体写法（否则任何后续合法重构都会假红）。
+  //    防真空能力不减：E1 收紧 + E6 放宽 0 + E6b 分支存在，三者合起来仍排除"漏改"。
   const TIGHT_SHAPES = [
     /const url = String\(afterObservation\.url \|\| ''\);/,
     /return url\.includes\(String\(expect\)\);/,
     /const url = String\(\(after && after\.url\) \|\| ''\);/,
-    /case 'url_contains': return !!cl\.expect && url\.includes\(String\(cl\.expect\)\);/,
+    // C131：该分支必须存在，且**不得**出现任何大小写折叠（口径不变量的形态无关表达）
+    /case 'url_contains':\s*return\s+(?!.*\.toLowerCase\(\)).*url_contains|case 'url_contains':\s*return clause\.evalUrlContains\(cl,\s*after,\s*before\)\.ok;/,
   ];
   const tightOk = TIGHT_SHAPES.filter((re) => re.test(VIL_SRC)).length;
   ok(tightOk === 4,
-    'E6b 三向自检：收紧 4/4 齐全（防"放宽 0 处"因**漏改**而真空成立）',
+    'E6b 三向自检：收紧 4/4 齐全（防"放宽 0 处"因**漏改**而真空成立；C131 起第 4 条改锚'
+    + '"分支存在 + 无大小写折叠"这一不变量，不再绑死字面实现）',
     'tight=' + tightOk + '/4');
+
+  // E6c C131 新增：该分支**不得**残留 P2 缺失形状（与 E6 的大小写轴互补的第二根轴）。
+  // 只认真正的缺陷形状（裸 includes 且忽略 before），避免与 E6b 的形态无关表达重复。
+  const BARE_NO_P2 = /case 'url_contains':\s*return\s+!!cl\.expect\s*&&\s*url\.includes\(String\(cl\.expect\)\);/;
+  ok(!BARE_NO_P2.test(VIL_SRC),
+    'E6c C131：url_contains 分支不得为"忽略 before 的裸 includes"（P2 缺失形状，跨层相反答案之源）');
 }
 
 console.log('\n=== C130 结果：' + pass + ' / ' + (pass + fail) + ' ===');

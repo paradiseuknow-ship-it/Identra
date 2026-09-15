@@ -245,7 +245,16 @@ function clausePresent(cl, after, before) {
   switch (cl.type) {
     case 'text_present': return clause.evalTextPresent(after, cl.expect).ok;
     case 'text_absent': return clause.evalTextAbsent(after, cl.expect).ok;
-    case 'url_contains': return !!cl.expect && url.includes(String(cl.expect));
+    // C131：P2 无效证据守卫与 url_pattern 同口径（本文件内此前**不对称**，L6）——
+    // 改前本行是裸 `url.includes(String(cl.expect))`，彻底忽略 before：同一 clause、同一
+    // before/after，verification.js（裁决面）判 false/invalidEvidence=precondition_true，
+    // 而本函数判 true ⇒ 4b「期望业务结果其实已达成」误报 VERIFICATION_TOO_STRICT
+    // ⇒ RETRY_VERIFY，与裁决面的失败结论**跨层相反**（L15）。
+    // 契约依据：planner.js:79/86「expect 必须是动作执行前 URL 中不存在的片段 ——
+    // 若入口 URL 已包含该片段，验证将被判为无效证据而失败」。P2 是子句语义的一部分，
+    // 不是某个消费方的局部加固；因此诊断面**必须**同口径。
+    // 方向=收紧（更不容易把这算成「已达成」，与「不设伪成功」一致）。
+    case 'url_contains': return clause.evalUrlContains(cl, after, before).ok;
     case 'page_change': {
       // C124 D5：两侧必须**同口径构造**。旧实现 after 侧是
       // `(visibleText||textSummary) + ' ' + (roleText||'')`、before 侧是不带 roleText 的裸串 ——

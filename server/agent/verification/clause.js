@@ -131,6 +131,55 @@ function evalStorage(cl, after) {
   };
 }
 
+// ── url_contains：字面片段包含（C131 下沉为本模块共享的唯一实现）────────────────
+// 背景（C131 实锤）：本判定此前有**三份互不同口径的实现**（L6/L15）——
+//   ① verification.js:70（成功裁决面）——裸 includes + P2 守卫
+//   ② verificationIntelligence.js:248（诊断面 clausePresent）——裸 includes，**无 P2**
+//   ③ verificationIntelligence.js:206（诊断面 expectedActuallyPresent）——裸 includes，无 P2
+// 三处对**同一份证据**给出不同结论：同一 clause + 同一 before/after，① 说 false
+// （invalidEvidence=precondition_true），② 说 true ⇒ 诊断层判「业务结果其实已达成」
+// ⇒ 4b 报 VERIFICATION_TOO_STRICT 并 RETRY_VERIFY，而裁决面明明判失败 —— 跨层相反答案。
+// 契约依据（planner.js:79/86 权威措辞，全文无 toLowerCase）：
+//   「url_contains（URL 变化；expect 必须是动作执行前 URL 中不存在的片段 ——
+//     若入口 URL 已包含该片段，验证将被判为无效证据而失败）」
+// 即 P2 不是验证引擎的局部加固，而是**该子句的语义定义的一部分**。clause.js:136
+// 「P2 无效证据守卫与 url_contains 同理」正是以本函数为参照——此前参照物缺 P2，
+// 属「注释声明的语义」与「实现」脱节（L16 谱系：声明了不存在的形状）。
+// 大小写口径（C130 已统一）：两侧均**原样**比较。RFC 3986 §6.2.2 的 scheme/host
+// 折叠属于 urlSurfaceKey 的职责（P2 表面键内已折叠 host），字面片段匹配则保持原样 ——
+// 契约里 expect 是「原样字面片段」，整体 lowerCase 会使本子句比契约**更宽**。
+// 方向说明：P2 使判定**更严**（更不容易误判成功），与「不设伪成功」一致。
+function evalUrlContains(cl, after, before) {
+  const v = cl || {};
+  const expect = (v.expect != null) ? String(v.expect) : '';
+  const url = (after && after.url) || '';
+  if (!expect) {
+    return { ok: false, confidence: 0.5, reason: 'url_contains: 缺少 expect（fail-closed）' };
+  }
+  const hit = url.includes(expect);
+  // P2 无效证据守卫：expect 若在动作执行前（before 观察）的 URL 表面已成立，
+  // 则它是「恒真证据」——与本次动作的因果无关，不能单独作为本动作成功的证明。
+  // 背景（2026-08-31 run6 实证）：/saas/login.html 上 url_contains "saas" 恒真，
+  // 错误凭据也被判 SUCCESS（假阳性）。守卫只拒绝「无效证据」，不改变 Success Definition。
+  // C105 F3：恒真判定只在 URL 表面（host+pathname）上进行，query 不参与 ——
+  // pscd=try.webflow.com 这类第三方注入的 query 参数不能把真导航证据误判为恒真。
+  if (hit && before && before.url && surfaceContains(before.url, expect)) {
+    return {
+      ok: false,
+      confidence: 0.8,
+      invalidEvidence: 'precondition_true',
+      reason: 'P2 无效证据守卫: url 条件在动作执行前已成立（before url 表面='
+        + (urlSurfaceKey(before.url) || String(before.url)) + ' 已包含 "' + expect
+        + '"，恒真证据与本次动作无因果），不能作为本动作成功的证明',
+    };
+  }
+  return {
+    ok: hit,
+    confidence: hit ? 0.95 : 0.8,
+    reason: 'url_contains: url=' + url + ' ' + (hit ? '包含' : '不包含') + ' "' + expect + '"',
+  };
+}
+
 // ── url_pattern：基于真实 page.url() 的正则匹配（STEP 22 V1）────────────────────
 // 非法 pattern → 不成立（fail-closed），绝不抛异常崩 Runtime。
 // P2 无效证据守卫与 url_contains 同理：pattern 在 before url 表面已匹配 = 恒真证据，
@@ -198,6 +247,7 @@ module.exports = {
   evalTextPresent,
   evalTextAbsent,
   evalStorage,
+  evalUrlContains,
   evalUrlPattern,
   evalLoginState,
 };
