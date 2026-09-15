@@ -11,11 +11,18 @@
 // 超时后交还既有路径（ELEMENT_NOT_FOUND / 重试）收口，绝不自动判成功。
 
 const semanticResolver = require('./semanticResolver');
+const { pageText } = require('./pageText');
 
+// C127：此前这里读 `obs.visibleTexts`（**复数**）—— 而生产观测（observation.inspect）
+// 产出的是 `visibleText`（单数）+ `textSummary`，复数名只在测试 fixture 与历史快照里存在
+// ⇒ 该分支**永不可达**，恒静默回落到窄口径 `textSummary`（前 120 个筛选元素、截断 5000）。
+// 后果：页面文本只落在未被采集的节点（如纯 <p> 正文、无交互元素的页面）时，
+// `isPageReady` 误判「未就绪」，navigate 后的 8s 就绪等待被白白耗尽（性能，非正确性 ——
+// waitForElement 的提前返回不影响结论，因为无元素时 resolve 本来也拿不到候选）。
+// 现在统一走 pageText 唯一通道（textSummary + visibleText，兼容快照的复数形状）。
 function textOf(obs) {
   if (!obs) return '';
-  if (Array.isArray(obs.visibleTexts) && obs.visibleTexts.length) return obs.visibleTexts.join(' ');
-  return obs.textSummary || obs.text || '';
+  return pageText(obs);
 }
 
 // 页面是否就绪：可见文本非空（SPA 已挂载）或已渲染出可交互元素。

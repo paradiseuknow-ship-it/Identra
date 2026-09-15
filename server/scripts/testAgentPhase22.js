@@ -92,8 +92,13 @@ async function main() {
 
   // ---- 3) FailureSnapshot ----
   console.log('[failure-snapshot]');
-  const snap = await failureSnapshot.create({ taskId: 'task_demo', stepId: 's1', url: 'http://x', errorType: 'ELEMENT_NOT_FOUND', confidence: 0.9, lastAction: { type: 'click', target: { semantic: 'Continue' } }, observation: { textSummary: ['Login', 'Proceed'] } });
-  ok(!!snap.id && snap.errorType === 'ELEMENT_NOT_FOUND' && Array.isArray(snap.visibleTexts), 'FailureSnapshot 结构化落库');
+  // ★ C127：此 fixture 此前是 `observation: { textSummary: ['Login', 'Proceed'] }` —— **数组**。
+  // 生产观测（observation.js:486/493）的 textSummary 是**字符串**、页面文本另有 visibleText；
+  // 这个不存在的形状让 failureSnapshot.js 为一个**永不可达**的 `Array.isArray(textSummary)` 分支
+  // 写了代码（且拉高了对「可见文本」的信任）。现对齐生产形状，并把断言从「是数组」加强为
+  // 「确实是页面文本行」——守护必须测生产真实存在的形态。
+  const snap = await failureSnapshot.create({ taskId: 'task_demo', stepId: 's1', url: 'http://x', errorType: 'ELEMENT_NOT_FOUND', confidence: 0.9, lastAction: { type: 'click', target: { semantic: 'Continue' } }, observation: { textSummary: 'Login', visibleText: 'Login\nProceed' } });
+  ok(!!snap.id && snap.errorType === 'ELEMENT_NOT_FOUND' && Array.isArray(snap.visibleTexts) && snap.visibleTexts.join(' ').includes('Proceed'), 'FailureSnapshot 结构化落库（可见文本行取自真实字段）');
   ok(failureSnapshot.latestForTask('task_demo').id === snap.id, 'latestForTask 可取回');
 
   // ---- 4) 集成：真实失败 → 诊断（Phase 2.3 后修复耗尽 → PAUSED_FOR_HUMAN）----

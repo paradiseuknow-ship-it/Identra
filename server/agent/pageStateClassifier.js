@@ -5,10 +5,17 @@
 // 性质：READ-ONLY 分类器。自身不改变任何行为语义，不判成功，不写状态。
 //
 // 输入：一次页面观察（observation），可接受：
-//   - { visibleTexts: string[], url?, title?, elements?[] }
-//   - { textSummary: string, url?, title?, elements?[] }
+//   - { textSummary: string, visibleText: string, url?, title?, elements?[] }   ← 生产观测的真实形状
+//   - { visibleTexts: string[], url?, title?, elements?[] }                     ← 失败快照的历史形状
 //   - 或上述字段的混合。
 // 输出：{ state, confidence, signals: string[], capabilities: string[] }
+//
+// ★ C127：上面第 1 行此前写的是 `{ textSummary }`，而 `extractText` 却优先读 `visibleTexts`
+//   （复数）—— 生产观测**从不产出**复数名（observation.js:64 起就只产出 `visibleText` 单数），
+//   于是「优先分支」永不可达、恒静默回落到窄口径 `textSummary`（前 120 个筛选元素、截断 5000）。
+//   本模块在**真实执行链路**上（tools.js:209 → contextGuard 动作前提校验），
+//   所以窄口径会造成：① 长页面尾部能力信号（支付/下载/空结果）漏检 ⇒ 能力标签缺失；
+//   ② 文本只落在未采集节点的页面被误判 BLANK(0.95)。现统一走 `./pageText` 唯一通道。
 //
 // ── 为什么重写（STEP 1）────────────────────────────────────────────────────
 // 旧实现把「站点品类」硬编码进分类器：
@@ -26,6 +33,8 @@
 // 3. 兜底态 GENERIC 保持中立，绝不归入任何具体类别。
 // 4. 额外输出 capabilities（能力标签），供 contextGuard 做「动作前提校验」，
 //    替代原来的「期望站点 vs 当前站点」矛盾矩阵。
+
+const { pageText } = require('./pageText');
 
 // 状态枚举（与站点/行业无关）
 const STATES = [
@@ -67,8 +76,10 @@ const RE = {
 
 function extractText(obs) {
   if (!obs) return { text: '', url: '', title: '', elements: [] };
-  const texts = Array.isArray(obs.visibleTexts) ? obs.visibleTexts : [];
-  const text = (texts.join(' ') || obs.textSummary || obs.text || '').replace(/\s+/g, ' ').trim();
+  // C127：页面文本唯一通道（textSummary + visibleText，兼容快照的 visibleTexts 复数形状）。
+  // 此前是 `(visibleTexts.join(' ') || obs.textSummary || obs.text)` —— 复数名在生产观测上
+  // 恒为 undefined ⇒ 恒回落 textSummary 窄口径（见文件头注）。
+  const text = pageText(obs);
   const url = obs.url || '';
   const title = obs.title || '';
   const elements = Array.isArray(obs.elements) ? obs.elements : [];
@@ -141,7 +152,9 @@ function detect(obs) {
   };
 
   // 1) BLANK：可见文本为空 → SPA 未挂载 / 未就绪
-  if (text.length === 0) return done('BLANK', 0.95, 'visibleTexts 为空（SPA 未挂载/未就绪）');
+  // C127：信号文案里的字段名此前写的是 `visibleTexts`（复数）—— 生产观测从不产出该字段，
+  // 命名的证据指向一个不存在的来源，会把排查带偏。改为指向真实通道（pageText 唯一口径）。
+  if (text.length === 0) return done('BLANK', 0.95, '页面可见文本为空（SPA 未挂载/未就绪）');
 
   // 2) LOADING：加载中
   if (RE.LOADING.test(text)) return done('LOADING', 0.8, '检测到加载中信号');

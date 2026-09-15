@@ -14,24 +14,24 @@
 // 职责边界：本模块只做**子句是否成立**的判定，不做成功裁决、不写状态、不访问网络。
 // 置信度随判定一并返回（置信度是裁决的一部分，分开摆就会再次各自漂移）。
 
-// ── 页面可见文本证据（C126）─────────────────────────────────────────────────────
+// ── 页面可见文本证据（C126 建立，C127 下沉）─────────────────────────────────────
 // 背景：验证引擎只读 `after.textSummary`（observation.js 里是**前 120 个**筛选元素的文本，
 // 截断 5000），而诊断层读 `visibleText`（全页 innerText 去重行，截断 8000）。
 // 长页面上目标文本落在第 121 个元素之后时，验证引擎判「不包含」、诊断层判「包含」
 // ⇒ 跨层相反答案，且真实成功会被 text_present 误判失败（恒假方向，与 C123 同族）。
 //
-// 本模块把「页面可见文本证据」定为**唯一口径**：textSummary + visibleText 拼接后归一化
-// （折叠空白 + 小写）。两侧都只能通过下面两个判定函数消费它 —— 不再各自拼串。
+// **C127**：同一份「页面文本」还有第三个、第四个消费方（pageReady.textOf /
+// pageStateClassifier.extractText），它们甚至读的是一个**生产观测从不产出**的字段名
+// （`visibleTexts` 复数）⇒ 恒静默回落窄口径。所以口径不能再留在本模块里，
+// 已**下沉到中立模块 `../pageText.js`**（不依赖 verification，谁都能 require），
+// 本模块只**再导出同一函数引用**，绝不留第二份实现
+// （C126 守护的「口径定义唯一」断言已同步把锚点上移到 pageText.js，见 test_c126 A1/A8）。
 //
 // 注意 roleText **不进入**文本证据：它是交互元素的角色名（含 aria-label），属**元素级**
 // 证据（由 element_present 的语义解析与存在性索引负责）。混进文本通道会让「视觉上没有
 // 这段文字」的元素属性命中 text_present，是假阳性来源 —— 与 C123 的「证据层级」纪律同源。
 const { normalizeText } = require('../existence');
-
-function pageText(after) {
-  const o = after || {};
-  return normalizeText(String(o.textSummary || '') + ' ' + String(o.visibleText || ''));
-}
+const { pageText } = require('../pageText');
 
 function evalTextPresent(after, expect) {
   const e = normalizeText(expect);

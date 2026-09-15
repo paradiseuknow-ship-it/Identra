@@ -11,6 +11,11 @@
 //   诊断层却判「包含」⇒ 跨层相反答案（与 C123 的 element_present 缺口同族）。
 // 修复后：两侧都只能通过 clause.js 的 pageText / evalTextPresent / evalTextAbsent 消费文本。
 //
+// ★ C127 后记：口径实现已从 clause.js **下沉**到中立模块 server/agent/pageText.js
+//   （因为 pageReady / pageStateClassifier 也要用同一份），clause.js 改为 require + 再导出。
+//   A1/A8 的锚点同步上移到新事实源，并**加强**为「同一函数引用」——不是放宽。
+//   roleText 仍不进文本通道（元素级证据），见 A9/D 组。
+//
 // 最高价值在于 A 组（静态唯一性）与 C 组（跨层 parity）：前者堵住「再抄一份」，
 // 后者堵住「同一份观察两层两个答案」。
 
@@ -75,9 +80,16 @@ function stripComments(src) {
 const vSrc = stripComments(fs.readFileSync(path.join(ROOT, 'server', 'agent', 'verification.js'), 'utf8'));
 const viSrc = stripComments(fs.readFileSync(path.join(ROOT, 'server', 'agent', 'verification', 'verificationIntelligence.js'), 'utf8'));
 const cSrc = stripComments(fs.readFileSync(path.join(ROOT, 'server', 'agent', 'verification', 'clause.js'), 'utf8'));
+// C127：口径实现下沉到中立模块 server/agent/pageText.js（pageReady / pageStateClassifier
+// 也要用同一份），clause.js 改为 require + 再导出。此处**锚点上移**到新事实源，
+// 并额外要求「同一函数引用」（比原先的文本存在性断言更强，不是放宽）。
+const ptSrc = stripComments(fs.readFileSync(path.join(ROOT, 'server', 'agent', 'pageText.js'), 'utf8'));
 
-ok(/evalTextPresent/.test(cSrc) && /evalTextAbsent/.test(cSrc) && /function pageText/.test(cSrc),
-  'A1 pageText / evalTextPresent / evalTextAbsent 定义在 clause.js（唯一实现）');
+ok(/evalTextPresent/.test(cSrc) && /evalTextAbsent/.test(cSrc) && /require\('\.\.\/pageText'\)/.test(cSrc),
+  'A1 evalTextPresent / evalTextAbsent 定义在 clause.js，pageText 改为委托 pageText.js（唯一实现）');
+ok(/function pageText/.test(ptSrc), 'A1b pageText 的唯一实现位于 server/agent/pageText.js');
+ok(clause.pageText === require('../agent/pageText').pageText,
+  'A1c clause.pageText 与 pageText.pageText 必须是同一函数引用（不留第二份实现）');
 ok(/clause\.evalTextPresent\(after, expect\)/.test(vSrc), 'A2 验证引擎 text_present 委托唯一实现');
 ok(/clause\.evalTextAbsent\(after, expect\)/.test(vSrc), 'A3 验证引擎 text_absent 委托唯一实现');
 ok(/clause\.evalTextPresent\(after, cl\.expect\)/.test(viSrc), 'A4 诊断层 text_present 委托唯一实现');
@@ -86,9 +98,11 @@ ok(/clause\.evalTextAbsent\(after, cl\.expect\)/.test(viSrc), 'A5 诊断层 text
 ok(!/textSummary[^\n]*\.includes\(/.test(vSrc), 'A6 验证引擎不得直读 textSummary 做文本包含判定');
 ok(!/(visibleText \|\| .*textSummary)[^\n]*\.includes\(/.test(viSrc),
   'A7 诊断层不得再自行拼串做文本包含判定');
-// 口径只允许在 clause.pageText 一处拼串
-const pageTextDefs = (cSrc.match(/function pageText/g) || []).length;
-ok(pageTextDefs === 1, 'A8 页面文本口径定义唯一', 'defs=' + pageTextDefs);
+// 口径只允许定义一处 —— 改口径必须跨 clause.js + pageText.js 两个文件只数一次
+// ★ \b 必须有：`function pageTextLines` 也以 `function pageText` 开头（C127 实测踩坑）
+const pageTextDefs = (cSrc.match(/function\s+pageText\b/g) || []).length
+  + (ptSrc.match(/function\s+pageText\b/g) || []).length;
+ok(pageTextDefs === 1, 'A8 页面文本口径定义唯一（clause.js ∪ pageText.js）', 'defs=' + pageTextDefs);
 
 // ── B 组：长页面恒假修复（本批主修复）────────────────────────────────────────
 console.log('=== B 组：长页面文本窗口外的恒假修复 ===');
