@@ -49,6 +49,12 @@ const {
   NATIVE_SIGNUP_CONTRACT,
 } = require('./plannerContractText');
 
+// C134：stateType 枚举的**唯一事实源**是 verification/contract.js 的 STATE_TYPES。
+// 改前 ACTION_CONSTRAINTS 内联一份 11 项副本（漏 LOGOUT_SUCCESS），与白名单漂移。
+// 注意：本 require 必须位于 `const ACTION_CONSTRAINTS` **之上** ——
+// test_c106_f22_contract_sync.js:62 按 indexOf('const ACTION_CONSTRAINTS') 切源码片区。
+const { STATE_TYPES } = require('./verification/contract');
+
 const ACTION_CONSTRAINTS = [
   '每个 step 必须含 action 对象。',
   `action.type 仅允许: ${ACTION_TYPES.join(', ')}。`,
@@ -99,7 +105,7 @@ const ACTION_CONSTRAINTS = [
   '不要臆造任务 objective 中不存在的 fill/click 步骤；纯导航任务只需 NAVIGATE→OBSERVE→VERIFY。',
   // Phase 11 — ExpectedBusinessState 业务完成契约（核心）
   '【强制】每个交互动作（login / search / fill / submit / select / check / click 提交类）必须输出 expectedBusinessState 业务完成契约，验证「业务结果」而不是「动作执行」。',
-  'expectedBusinessState.stateType 必须从固定集合选取：LOGIN_SUCCESS / SEARCH_SUCCESS / FORM_SUBMIT_SUCCESS / FIELD_FILLED / SELECTED / CHECKED / NAVIGATED / CONFIRMATION / DOWNLOAD / GENERIC_STATE / CUSTOM。',
+  `expectedBusinessState.stateType 必须从固定集合选取：${STATE_TYPES.join(' / ')}。`,
   'expectedBusinessState 必须含 requiredEvidence（至少一条，可用 text_present/element_present/url_contains/element_absent/login_state/url_pattern/storage，多条用 evidenceLogic=AND/OR 组合）与 forbiddenEvidence（绝不出现的错误信号）。',
   '若业务状态应跨页面刷新持续（登录态、服务端落库标志），可在 expectedBusinessState 显式声明 persistAfterReload:true（可选 reloadTimeoutMs 毫秒数）：验证器在首次验证成功后 reload 页面，用全新观察做二次合约验证，任一次失败即整体失败；默认不开启，非持久状态禁止声明。',
   '禁止把 action_success 当作业务完成证据；action_success 只允许用于非关键/纯观测动作。',

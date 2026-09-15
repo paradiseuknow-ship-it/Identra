@@ -12,6 +12,12 @@
 
 const { validateAction, RISK_LEVELS, ACTION_TYPES, TYPE_RISK_FLOOR, VERIFICATION_TYPES } = require('./action');
 const { looksLikeCss } = require('../selectorFallback');
+// C134：stateType 枚举的**唯一事实源**是 verification/contract.js 的 STATE_TYPES。
+// 本文件两处 prompt（INSTRUCTIONS:180 / PLAN_STRICT_INSTRUCTIONS:250）改前各自内联一份 11 项副本，
+// 均漏 LOGOUT_SUCCESS，而 schema/action.js:162 按 STATE_TYPES 拒绝 ⇒ prompt 与校验器自相矛盾
+// （真实 LLM 经 deepseek.js:106 拼接 PLAN_STRICT_INSTRUCTIONS，故该矛盾直接进生产 prompt）。
+// 现统一从 STATE_TYPES 派生，结构性杜绝第四份同义清单。
+const { STATE_TYPES } = require('../verification/contract');
 
 // ============================================================================
 // Fix A（2026-09-01）：element 证据 expect 的 CSS 形态语法守卫（evidence 生成约束）
@@ -177,7 +183,7 @@ const INSTRUCTIONS = `输出 JSON 格式的 Plan：
       "description": "步骤说明",
       "expectedOutcome": "预期结果",
       "risk": "LOW|MEDIUM|HIGH|CRITICAL",
-      "action": { "type": "...", "target": { "semantic|field|role|text": "..." }, "risk": "...", "verification": { "type": "...", "expect": "..." }, "expectedBusinessState": { "stateType": "LOGIN_SUCCESS|SEARCH_SUCCESS|FORM_SUBMIT_SUCCESS|FIELD_FILLED|SELECTED|CHECKED|NAVIGATED|CONFIRMATION|DOWNLOAD|GENERIC_STATE|CUSTOM", "expected": "业务结果描述", "requiredEvidence": [{"type":"text_present","expect":"..."}], "forbiddenEvidence": [{"type":"text_present","expect":"error"}], "evidenceLogic": "AND|OR" } }
+      "action": { "type": "...", "target": { "semantic|field|role|text": "..." }, "risk": "...", "verification": { "type": "...", "expect": "..." }, "expectedBusinessState": { "stateType": "${STATE_TYPES.join('|')}", "expected": "业务结果描述", "requiredEvidence": [{"type":"text_present","expect":"..."}], "forbiddenEvidence": [{"type":"text_present","expect":"error"}], "evidenceLogic": "AND|OR" } }
     }
   ]
 }`;
@@ -247,7 +253,7 @@ const PLAN_STRICT_INSTRUCTIONS = `输出 JSON 格式的 Plan：
       "semantic": "这一步要做什么（自然语言）",
       "expectedResult": "执行成功后的可观测结果（用于验证）",
       "verification": { "type": "text_present|element_present|url_contains|url_pattern|storage|action_success|login_state|page_change", "expect": "预期出现的文本或 URL 片段（action_success 可不填 expect）" },
-      "expectedBusinessState": { "stateType": "LOGIN_SUCCESS|SEARCH_SUCCESS|FORM_SUBMIT_SUCCESS|FIELD_FILLED|SELECTED|CHECKED|NAVIGATED|CONFIRMATION|DOWNLOAD|GENERIC_STATE|CUSTOM", "expected": "业务结果描述", "requiredEvidence": [{"type":"text_present|element_present|url_contains|url_pattern|storage|element_absent|login_state","expect":"...","pattern":"url_pattern 用","storageType":"localStorage|sessionStorage（storage 用）","key":"storage 用","equals":"storage 可选期望值"}], "forbiddenEvidence": [{"type":"text_present","expect":"error"}], "evidenceLogic": "AND|OR", "persistAfterReload": "可选 true：仅限应跨刷新持续的状态，开启后 reload 二次验证" },
+      "expectedBusinessState": { "stateType": "${STATE_TYPES.join('|')}", "expected": "业务结果描述", "requiredEvidence": [{"type":"text_present|element_present|url_contains|url_pattern|storage|element_absent|login_state","expect":"...","pattern":"url_pattern 用","storageType":"localStorage|sessionStorage（storage 用）","key":"storage 用","equals":"storage 可选期望值"}], "forbiddenEvidence": [{"type":"text_present","expect":"error"}], "evidenceLogic": "AND|OR", "persistAfterReload": "可选 true：仅限应跨刷新持续的状态，开启后 reload 二次验证" },
       "value": "仅 fill/press 需要：填入的值（敏感字段必须用 credentialRef 代替；任务提供了凭据清单时，email/username/账号等身份字段也必须用 credentialRef 代替）",
       "credentialRef": "可选：敏感字段引用名（password/card/cvv 等必须用；凭据清单非空时 email/username 等身份字段也必须用）"
     }

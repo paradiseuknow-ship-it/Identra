@@ -12,7 +12,9 @@
 // url_contains / element_absent / login_state / page_change / etc.
 //
 // contract = {
-//   stateType: string,                 // LOGIN_SUCCESS / SEARCH_SUCCESS / FORM_SUBMIT_SUCCESS / FIELD_FILLED / SELECTED / CHECKED / NAVIGATED / CONFIRMATION / DOWNLOAD / GENERIC_STATE / CUSTOM
+//   stateType: string,                 // 必须 ∈ STATE_TYPES（见下方常量 —— 唯一事实源；本注释不再复述清单）
+//                                      // C134：原注释内联 11 项副本（漏 LOGOUT_SUCCESS），与白名单漂移；
+//                                      // 改为指针，结构性消除「第四份同义清单」。
 //   expected: string,                  // human-readable outcome description (objective-derived)
 //   requiredEvidence: [ {type, expect?, ...} ],   // each evaluated by clauseVerify
 //   forbiddenEvidence: [ {type, expect?, ...} ],  // ANY match => hard fail
@@ -24,7 +26,7 @@
 
 const STATE_TYPES = [
   'LOGIN_SUCCESS', 'LOGOUT_SUCCESS', 'SEARCH_SUCCESS', 'FORM_SUBMIT_SUCCESS',
-  'FIELD_FILLED', 'SELECTED', 'CHECKED', 'NAVIGATED', 'CONFIRMATION', 'DOWNLOAD',
+  'FIELD_FILLED', 'SELECTED', 'CHECKED', 'UNCHECKED', 'NAVIGATED', 'CONFIRMATION', 'DOWNLOAD',
   'GENERIC_STATE', 'CUSTOM',
 ];
 
@@ -167,9 +169,16 @@ function deriveContract(action) {
 }
 
 // Objective keyword -> stateType（objective 直接映射到业务结果态，Phase 11 §六/§十）。
+// C134 两点登记（均属 C 类不可达面 —— contractFromObjective 目前无生产调用方，见报告 §A5）：
+//   ① 顺序敏感：本表首个命中即返回，故「登出/退出」必须排在「登录」之前。改前 LOGIN 在前，
+//      「退出登录」同时含「退出」与「登录」⇒ 实得 LOGIN_SUCCESS，与意图相反（探针 C 组实证）。
+//   ② DOWNLOAD 行当前**恒不可达**：ACTION_TO_STATE 无 stateType==='DOWNLOAD' 的 base，
+//      下方 find() 落空 ⇒ if (base) 为假 ⇒ 该行等价于不存在（回退 deriveContract）。
+//      本批保留该行作为待接线占位（新增 download 基础契约会改变 buildEffectiveVerification
+//      的派生面，属行为变更，另批评估），不属本批修复范围。
 const STATE_BY_OBJECTIVE = [
-  { re: /(登录|登陆|log ?in|sign ?in|auth)/i, stateType: 'LOGIN_SUCCESS' },
   { re: /(登出|退出|log ?out|sign ?out)/i, stateType: 'LOGOUT_SUCCESS' },
+  { re: /(登录|登陆|log ?in|sign ?in|auth)/i, stateType: 'LOGIN_SUCCESS' },
   { re: /(搜索|查找|search|query)/i, stateType: 'SEARCH_SUCCESS' },
   { re: /(提交|下单|报名|submit|place order|checkout|purchase)/i, stateType: 'FORM_SUBMIT_SUCCESS' },
   { re: /(填写|录入|填表|fill|enter|input)/i, stateType: 'FIELD_FILLED' },
