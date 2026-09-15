@@ -43,6 +43,14 @@ const { normalizeGoal } = require('../intelligence/flowSchema');
 // 本文件此前为 `text_present` 自建了一份同义实现（拼 textSummary + visibleText），
 // 是「同一语义两份实现」的同族事故（L6/L12）—— 已收敛为委托，见 clauseVerdict。
 const { pageText } = require('../pageText');
+// C129 A1：expect 的归一化口径也必须与文本证据**同一份实现**。
+// 「页面文本包含 expect」是一次**证据判定**（不是意图/字段名匹配）：它的两侧
+// ——页面文本侧与 expect 侧——必须同口径，否则同一条子句在两个消费方给出相反答案。
+// 此前本文件用 skill 匹配口径 norm（把标点折叠成空格）同时归一化两侧，而
+// clause.evalTextPresent 用 existence.normalizeText（只折叠空白+小写、**保留标点**）
+// ⇒ expect='a.b' / 文本='a b' 时 skill=TRUE、clause=FALSE。差异面正是标点。
+// 现改为与 clause.js 同源同一函数引用（不是复制一份实现 —— L6/C127）。
+const { normalizeText } = require('../existence');
 
 const ROUTING_COLLECTION = 'aiSkillRouting';
 const SKILL_COLLECTION = builder.SKILL_COLLECTION;
@@ -178,12 +186,18 @@ function clauseVerdict(clause, obs) {
     // C128 B3：文本构造走唯一口径（pageText.js）—— 此前是本文件**自建的同义实现**
     // （`[obs.textSummary, obs.visibleText]` 拼串），是 L6/L12「同一语义两份实现」的同族事故：
     // 既不认历史快照形状（visibleTexts 复数 / 单数 text），也与 clause.js 的 text_present 分叉。
-    // 判定**策略**不变（三态：文本为空 ⇒ INDETERMINATE），expect 的归一化口径（norm）也不变。
+    // C129 A1：expect 侧同样收敛 —— 本分支现与 clause.evalTextPresent **逐字同口径**：
+    //   文本侧   pageText(obs)（判定口径，已 normalizeText；**保留标点**）
+    //   expect 侧 normalizeText(clause.expect)（与 clause.js 同一函数引用，不是第二份实现）
+    // 判定**策略**不变（三态：文本为空 ⇒ INDETERMINATE）。方向 = **收紧**：
+    // 旧实现把两侧标点都抹成空格 ⇒ 同一条子句在两层相反答案（skill=TRUE / clause=FALSE）。
+    // 实测分歧面（no-op 轮）：8 例标点敏感探针中 **7 例**在改前都是 skill=TRUE / clause=FALSE
+    //   —— 不止 C128 登记的 'a.b' 一例，而是"标点差异"整类（句点/感叹号/全角句号/全角括号/版本号）。
     const text = pageText(obs);
     if (!text.trim()) return CLAUSE_VERDICT.INDETERMINATE;
-    const e = norm(clause.expect);
+    const e = normalizeText(clause.expect);
     if (!e) return CLAUSE_VERDICT.INDETERMINATE;
-    return norm(text).includes(e) ? CLAUSE_VERDICT.TRUE : CLAUSE_VERDICT.FALSE;
+    return text.includes(e) ? CLAUSE_VERDICT.TRUE : CLAUSE_VERDICT.FALSE;
   }
 
   if (type === 'element_present' || type === 'element_absent') {

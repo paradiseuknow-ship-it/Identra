@@ -365,15 +365,25 @@ ok(/require\('\.\.\/pageText'\)/.test(SR_SRC) && /const text = pageText\(obs\);/
   ok(bad.length === 0, 'C9 skill 层与 clause 层的 text_present 在登记安全矩阵上一致', bad.join(' | '));
 }
 
-// C10 登记边界（未修，A2 独立批次）：两层对 expect 的**标点归一化**口径不同
-//    skillRouter.norm 把标点折叠成空格；clause 的 normalizeText 只折叠空白+小写。
-//    本断言的作用是「边界被无声改变就红」——不是要求两层一致。
+// C10 登记边界 —— **已由 C129 A1 关闭**（两层现同口径：pageText + existence.normalizeText）。
+//    原断言（skill=TRUE / clause=FALSE）是「边界被无声改变就红」的哨兵；
+//    边界被**显式**统一之后，哨兵换成更强的形态：一致 + 双向反向探针。
+//      ① 一致且不得抹标点：标点与空格不同 ⇒ 两层都必须 FALSE
+//      ② 不得靠降级取一致：标点相同时必须仍能 TRUE（防「把 skill 侧改成恒 FALSE」的伪一致）
 {
-  const v = router.clauseVerdict({ type: 'text_present', expect: 'a.b' }, { visibleText: 'a b' });
-  const c = clause.evalTextPresent({ visibleText: 'a b' }, 'a.b').ok ? 'TRUE' : 'FALSE';
-  ok(v === 'TRUE' && c === 'FALSE',
-    'C10 登记边界仍存在：标点归一化差异（skill=TRUE / clause=FALSE）—— 统一属 A2 独立批次，本批不动',
-    'skill=' + v + ' clause=' + c);
+  const pairs = [
+    ['a.b', 'a b', 'FALSE'], // 点 ≠ 空格：任何一层抹标点都会让它变 TRUE ⇒ 咬住"放宽"
+    ['a b', 'a.b', 'FALSE'], // 反方向
+    ['a.b', 'a.b', 'TRUE'],  // 标点相同 ⇒ 必须仍能命中 ⇒ 咬住"降级"
+  ];
+  const bad = [];
+  for (const [expect, text, want] of pairs) {
+    const v = router.clauseVerdict({ type: 'text_present', expect }, { visibleText: text });
+    const c = clause.evalTextPresent({ visibleText: text }, expect).ok ? 'TRUE' : 'FALSE';
+    if (v !== want || c !== want) bad.push(expect + '/' + text + ' skill=' + v + ' clause=' + c + ' want=' + want);
+  }
+  ok(bad.length === 0,
+    'C10 边界已由 C129 A1 关闭：两层同口径（一致，且既不得靠放宽、也不得靠降级实现）', bad.join(' | '));
 }
 
 // ── D 组：放宽 / 收紧 / 未动 三向自检 ───────────────────────────────────────
