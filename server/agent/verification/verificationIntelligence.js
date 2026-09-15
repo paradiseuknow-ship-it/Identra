@@ -186,14 +186,24 @@ function expectedActuallyPresent(expectedVerification, afterObservation) {
   if (!expectedVerification || !afterObservation) return false;
   const type = expectedVerification.type;
   const expect = expectedVerification.expect;
-  const url = (afterObservation.url || '').toLowerCase();
+  // C130：URL 判定**不再整体 lowerCase** —— 大小写口径须与成功裁决面
+  // （verification.js:70 裸 includes）逐字一致（L15：同一份证据多消费方 ⇒ 口径唯一）。
+  // RFC 3986 §6.2.2：scheme/host 大小写不敏感，**path 大小写敏感**；整体 toLowerCase
+  // 会同时折叠 host（该折叠）与 path（不该折叠）—— 对哪条规则都是错的。
+  // 正确形态见 clause.urlSurfaceKey（对 host 单独折叠、path 原样），本文件不另造一份。
+  const url = String(afterObservation.url || '');
   if (type === 'text_present' && expect) {
     // C126：走与验证引擎同一份文本证据口径（clause.js）。此前这里读 visibleText 而
     // 验证引擎读 textSummary ⇒ 长页面上「验证说过严、其实没漏」的误判。
     return clause.evalTextPresent(afterObservation, expect).ok;
   }
   if (type === 'url_contains' && expect) {
-    return url.includes(String(expect).toLowerCase());
+    // C130：expect 侧同样不 lowercase —— 与 url 侧、与 verification.js/skillRouter 三处同口径。
+    // 改前本行两侧都降大小写 ⇒ 该子句在 VIL 比契约**更宽**：URL 仅大小写不同也判
+    // 「期望业务结果其实已达成」⇒ 4b 误报 VERIFICATION_TOO_STRICT。
+    // 契约依据：planner.js:86「expect 必须是动作执行前 URL 中不存在的片段」（原样字面片段），
+    // planner.js 全文无 toLowerCase；contract.deriveContract('navigate') 的 __URL__ 亦原样替换。
+    return url.includes(String(expect));
   }
   if (type === 'element_present' && expect) {
     // C124：改走共用原语的 loose 档。
@@ -225,12 +235,17 @@ function clausePresent(cl, after, before) {
   // login_state 与验证引擎同源（textSummary）：该正则本就脆弱（_analyze 4c 有专属兜底），
   // 证据源越宽越容易把「未登录」判成「已登录」，故向验证引擎口径收敛而非反向放宽。
   const text = String((after && after.textSummary) || '').toLowerCase();
-  const url = (after.url || '').toLowerCase();
+  // C130：url 恢复**原样**（不再整体 lowerCase）。该变量有两个消费点，方向一致：
+  //   ① case 'url_contains' —— 与裁决面同口径（本批目标，方向=收紧）；
+  //   ② case 'page_change' 的 `b.url !== url`（**差值比较**，不是包含判定）——
+  //      原样比较才认得出「仅大小写不同的真实跳转」（/Dashboard → /dashboard）；
+  //      旧实现把这类变化吞掉，是同一处 lowercase 的连带副作用。
+  const url = String((after && after.url) || '');
   const els = after.elements || [];
   switch (cl.type) {
     case 'text_present': return clause.evalTextPresent(after, cl.expect).ok;
     case 'text_absent': return clause.evalTextAbsent(after, cl.expect).ok;
-    case 'url_contains': return !!cl.expect && url.includes(String(cl.expect).toLowerCase());
+    case 'url_contains': return !!cl.expect && url.includes(String(cl.expect));
     case 'page_change': {
       // C124 D5：两侧必须**同口径构造**。旧实现 after 侧是
       // `(visibleText||textSummary) + ' ' + (roleText||'')`、before 侧是不带 roleText 的裸串 ——

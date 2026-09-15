@@ -49,6 +49,8 @@ if (!process.env.FPB_DATA_DIR) {
 
 const router = require('../agent/skill/skillRouter.js');
 const clause = require('../agent/verification/clause.js');
+const verification = require('../agent/verification.js');
+const vil = require('../agent/verification/verificationIntelligence.js');
 const existence = require('../agent/existence.js');
 const pageTextMod = require('../agent/pageText.js');
 const skillSchema = require('../agent/skill/skillSchema.js');
@@ -309,13 +311,28 @@ ok(/semanticResolver\.resolve\(expect, after\)/.test(VERIF_SRC) && /matchContent
 ok(!/type === 'element_present'/.test(CLAUSE_SRC),
   'C3c 登记：clause.js 无 element_* 分支（该类型的对照面是 verification.js，机制不同不是口径不同）');
 
-// C4 url_contains：两层**同口径**（都裸 includes、大小写敏感）—— 与 text_present 不同，不需要收敛
+// C4 url_contains：**三层**同口径（都裸 includes、大小写敏感）—— 与 text_present 不同，不需要收敛
+// ★ C130 升级：本断言原先是"两层同口径"，且 verification 侧是**手写模拟**
+//   （`'https://a.com/'.includes('HTTPS')`）—— 那个模拟恰好**没有覆盖第三层 VIL**，
+//   而 VIL 正是唯一大小写不敏感的实现（C130 修复）。教训已写进 C130 守护 A3：
+//   覆盖面若按"当时想到的消费方数量"划，必然漏掉新增的第 N 层；
+//   且**手写模拟不得当作真实调用**（C129 自身教训的自我应用）。
+//   此处改为三处**真实调用**，全部必须为「不命中」。
 {
   const v = router.clauseVerdict({ type: 'url_contains', expect: 'HTTPS' }, { url: 'https://a.com/' });
-  const verifLike = 'https://a.com/'.includes('HTTPS');
-  ok(v === 'FALSE' && verifLike === false,
-    'C4 url_contains 两层同口径（裸 includes、大小写敏感）—— 本批未动',
-    'skill=' + v + ' verif=' + verifLike);
+  const verif = verification.verify({ type: 'url_contains', expect: 'HTTPS' }, { url: 'https://a.com/' }, { url: 'https://entry.example/' }).success;
+  // 第三层：VIL（经 analyze 的 4b 路径）—— 真实调用，不再手写 includes
+  const vilRes = vil.analyze({
+    beforeObservation: { url: 'https://entry.example/', textSummary: 'entry' },
+    afterObservation: { url: 'https://a.com/', textSummary: 'stable', loadingState: 'complete', previousObservationDiff: {} },
+    expectedVerification: { type: 'url_contains', expect: 'HTTPS' },
+    actionResult: { success: true },
+    action: { type: 'click' },
+  });
+  const vilHit = vilRes.failureType === 'VERIFICATION_TOO_STRICT';
+  ok(v === 'FALSE' && verif === false && vilHit === false,
+    'C4 url_contains **三层**同口径（裸 includes、大小写敏感；第三层 VIL 由 C130 收敛，本断言由两层升级为三层且全部真实调用）',
+    'skill=' + v + ' verif=' + verif + ' vil=' + vilHit);
 }
 
 // ── D 组：放宽 / 收紧 / 未动 三向自检 ─────────────────────────────────────
