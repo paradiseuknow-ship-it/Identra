@@ -196,8 +196,13 @@ const MATRIX = [
     },
     {
       f: 'server/agent/verification/verificationIntelligence.js', name: 'C2 VIL expect 判定',
-      shape: /if \(type === 'url_contains' && expect\) \{[\s\S]{0,80}?url\.includes\(String\(expect\)\)/,
-      revert: /if \(type === 'url_contains' && expect\) \{[\s\S]{0,80}?url\.includes\(String\(expect\)\.toLowerCase\(\)\)/,
+      // C132 修订：C2 的 C130 形态（`url.includes(String(expect))`，无 P2）**本身**已构成
+      // 新缺陷（缺 P2 无效证据守卫 ⇒ 与裁决面跨支/跨层相反）。C132 改为委托
+      // clause.evalUrlContains ⇒ 锚点从**字面 includes** 上移到**不变量**：
+      // 「分支存在 + 已委托唯一实现」。大小写轴由委托实现 + E6 放宽扫描继续守住。
+      // revert 合并两个"修复前形态"：① C130 之前（两侧折叠）② C130~C132 之间（裸 includes 无 P2）。
+      shape: /if \(type === 'url_contains' && expect\) \{[\s\S]{0,120}?clause\.evalUrlContains\(\{ type, expect \}, afterObservation, beforeObservation\)\.ok/,
+      revert: /(?:if \(type === 'url_contains' && expect\) \{[\s\S]{0,80}?url\.includes\(String\(expect\)\.toLowerCase\(\)\)|if \(type === 'url_contains' && expect\) \{[\s\S]{0,80}?url\.includes\(String\(expect\)\);)/,
     },
     {
       f: 'server/agent/verification/verificationIntelligence.js', name: 'C3 VIL clausePresent url 声明',
@@ -406,8 +411,14 @@ ok(/return url\.includes\(e\) \? CLAUSE_VERDICT\.TRUE : CLAUSE_VERDICT\.FALSE;/.
 // E4 收紧登记：VIL 侧四处改动都必须是"去 lowercase"，不得出现别的形状
 ok(/const url = String\(afterObservation\.url \|\| ''\);/.test(VIL_SRC),
   'E4a 收紧：expectedActuallyPresent 的 url 改为原样 String(...)');
-ok(/return url\.includes\(String\(expect\)\);/.test(VIL_SRC),
-  'E4b 收紧：expectedActuallyPresent 的 expect 侧不再 toLowerCase');
+// C132 修订：判定已委托唯一实现（clause.evalUrlContains）⇒ 不再锚字面 includes 形态，
+// 改锚**函数体作用域**的不变量：「已委托 + 体内无任何大小写折叠」（与 E4d 同构）。
+// 为何必须锚函数体而非全文件：VIL 里 `detectAsyncPending` 对路径关键词的不敏感是**有意**的
+// （D3 登记面），全文件级 `toLowerCase` 黑名单会把它误伤成假红（C131 反过宽陷阱同族）。
+const eapBody = (VIL_SRC.match(/function expectedActuallyPresent\([\s\S]*?\n\}/) || [''])[0];
+ok(/clause\.evalUrlContains\(/.test(eapBody) && !/toLowerCase\(/.test(eapBody),
+  'E4b 收紧：expectedActuallyPresent 已委托 clause.evalUrlContains，且函数体内无大小写折叠'
+  + '（C132 起形态解耦：锚不变量而非字面 includes）');
 ok(/const url = String\(\(after && after\.url\) \|\| ''\);/.test(VIL_SRC),
   'E4c 收紧：clausePresent 的 url 改为原样 String(...)');
 // C131 修订：clausePresent 的 expect 侧判定已委托 clause.evalUrlContains（P2 下沉）。
@@ -462,7 +473,8 @@ ok(/case 'url_contains': return clause\.evalUrlContains\(cl, after, before\)\.ok
   //    防真空能力不减：E1 收紧 + E6 放宽 0 + E6b 分支存在，三者合起来仍排除"漏改"。
   const TIGHT_SHAPES = [
     /const url = String\(afterObservation\.url \|\| ''\);/,
-    /return url\.includes\(String\(expect\)\);/,
+    // C132：expectedActuallyPresent 的判定已委托唯一实现 ⇒ 锚「已委托」而非字面 includes
+    /if \(type === 'url_contains' && expect\) \{[\s\S]{0,120}?clause\.evalUrlContains\(\{ type, expect \}, afterObservation, beforeObservation\)\.ok/,
     /const url = String\(\(after && after\.url\) \|\| ''\);/,
     // C131：该分支必须存在，且**不得**出现任何大小写折叠（口径不变量的形态无关表达）
     /case 'url_contains':\s*return\s+(?!.*\.toLowerCase\(\)).*url_contains|case 'url_contains':\s*return clause\.evalUrlContains\(cl,\s*after,\s*before\)\.ok;/,

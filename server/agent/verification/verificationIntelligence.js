@@ -182,7 +182,11 @@ function detectAsyncPending(beforeObservation, afterObservation) {
 }
 
 // 轻量：从观察结果判断「期望验证目标」是否真实存在（用于区分 TOO_STRICT vs UNKNOWN）
-function expectedActuallyPresent(expectedVerification, afterObservation) {
+// C132：本函数与 clausePresent 是 4b `targetPresent` **同一个变量的两支**（见 _analyze
+// :420-423 的三元式）⇒ 两者必须同口径；否则同一逻辑场景仅因「planner 是否给出
+// verification」这一个无关差异，就得到相反诊断。故 url_contains 分支改为委托
+// clause.evalUrlContains（唯一实现，含 P2），签名相应补 beforeObservation。
+function expectedActuallyPresent(expectedVerification, afterObservation, beforeObservation) {
   if (!expectedVerification || !afterObservation) return false;
   const type = expectedVerification.type;
   const expect = expectedVerification.expect;
@@ -198,12 +202,16 @@ function expectedActuallyPresent(expectedVerification, afterObservation) {
     return clause.evalTextPresent(afterObservation, expect).ok;
   }
   if (type === 'url_contains' && expect) {
-    // C130：expect 侧同样不 lowercase —— 与 url 侧、与 verification.js/skillRouter 三处同口径。
-    // 改前本行两侧都降大小写 ⇒ 该子句在 VIL 比契约**更宽**：URL 仅大小写不同也判
-    // 「期望业务结果其实已达成」⇒ 4b 误报 VERIFICATION_TOO_STRICT。
-    // 契约依据：planner.js:86「expect 必须是动作执行前 URL 中不存在的片段」（原样字面片段），
-    // planner.js 全文无 toLowerCase；contract.deriveContract('navigate') 的 __URL__ 亦原样替换。
-    return url.includes(String(expect));
+    // C130：expect 侧不 lowercase（原样字面片段，与契约一致）。
+    // C132：**委托唯一实现**。改前本行是一份内联裸 `url.includes(String(expect))`，**无 P2**
+    // —— before.url 已含 expect 时仍判 true ⇒ 4b 报 VERIFICATION_TOO_STRICT + RETRY_VERIFY，
+    // 把「无真实跳转」的真实失败说成「其实已达成」，而裁决面判 false 且
+    // invalidEvidence=precondition_true ⇒ 跨支/跨层相反。
+    // ★ 危害面与 C131 同源，但属**另一支**：P1（businessState 形态）走 clausePresent
+    //   （C131 已含 P2）；P2（planner 给了裸 verification 的形态）走本函数 ⇒ C131 只修了一支。
+    // 契约依据 planner.js:79/86：「expect 必须是动作执行前 URL 中不存在的片段，若入口 URL
+    // 已包含该片段，验证将被判为无效证据而失败」⇒ P2 是子句语义的一部分。
+    return clause.evalUrlContains({ type, expect }, afterObservation, beforeObservation).ok;
   }
   if (type === 'element_present' && expect) {
     // C124：改走共用原语的 loose 档。
@@ -217,9 +225,13 @@ function expectedActuallyPresent(expectedVerification, afterObservation) {
     // 自带同样长的空白串，现实不可达 —— 所以本批**不声称**修掉了跨元素假阳性。
     return elementExists(afterObservation, expect, { loose: true }).found;
   }
-  // businessState 契约：委托 businessStatePresent 做精准判定（B2 真实归因）
+  // businessState 契约：委托 businessStatePresent 做精准判定（B2 真实归因）。
+  // C132：传 beforeObservation 而非 null。★该分支在**当前唯一调用点**下**结构上不可达**
+  // （_analyze :428 的三元式已用 businessState 作判别，本函数只在 else 支被调用；且本函数
+  // 未导出）⇒ 本次改动**零行为变更**。保留并补齐口径，是为了不留下第二份「无 before」的
+  // 形态：将来若新增调用方，口径与主路径天然一致（L16 的反面用法 —— 不留幽灵形态）。
   if (expectedVerification.businessState) {
-    return businessStatePresent(expectedVerification.businessState, afterObservation, null);
+    return businessStatePresent(expectedVerification.businessState, afterObservation, beforeObservation);
   }
   // 其它类型（login_state/page_change/action_success）不直接判断"存在性"
   return false;
@@ -418,9 +430,12 @@ function _analyze({ beforeObservation, afterObservation, expectedVerification, a
   }
 
   // 4b) 期望目标其实存在（只是验证规则未匹配）→ 验证过严
+  // C132：★本三元式的两支是**同一个变量**，必须同口径 —— 左支业务态契约（C131 已含 P2），
+  // 右支裸 verification。改前右支漏传 before ⇒ 同一逻辑场景仅因 planner 是否给出
+  // verification 就得到相反诊断（实测：STATE_UNKNOWN vs VERIFICATION_TOO_STRICT）。
   const targetPresent = expectedVerification && expectedVerification.businessState
     ? businessStatePresent(expectedVerification.businessState, after, before)
-    : expectedActuallyPresent(expectedVerification, after);
+    : expectedActuallyPresent(expectedVerification, after, before);
   if (targetPresent) {
     evidence.push('期望业务结果在观察中实际存在，但 verification 规则未匹配，判定为验证过严（可尝试替代状态判定）');
     return {

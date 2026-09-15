@@ -273,14 +273,24 @@ console.log('\n── D 组：有意分离面登记（本批**未**统一的东�
   ok(!/clauseVerdict\s*\(\s*clause\s*,\s*obs\s*,\s*before/.test(ROUTER_SRC),
     'D1b 登记：clauseVerdict 不得被"统一"成三参（前置态加 P2 = 语义污染）');
 
-  // D2：`expectedActuallyPresent` 登记 —— 其 url_contains 分支仍是无 before 的字面痕迹判定。
-  //     本批**挂起**（签名未收 before ⇒ 无从取 before；且其 4b 入口与 businessState 通道互斥）。
-  //     此处登记"它仍是这个形状"，任何无声改动都红 ⇒ 迫使下批显式决策。
+  // D2：`expectedActuallyPresent` —— ★ **C132 已定级并修复**（原为 C131 的挂起登记）。
+  //     C132 结论：它与 `clausePresent` 是 4b `targetPresent` **同一个变量的两支**
+  //     （_analyze 的三元式）⇒ 口径必须唯一；否则同一逻辑场景仅因「planner 是否给出
+  //     verification」就得到相反诊断（实测 STATE_UNKNOWN vs VERIFICATION_TOO_STRICT）。
+  //     修法＝补 beforeObservation 形参 + 委托 clause.evalUrlContains（唯一实现，含 P2）。
+  //     ⇒ D2 由「挂起登记」升级为**不变量断言**（L17：shape 与 revert 双向咬）。
   const VIL_SRC = read('server/agent/verification/verificationIntelligence.js');
-  ok(/if \(type === 'url_contains' && expect\) \{\s*[\s\S]{0,900}?return url\.includes\(String\(expect\)\);\s*\}/.test(VIL_SRC),
-    'D2 挂起登记：expectedActuallyPresent 的 url_contains 仍为字面痕迹判定（无 before，待下批定级）');
-  ok(/function\s+expectedActuallyPresent\s*\(\s*expectedVerification\s*,\s*afterObservation\s*\)/.test(VIL_SRC),
-    'D2b 挂起登记：expectedActuallyPresent 签名仍为两参（未收 before）');
+  const EAP_BRANCH = /if \(type === 'url_contains' && expect\) \{[\s\S]{0,200}?clause\.evalUrlContains\(\{ type, expect \}, afterObservation, beforeObservation\)\.ok/;
+  const EAP_REVERT = /if \(type === 'url_contains' && expect\) \{[\s\S]{0,200}?url\.includes\(String\(expect\)\)/;
+  ok(!EAP_REVERT.test(VIL_SRC),
+    'D2a 回退探针：expectedActuallyPresent 的 url_contains 分支**不得**回到「忽略 before 的裸 includes」'
+    + '（P2 缺失形状 = 跨支相反答案之源；本批修复前的形态）');
+  ok(EAP_BRANCH.test(VIL_SRC),
+    'D2b 不变量：expectedActuallyPresent 的 url_contains 判定已委托 clause.evalUrlContains（与 clausePresent 同口径）');
+  ok(/function\s+expectedActuallyPresent\s*\(\s*expectedVerification\s*,\s*afterObservation\s*,\s*beforeObservation\s*\)/.test(VIL_SRC),
+    'D2c 不变量：expectedActuallyPresent 签名已收 beforeObservation（因果归因所需，C132 起）');
+  ok(/expectedActuallyPresent\(expectedVerification, after, before\)/.test(VIL_SRC),
+    'D2d 不变量：4b 调用点已把 before 传给 expectedActuallyPresent（两支同参，防"改了签名忘改调用点"）');
 }
 
 // ── E 组：三向自检 + 生产可达性 ─────────────────────────────────────────────
