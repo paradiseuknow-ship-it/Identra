@@ -82,14 +82,21 @@ function verify(v, after, before) {
       return { success: ok, confidence: ok ? 0.95 : 0.8, evidence };
     }
     case 'text_present': {
-      const ok = !!expect && text.toLowerCase().includes(String(expect).toLowerCase());
-      evidence.push(`页面文本${ok ? '包含' : '不包含'} "${expect}"`);
-      return { success: ok, confidence: ok ? 0.9 : 0.7, evidence };
+      // C126：证据源从 `textSummary`（前 120 个筛选元素，截断 5000）改为**可见文本全量**
+      // （textSummary + visibleText）。此前长页面上目标文本落在第 121 个元素之后时
+      // 判定恒假 —— 真实成功被误判失败，且与诊断层（读 visibleText）结论相反。
+      // 判定与口径见 clause.js（唯一实现）。
+      const r = clause.evalTextPresent(after, expect);
+      evidence.push(r.reason);
+      return { success: r.ok, confidence: r.confidence, evidence };
     }
     case 'text_absent': {
-      const ok = !expect || !text.toLowerCase().includes(String(expect).toLowerCase());
-      evidence.push(`页面文本${ok ? '未出现' : '出现'} "${expect}"`);
-      return { success: ok, confidence: ok ? 0.85 : 0.6, evidence };
+      // C126：与 text_present 共用同一份页面文本口径（L6：同一后果面不得两条路径不一致）。
+      // 方向说明：证据源变宽使 text_absent **更严**（更不容易误判「已消失」）—— 与
+      // 「不设伪成功」一致。
+      const r = clause.evalTextAbsent(after, expect);
+      evidence.push(r.reason);
+      return { success: r.ok, confidence: r.confidence, evidence };
     }
     case 'element_present': {
       const cands = expect ? semanticResolver.resolve(expect, after) : [];

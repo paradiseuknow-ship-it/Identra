@@ -186,10 +186,11 @@ function expectedActuallyPresent(expectedVerification, afterObservation) {
   if (!expectedVerification || !afterObservation) return false;
   const type = expectedVerification.type;
   const expect = expectedVerification.expect;
-  const text = (afterObservation.visibleText || afterObservation.textSummary || '').toLowerCase();
   const url = (afterObservation.url || '').toLowerCase();
   if (type === 'text_present' && expect) {
-    return text.includes(String(expect).toLowerCase());
+    // C126：走与验证引擎同一份文本证据口径（clause.js）。此前这里读 visibleText 而
+    // 验证引擎读 textSummary ⇒ 长页面上「验证说过严、其实没漏」的误判。
+    return clause.evalTextPresent(afterObservation, expect).ok;
   }
   if (type === 'url_contains' && expect) {
     return url.includes(String(expect).toLowerCase());
@@ -217,12 +218,18 @@ function expectedActuallyPresent(expectedVerification, afterObservation) {
 // 判定单个业务态 clause 在 after 中是否真实存在（B2：精准归因 VERIFICATION_TOO_STRICT）。
 function clausePresent(cl, after, before) {
   if (!cl || !cl.type) return false;
-  const text = ((after.visibleText || after.textSummary || '') + ' ' + (after.roleText || '')).toLowerCase();
+  // C126：文本证据一律走 clause.js 的唯一口径（textSummary + visibleText 全量），
+  // 不再在本文件里各自拼串。roleText 是**元素级**证据（交互元素角色名 / aria-label），
+  // 不参与文本通道 —— 否则「视觉上没有这段文字」的元素属性会命中 text_present（假阳性），
+  // 且制造与验证引擎的口径分歧（它从来不读 roleText）。
+  // login_state 与验证引擎同源（textSummary）：该正则本就脆弱（_analyze 4c 有专属兜底），
+  // 证据源越宽越容易把「未登录」判成「已登录」，故向验证引擎口径收敛而非反向放宽。
+  const text = String((after && after.textSummary) || '').toLowerCase();
   const url = (after.url || '').toLowerCase();
   const els = after.elements || [];
   switch (cl.type) {
-    case 'text_present': return !!cl.expect && text.includes(String(cl.expect).toLowerCase());
-    case 'text_absent': return !cl.expect || !text.includes(String(cl.expect).toLowerCase());
+    case 'text_present': return clause.evalTextPresent(after, cl.expect).ok;
+    case 'text_absent': return clause.evalTextAbsent(after, cl.expect).ok;
     case 'url_contains': return !!cl.expect && url.includes(String(cl.expect).toLowerCase());
     case 'page_change': {
       // C124 D5：两侧必须**同口径构造**。旧实现 after 侧是
