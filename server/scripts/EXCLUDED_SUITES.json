@@ -64,13 +64,6 @@
       "追踪": "C135-EX-06"
     },
     {
-      "file": "testAgentPhase32.js",
-      "原因": "① 未做数据根隔离 ② 纯逻辑红：B2「二次同目标跳过 LLM」fromFlow=false、calls=2（其前序 B1「落库 flow conf≥0.85」已通过）⇒ planWithMemory 未复用已落库 flow。红因未归因。 【C137 隔离实测】FPB_DATA_DIR 隔离后 **PASS 22 / FAIL 1**。唯一红项 = `B2 Case2 二次同目标跳过 LLM`（实测 `fromFlow=false calls=2`）⇒ 命中 **Flow 复用路径**（flowPlanner.planWithMemory 未从 flowMemory 取到历史）⇒ **待定级：可能为真缺陷（高优先级）**。",
-      "归类": "待归因",
-      "晋升条件": "核查 flowPlanner/flowMemory 的键构造与新鲜度门槛后归因，再视结论修断言或修生产",
-      "追踪": "C135-EX-07"
-    },
-    {
       "file": "testAgentPhase34.js",
       "原因": "① 未做数据根隔离 ② 纯逻辑红：region 组选中真实数据里的遗留 profile（p_phase23_mu3amqhd）而非套件自建 fixture pp_* ⇒ 套件自身隔离缺陷，跨运行/跨套件脏数据污染。",
       "归类": "测试隔离缺陷",

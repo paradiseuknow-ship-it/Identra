@@ -3,6 +3,12 @@
 // Phase 3.2 验收：Element Memory 加固 5 项 + Flow Intelligence（状态机式流程记忆）。
 // 纯逻辑（无浏览器）：直接驱动 intelligence 模块 + planWithMemory 决策 + 真实 complete 落库路径。
 // 用法：node server/scripts/testAgentPhase32.js
+//
+// ★ C138 数据根隔离：本套件此前直接读写真实 server/data（回归扫描面缺口使「已做数据根隔离」
+//   这一入集前提从未被施加；其 clearAll() 会清空 aiElementMemory/aiFlowMemory/aiSiteMemory）。
+//   必须在 require 任何业务模块**之前**设置 —— store 的数据根是模块加载期解析的。
+
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c138_p32_' + Date.now());
 
 const store = require('../agent/store');
 const planner = require('../agent/planner');
@@ -106,7 +112,14 @@ async function main() {
     goal: 'signup saas account',
     steps: [
       { id: 'nav', type: 'NAVIGATE', description: 'open signup', expectedOutcome: 'o', risk: 'LOW', action: { type: 'navigate', target: { url: 'http://shop.test/signup' }, risk: 'LOW', verification: { type: 'page_change' } } },
-      { id: 'fill_email', type: 'ACT', description: 'fill email', expectedOutcome: 'o', risk: 'MEDIUM', action: { type: 'fill', target: { semantic: 'email_field' }, risk: 'MEDIUM', verification: { type: 'page_change' } } },
+      // ★ C138：fill 必须有 value 或 credentialRef（schema/action.js:174）。身份类字段按生产 P1
+      //   凭据契约用 credentialRef 引用凭据，禁止明文 value。
+      //   旧用例此处**两者都无** ⇒ 该 plan 违反 action 契约，而生产 planner 出口
+      //   （planner.js:465 `validatePlan(canonical)`）必然拒绝并重试 ⇒ 这种 plan 永远不会落库成
+      //   flow。即旧用例构造的是**生产不可发生的输入**（本文件 stub 掉了整个 planObjective，
+      //   绕过了那道校验）；CAP-K1 读侧守卫（tryFlowPlan 重建后先过 validatePlan）正确地拒绝了
+      //   带病重放 ⇒ 旧断言红。真正需要钉住的是「合法输入下复用链路健康」+「非法 flow 必被拒」。
+      { id: 'fill_email', type: 'ACT', description: 'fill email', expectedOutcome: 'o', risk: 'MEDIUM', action: { type: 'fill', target: { semantic: 'email_field' }, risk: 'MEDIUM', credentialRef: 'cred_email', verification: { type: 'page_change' } } },
       { id: 'click_submit', type: 'ACT', description: 'submit', expectedOutcome: 'o', risk: 'MEDIUM', action: { type: 'click', target: { semantic: 'submit' }, risk: 'MEDIUM', verification: { type: 'page_change' } } },
     ],
   };
@@ -136,6 +149,28 @@ async function main() {
   // 消费点1（续）：第二次同目标 → 直接加载历史 flow，不调用 LLM
   const r2flow = await fp.planWithMemory({ objective: 'signup saas account', target: 'http://shop.test/signup', executionMode: 'AUTONOMOUS', provider: {}, ctx: {} });
   ok(r2flow.ok && r2flow.fromFlow === true && llmCalls === 1, 'B2 Case2 二次同目标跳过 LLM', 'fromFlow=' + r2flow.fromFlow + ' calls=' + llmCalls);
+
+  // ★ C138 写读保真（CAP-K1 核心不变量）：flow 重建的 fill 必须**原样带出 credentialRef**。
+  //   旧实现只存 semantic、toPlan 一律重建成 click ⇒ fill/select/press 全退化为点击，重放必失败
+  //   且无人知晓。这里断言的是「写侧 stateFromStep → 读侧 toPlan」整条链的字段保真。
+  const rebuiltFill = (r2flow.plan && r2flow.plan.steps || []).find((s) => s.action.type === 'fill');
+  ok(rebuiltFill && rebuiltFill.action.credentialRef === 'cred_email',
+    'B2 写读保真：fill 的 credentialRef 往返保留（不退化）', rebuiltFill && JSON.stringify(rebuiltFill.action));
+
+  // ★ C138 契约守卫（正向断言，防未来被削弱）：把同一组 states 去掉 fill 的取值字段 ⇒ 重建后
+  //   违反 action 契约。此时即使**置信度达标**，复用入口也必须拒绝并降级 LLM，绝不带病重放。
+  //   （旧用例的 LLM_PLAN 正是这种非法形态 —— 这条断言把它从「偶然红」变成「显式守护」。）
+  const stripped = JSON.parse(JSON.stringify(recorded.states)).map((st) => {
+    if (st.actionType === 'fill') { delete st.value; delete st.credentialRef; }
+    return st;
+  });
+  const gRec = fm.recordFlow('guard.test', 'guard illegal fill', stripped, { source: { type: 'ai_success' } });
+  if (gRec.ok) fm.recordOutcomeFlow(gRec.flow.id, true); // 计成功 ⇒ 确保拦下它的是**契约**而非阈值
+  const gConf = fm.getByKey('guard.test', 'guard illegal fill');
+  const gHit = fp.tryFlowPlan('http://guard.test/x', 'guard illegal fill');
+  ok(gConf && gConf.confidence >= 0.85 && gHit === null,
+    'B2-guard 高置信度但非法的 flow 仍被复用入口拒绝（绝不带病重放）',
+    'conf=' + (gConf && gConf.confidence) + ' hit=' + (gHit ? 'HIT(带病重放!)' : 'null'));
 
   // B3) 页面变化：flow 仍可用（toPlan 输出仅 semantic/URL 提示，无 selector/坐标）
   const plan = r2flow.plan;

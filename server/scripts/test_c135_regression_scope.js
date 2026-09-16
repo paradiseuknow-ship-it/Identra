@@ -107,6 +107,12 @@ const PROMOTED = [
   //  生产代码两者均未改（归属证据：_reapZombieDispatches 在 C134 已存在、C135 未改）。
   'server/scripts/testAgentPhase42.js',
   'server/scripts/testAgentPhase43.js',
+  // C138 归因而晋升：EX-07「待归因（可能为真缺陷，高优先级）」定性为**测试构造了生产不可发生的
+  //  输入** —— 其 LLM_PLAN 的 fill 既无 value 也无 credentialRef（schema/action.js:174 要求其一），
+  //  而生产 planner 出口强制 validatePlan（planner.js:465）⇒ 这种 plan 永远不会落库成 flow；
+  //  读侧 CAP-K1 守卫（tryFlowPlan 先过 validatePlan）正确拒绝带病重放，故旧断言红。
+  //  归属证据：把同一 plan 的 fill 补成合法（credentialRef）后整条复用链绿（fromFlow=true calls=1）。
+  'server/scripts/testAgentPhase32.js',
   'server/scripts/testMemoryIsolation.js',
   'server/scripts/testWorkerIsolation.js',
 ];
