@@ -5,6 +5,11 @@
 // 注意：集成部分启动浏览器，必须**停止 server 进程**后独立运行。
 // 用法：node server/scripts/testAgentPhase22.js
 
+// ★ C135 数据根隔离：本套件此前直接读写真实 server/data
+//   （回归扫描面缺口使「已隔离」这一入集前提从未被施加）。必须在 require 任何业务模块
+//   **之前**设置 —— 否则 store 单例已按真实根建好。
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c135_p22_' + Date.now());
+
 const db = require('../db');
 const taskManager = require('../agent/taskManager');
 const browserManager = require('../browserManager');
@@ -113,8 +118,13 @@ async function main() {
     ],
   });
   taskManager.start(t1.id);
-  const r1 = await waitStatus(t1.id, ['SUCCESS', 'FAILED', 'PAUSED_FOR_HUMAN'], 90000);
-  ok(r1.status === 'PAUSED_FOR_HUMAN', '修复耗尽后进入人工审批（非无限循环）', r1.error || '');
+  // C135：Phase 5.8 起「修复耗尽」走 HUMAN_ESCALATION **显式终态**（runtime.js:1205-1211 的
+  // outcome.paused 分支 → taskManager.escalate；原 PAUSED_FOR_HUMAN 非终态，会永久悬挂）。
+  // 断言口径应锚「已离开重试循环并交人工」这一意图，而不是某一个具体状态名 —— 否则每次
+  // 状态机语义升级都会产出一次假红（本套件此前正是如此，且因扫描面缺口长期无人发现）。
+  const r1 = await waitStatus(t1.id, ['SUCCESS', 'FAILED', 'PAUSED_FOR_HUMAN', 'HUMAN_ESCALATION'], 90000);
+  ok(['PAUSED_FOR_HUMAN', 'HUMAN_ESCALATION'].includes(r1.status),
+    '修复耗尽后离开重试循环并交人工（非无限循环）', r1.status + ' ' + (r1.error || ''));
   const final = taskManager.getTask(t1.id);
   ok(!!final.lastDiagnosis && hasFourLayers(final.lastDiagnosis), '失败后生成结构化诊断（四层）', JSON.stringify(final.lastDiagnosis || {}).slice(0, 200));
   const diagResp = (() => { const fs = require('../agent/recovery/failureSnapshot'); return fs.listForTask(t1.id); })();

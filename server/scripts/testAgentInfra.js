@@ -5,6 +5,11 @@
 //       Queue 优先级 / ObservationCache 命中 / SSE EventStore 回放 / Checkpoint。
 // 用法：node server/scripts/testAgentInfra.js
 
+// ★ C135 数据根隔离：本套件此前直接读写真实 server/data
+//   （回归扫描面缺口使「已隔离」这一入集前提从未被施加）。必须在 require 任何业务模块
+//   **之前**设置 —— 否则 store 单例已按真实根建好。
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c135_infra_' + Date.now());
+
 const schema = require('../agent/schema/action');
 const policy = require('../agent/policy');
 const tsm = require('../agent/taskStateManager');
@@ -37,8 +42,12 @@ async function main() {
   ok(r.ok && policy.effectiveRisk(r.action) === 'MEDIUM', 'click 自报 LOW 经 Policy 校准为 MEDIUM');
   r = schema.validateAction({ type: 'fill', target: { field: 'password' }, value: 'secret' });
   ok(!r.ok, '敏感字段 password 用 value 字面量被拒绝');
-  r = schema.validateAction({ type: 'fill', target: { field: 'password' }, credentialRef: 'cred_001' });
-  ok(r.ok, '敏感字段走 credentialRef 通过');
+  // C135：本用例此前缺 verification —— 而 fill/select/press 的真实门槛是
+  // 「value 或 credentialRef」**且**「有意义的验证（verification.type≠none 或 expectedBusinessState）」。
+  // 缺 verification 被拒与凭据闸无关（凭据闸本身由上一行 value 字面量被拒守护）。
+  // 补 verification 后才真正测到「敏感字段可经 credentialRef 通过」。
+  r = schema.validateAction({ type: 'fill', target: { field: 'password' }, credentialRef: 'cred_001', verification: { type: 'field_value', expect: 'x' } });
+  ok(r.ok, '敏感字段走 credentialRef 通过（须随 verification）');
   r = schema.validateAction({ type: 'goto' });
   ok(!r.ok, '非法 type 被拒绝');
   r = schema.validateAction({ type: 'submit', target: { semantic: 'submit' } });
@@ -56,8 +65,32 @@ async function main() {
   r = schema.validateAction({ type: 'payment', target: { semantic: 'pay' }, risk: 'CRITICAL', verification: { type: 'page_change' } });
   let d = policy.allowsAction(r.action, { executionMode: 'AUTONOMOUS' });
   ok(!d.allowed && d.requiresApproval, 'CRITICAL payment 默认需人工审批');
-  d = policy.allowsAction(r.action, { executionMode: 'AUTONOMOUS', policy: { autoPayment: true } });
-  ok(d.allowed, '测试环境 autoPayment=true 放行支付');
+  // C135：旧断言写的是「测试环境 autoPayment=true 放行支付」—— 该断言**漏掉了放行前提**。
+  // 实测（policy.js:18-24 autoPaymentAllowed）：autoPayment 受**代码级环境护栏**强制 ——
+  //   仅当 NODE_ENV==='test' 或 FPB_ALLOW_AUTOPAY==='1' 时，policy.autoPayment===true 才生效；
+  //   任何普通调用者用 task.policy.autoPayment=true 注入，在非测试环境**一律无效**。
+  // 旧断言在非测试环境下必然红（这正是本套件长期漏扫而无人发现的那条）。
+  // 现改为断言真实不变量，并**双向**取值以证明断言有分辨力（而非恒假）。
+  {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevAllowAutopay = process.env.FPB_ALLOW_AUTOPAY;
+    try {
+      delete process.env.NODE_ENV;
+      delete process.env.FPB_ALLOW_AUTOPAY;
+      ok(policy.allowsAction(r.action, { executionMode: 'AUTONOMOUS', policy: { autoPayment: true } }).allowed === false,
+        '非测试环境：task.policy.autoPayment=true 注入不可放行 payment（环境护栏在代码层强制）');
+      process.env.FPB_ALLOW_AUTOPAY = '1';
+      ok(policy.allowsAction(r.action, { executionMode: 'AUTONOMOUS', policy: { autoPayment: true } }).allowed === true,
+        '显式测试环境标记下 autoPayment 放行 payment（反向成立 = 断言非恒假）');
+    } finally {
+      if (prevNodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prevNodeEnv;
+      if (prevAllowAutopay === undefined) delete process.env.FPB_ALLOW_AUTOPAY; else process.env.FPB_ALLOW_AUTOPAY = prevAllowAutopay;
+    }
+  }
+  ok(policy.allowsAction(r.action, { executionMode: 'AUTONOMOUS' }).requiresApproval === true,
+    '默认（无 autoPayment）CRITICAL payment 恒需人工审批');
+  ok(policy.allowsAction(r.action, { executionMode: 'SIMULATION', policy: { autoPayment: true } }).allowed === false,
+    'SIMULATION 下 payment 恒被拒（autoPayment 亦不生效）');
   r = schema.validateAction({ type: 'click', target: { semantic: 'x' }, risk: 'LOW', verification: { type: 'page_change' } });
   d = policy.allowsAction(r.action, { executionMode: 'ASSIST', policy: { riskFloor: 'MEDIUM' } });
   ok(d.allowed, 'ASSIST click(MEDIUM) 放行');

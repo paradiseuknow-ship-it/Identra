@@ -72,9 +72,19 @@ function wrap(raw, kind) {
           if (e instanceof BudgetExceededError) throw e;
         }
       }
+      // ★ C135 修复（A 类·语义污染）：LLM 调用结果**不得**复用生命周期事件类型。
+      // 旧实现：成功发 'agent.tool_result'、失败发 'task.failed' —— 两处都错配：
+      //   - 'task.failed' 在 schedulerLoop 被当作「任务终态」消费（且那里此前无守卫）⇒
+      //     一次 LLM 调用失败就把**仍在执行**的任务当终态处理：dispatch 被标 FAILED、
+      //     Worker 被提前释放。已在 aiEvents 实证 2 例（task_mu3ajlrr36uw9 / task_mu3apcnzcml59，
+      //     payload 为 {llm:true,provider:'deepseek',type:'structured',ok:false,...}）。
+      //   - 'agent.tool_result' 语义是「工具调用结果」，LLM 调用不是工具调用，同样错配。
+      // 收口为单一遥测类型 'agent.llm.call'：ok 是**属性**而不是生命周期状态 ——
+      // 把 ok 编码进事件类型正是本缺陷的成因；单类型 + payload.ok 使任何未来的结果分支
+      // 都只能落进同一个漏斗，无法再制造第二个语义出口。
       events.emit({
         taskId: ctx && ctx.taskId, executionId: ctx && ctx.executionId,
-        type: ok ? 'agent.tool_result' : 'task.failed',
+        type: 'agent.llm.call',
         payload: { llm: true, provider: kind, type, ok, durationMs: duration, tokens: usage.total_tokens || 0 },
       });
     }

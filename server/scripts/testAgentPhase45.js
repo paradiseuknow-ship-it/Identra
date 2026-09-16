@@ -4,6 +4,11 @@
 // 验证 StoreInterface 真正解耦：JsonStore 与 SqliteStore 语义一致，业务层零 SQL，
 // 通过环境变量 + Facade 切换，覆盖历史踩坑点（重复占用/幽灵锁/共享引用）。
 
+// ★ C135 数据根隔离：本套件此前直接读写真实 server/data
+//   （回归扫描面缺口使「已隔离」这一入集前提从未被施加）。必须在 require 任何业务模块
+//   **之前**设置 —— 否则 store 单例已按真实根建好。
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c135_p45_' + Date.now());
+
 const assert = require('assert');
 const path = require('path');
 const fs = require('fs');

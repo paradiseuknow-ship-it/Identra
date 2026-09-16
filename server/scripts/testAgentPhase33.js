@@ -8,6 +8,11 @@
 //   Case4 跨站隔离（A 站经验不影响 B 站）
 //   + schema 拒绝禁止字段 / 纯 errorType 误配被拒 / export-import 经验包
 
+// ★ C135 数据根隔离：本套件此前直接读写真实 server/data
+//   （回归扫描面缺口使「已隔离」这一入集前提从未被施加）。必须在 require 任何业务模块
+//   **之前**设置 —— 否则 store 单例已按真实根建好。
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c135_p33_' + Date.now());
+
 const store = require('../agent/store');
 const fk = require('../agent/intelligence/failure/failureKnowledge');
 const matcher = require('../agent/intelligence/failure/failureMatcher');

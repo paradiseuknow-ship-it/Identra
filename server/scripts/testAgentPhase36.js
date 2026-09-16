@@ -8,6 +8,11 @@
 //  Case4 错误经验淘汰（Element 100 hits / 30 success → DEPRECATED proposal）
 //  Case5 A/B 实验（control 70% vs treatment 90% → router wins）
 
+// ★ C135 数据根隔离：本套件此前直接读写真实 server/data
+//   （回归扫描面缺口使「已隔离」这一入集前提从未被施加）。必须在 require 任何业务模块
+//   **之前**设置 —— 否则 store 单例已按真实根建好。
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c135_p36_' + Date.now());
+
 const store = require('../agent/store');
 const elementMemory = require('../agent/intelligence/elementMemory');
 const flowMemory = require('../agent/intelligence/flowMemory');

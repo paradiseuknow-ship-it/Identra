@@ -47,6 +47,11 @@ const EVENT_TYPES = [
   'agent.credential_action_blocked',
   // PHASE 17-A：诊断进入 Runtime 决策层（state/blockedAction/required 取证）
   'agent.diagnosis_decision',
+  // C135：LLM 调用遥测（llm/provider.js 发出，调用成功与否在 payload.ok 内）。
+  // **不得**复用 'task.failed' / 'agent.tool_result' —— 前者是任务生命周期终态，
+  // 会被 schedulerLoop 的进程内监听当作 dispatch 终态消费：一次 LLM 调用失败
+  // 就能把仍在执行的任务误判为 FAILED 并提前释放 Worker（A 类并发正确性缺陷）。
+  'agent.llm.call',
   'task.paused', 'task.resumed', 'task.completed', 'task.failed', 'task.cancelled',
   // A 类 cancel deadline（2026-08-31）：cancel 收尾链任一环节超时/异常时的审计事件
   'task.cancel_timeout',

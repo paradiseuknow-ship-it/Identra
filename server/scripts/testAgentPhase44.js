@@ -4,6 +4,11 @@
 // 核心目标：100 个任务下，资源不发生「重复占用 / 幽灵锁 / 重复执行」。
 // 不启动真实浏览器（沙箱无 chromium）；本层管理「资源实体状态 + 互斥闸门」。
 
+// ★ C135 数据根隔离：本套件此前直接读写真实 server/data
+//   （回归扫描面缺口使「已隔离」这一入集前提从未被施加）。必须在 require 任何业务模块
+//   **之前**设置 —— 否则 store 单例已按真实根建好。
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c135_p44_' + Date.now());
+
 const store = require('../agent/store');
 const taskManager = require('../agent/taskManager');
 const execution = require('../agent/execution');

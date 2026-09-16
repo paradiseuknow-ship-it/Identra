@@ -7,6 +7,11 @@
 //  Case B：Evaluation proposal 不污染 Memory（proposal 后 store 仍 ACTIVE）
 //  Case C：Store 返回深拷贝隔离（修改副本不影响下次读取）
 
+// ★ C135 数据根隔离：本套件此前直接读写真实 server/data
+//   （回归扫描面缺口使「已隔离」这一入集前提从未被施加）。必须在 require 任何业务模块
+//   **之前**设置 —— 否则 store 单例已按真实根建好。
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c135_memiso_' + Date.now());
+
 const store = require('../agent/store');
 const elementMemory = require('../agent/intelligence/elementMemory');
 const evaluation = require('../agent/intelligence/evaluation');

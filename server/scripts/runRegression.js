@@ -66,29 +66,40 @@ const PER_TEST_TIMEOUT_MS = Number(process.env.REGRESSION_TIMEOUT_MS) || 180000;
 //     **断言口径零变化**：只放宽保险丝，不放松任何判定。
 const PER_TEST_TIMEOUT_OVERRIDES = {
   'test_step22_business_e2e.js': Number(process.env.REGRESSION_TIMEOUT_STEP22_MS) || 720000,
+  // 注：testAgentPhase22.js 于 C135 晋升入集，初版曾按其 §A 观测值 146s 设 300s 保险丝；
+  // 修掉过时断言后实测仅 8.2s（146s 的构成是**旧断言等满 90s 观测窗**，非真实耗时），
+  // 其内部窗 90s < 全局 180s ⇒ 按 C119 不变量无需 override，故不登记。
+  // 保险丝表只放有实测依据的条目，避免超时参数族被"顺手加一项"污染。
 };
 
 const argv = process.argv.slice(2);
 const VERBOSE = argv.includes('--verbose');
+// --list：只打印扫描面划分（候选 / 入集 / 登记排除）后退出，不执行任何套件。
+// 供 test_c135_regression_scope.js 消费 —— 守护测试**不得**自行复刻扫描规则
+// （那正是本批次修掉的缺陷形态：执行器与本守护长期各持一份规则，任一侧漂移即静默少覆盖）。
+const LIST = argv.includes('--list');
 const ONLY = (() => {
   const i = argv.indexOf('--only');
   return i >= 0 && argv[i + 1] ? argv[i + 1] : null;
 })();
 
 // ---------------------------------------------------------------------------
-// 扫描范围：server/scripts/test_*.js（维护中的套件）+ 根目录 test_*.js（历史探针）
+// 扫描范围（★ C135 收口到唯一事实源 server/scripts/suiteScope.js）
+//
+//   候选 = 任何 test 开头的 .js（server/scripts + 仓库根）—— 覆盖面不允许有黑洞
+//   入集 = 候选 − server/scripts/EXCLUDED_SUITES.json 登记的排除项
+//
+// 旧实现：本文件内联 `/^test_.*\.js$/`，注释却自称「维护中的套件」—— 两者**语义不等价**。
+// 真实入集前提是「已做数据根隔离、可在无 server 的执行器下安全并跑」。旧规则因此静默漏掉
+// 21 个真实套件（红灯不可见），而这 21 项**全部**未做数据根隔离（19 项直接写真实
+// server/data，testAgentPhase32 的 clean() 会清空 aiElementMemory/aiFlowMemory/aiSiteMemory）
+// ⇒ 盲目放宽规则引入的是数据破坏，而不是覆盖率提升。现把语义显式化：差集必须逐项登记。
+// 同一规则曾在本文件与 test_c119_suite_timeout_consistency.js 各存一份复刻，已一并收口。
 // ---------------------------------------------------------------------------
+const suiteScope = require('./suiteScope');
+
 function listTestFiles() {
-  const files = [];
-  const scan = (dir, prefix) => {
-    if (!fs.existsSync(dir)) return;
-    for (const name of fs.readdirSync(dir).sort()) {
-      if (!/^test_.*\.js$/.test(name)) continue;
-      files.push({ file: path.join(dir, name), label: prefix + name });
-    }
-  };
-  scan(SCRIPTS_DIR, 'server/scripts/');
-  scan(ROOT, '');
+  const files = suiteScope.listTestFiles();
   return ONLY ? files.filter((f) => f.label.includes(ONLY)) : files;
 }
 
@@ -113,7 +124,11 @@ function loadKnownGaps() {
 function pickSummary(log) {
   const lines = log.split('\n');
   const patterns = [
-    /PASS[:=]\s*\d+/i,
+    // C135：`[:=]` 改为可选 —— testAgent* 族用 `PASS 32 / FAIL 1`（数字在后），
+    // 旧式 `PASS[:=]\d+` 认不出，导致晋升入集的 11 个套件在汇总列恒显「(无统计行)」，
+    // 与「红灯必须可信 / 缺口不能隐身」同因：可读性缺口会让绿灯看起来像异常。
+    // 仅影响展示列，不参与任何判定。
+    /PASS\s*[:=]?\s*\d+/i,
     /\d+\s*(PASS|通过)/i,
     /结果[:：]\s*\d+\s*通过/i,
     /全部通过|ALL PASS/i,
@@ -131,6 +146,15 @@ function pickSummary(log) {
 // ---------------------------------------------------------------------------
 const knownGaps = loadKnownGaps();
 const files = listTestFiles();
+const excluded = suiteScope.excludedSuites();
+
+// --list：把扫描面的三划分交给守护测试（结构化、一行一项），不做任何执行。
+if (LIST) {
+  for (const s of suiteScope.collectCandidates()) console.log('CANDIDATE ' + s.label);
+  for (const s of files) console.log('RUN ' + s.label);
+  for (const s of excluded) console.log('EXCLUDED ' + s.label);
+  process.exit(0);
+}
 
 if (!files.length) {
   console.error('未找到任何测试文件');
@@ -147,8 +171,18 @@ const t0 = Date.now();
 
 console.log('回归执行器：' + files.length + ' 个测试文件'
   + (ONLY ? '（过滤: ' + ONLY + '）' : '')
+  + '，候选 ' + (files.length + excluded.length) + ' 个'
+  + (excluded.length ? '（其中 ' + excluded.length + ' 个已登记排除）' : '')
   + (Object.keys(knownGaps).length ? '，已登记缺口 ' + Object.keys(knownGaps).length + ' 项' : ''));
 console.log('临时目录：' + TMP_ENV.dir + (TMP_ENV.changed ? '（已从不「可列」目录加固，见 ensureListableTemp）' : ''));
+// 「差异不能隐身」：登记排除的候选套件每次运行都打印出来（不执行、不算失败），
+// 与 KNOWN_GAPS 同哲学 —— 扫描面缺口必须可见，但不应伪装成红灯。
+if (excluded.length) {
+  console.log('已登记排除 ' + excluded.length + ' 个候选套件（不执行；逐条理由见 server/scripts/EXCLUDED_SUITES.json）：');
+  for (const s of excluded) {
+    console.log('  ⊘ ' + s.label.padEnd(30) + (s.meta.追踪 || '').padEnd(12) + (s.meta.归类 || ''));
+  }
+}
 console.log('─'.repeat(96));
 
 for (const { file, label } of files) {

@@ -157,12 +157,38 @@ class SchedulerLoop {
     if (this._listening) return;
     this._listening = true;
     const self = this;
+    // ★ C135 结构守卫：只有「已落库的任务终态」才允许驱动 dispatch 收尾与 Worker 释放。
+    //
+    // 为什么不只校验事件类型（= 旧实现的形态）：type 是自由字符串，EVENT_TYPES 白名单
+    // 只是 advisory —— events.js 对未登记类型仅打一条告警就照常广播，拦不住任何东西。
+    // 历史上 llm/provider.js 把一次 LLM 调用失败发成 'task.failed'，而此处四分支无守卫 ⇒
+    // 任务仍在执行、dispatch 却被标 FAILED 且 Worker 被提前释放（并发正确性缺陷）。
+    //
+    // 事实源 = TaskManager 的**持久化状态**。taskManager 全部五个终态发出点
+    // （complete / cancel / fail / escalate / recover_lock 资源锁失败）都保证
+    // 「先 _setTaskState + store.upsert，后 emit」，因此
+    // 「事件类型属终态类」∧「aiTasks 中该任务确为终态」才是真实的终态通知。
+    // 对真实终态事件本守卫恒为真 ⇒ 既有行为零变化；对伪终态（LLM 遥测等）直接丢弃。
+    const TERMINAL_EVENT_DISPATCH_STATUS = {
+      'task.completed': 'COMPLETED',
+      'task.failed': 'FAILED',
+      'task.cancelled': 'CANCELLED',
+      'task.escalated': 'HUMAN_ESCALATION',
+    };
     // 监听 task 终态事件（进程内订阅，区别于 SSE 客户端推送）
     this._unsub = events.on((evt) => {
-      if (evt.type === 'task.completed') self._onTaskDone(evt.taskId, 'COMPLETED');
-      else if (evt.type === 'task.failed') self._onTaskDone(evt.taskId, 'FAILED');
-      else if (evt.type === 'task.cancelled') self._onTaskDone(evt.taskId, 'CANCELLED');
-      else if (evt.type === 'task.escalated') self._onTaskDone(evt.taskId, 'HUMAN_ESCALATION');
+      const dispatchStatus = TERMINAL_EVENT_DISPATCH_STATUS[evt.type];
+      if (!dispatchStatus) return;
+      if (!evt.taskId) return;
+      let task = null;
+      try { task = store.find('aiTasks', evt.taskId); } catch (e) { task = null; }
+      if (!task || !taskManager.isTaskTerminal(task.status)) {
+        // 只告警、绝不 emit（在 listener 内 emit 会递归触发自身）
+        console.warn('[scheduler] 丢弃伪终态事件（任务未落库终态）: ' + evt.type
+          + ' task=' + evt.taskId + ' status=' + (task ? task.status : '(无记录)'));
+        return;
+      }
+      self._onTaskDone(evt.taskId, dispatchStatus);
     });
   }
 

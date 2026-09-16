@@ -33,6 +33,9 @@ process.env.AI_PROVIDER = 'mock';
 const ROOT = path.join(__dirname, '..', '..');
 const REG_PATH = path.join(__dirname, 'runRegression.js');
 const STEP22_PATH = path.join(__dirname, 'test_step22_business_e2e.js');
+// ★ C135：扫描范围唯一事实源（见下方 listSuites 的说明）。
+// suiteScope 只依赖 fs/path，不 require 任何业务模块 ⇒ G2「零业务模块 require」前提不被破坏。
+const suiteScope = require('./suiteScope');
 
 let pass = 0; let fail = 0;
 function check(name, cond, detail) {
@@ -83,19 +86,13 @@ function extractWaitWindows(raw) {
   return wins;
 }
 
-// 复刻 runRegression 的扫描范围（server/scripts/test_*.js + 根目录 test_*.js）
+// ★ C135：扫描范围**不得**再复刻 —— 收口到唯一事实源 server/scripts/suiteScope.js。
+// 旧实现在此内联 `/^test_.*\.js$/` 并注释「复刻 runRegression 的扫描范围」：这意味着执行器的
+// 扫描面一旦变化，本守护的 C 组（横向完整性）就会**静默少覆盖**，且没有任何断言能发现
+// （正是 C135 立案的那类缺陷）。现改为直接消费入集（= 候选 − EXCLUDED_SUITES.json 登记排除），
+// C1/C2 的覆盖面自动跟随执行器，不再存在两份规则。
 function listSuites() {
-  const out = [];
-  const scan = (dir, prefix) => {
-    if (!fs.existsSync(dir)) return;
-    for (const n of fs.readdirSync(dir).sort()) {
-      if (!/^test_.*\.js$/.test(n)) continue;
-      out.push({ base: n, label: prefix + n, file: path.join(dir, n) });
-    }
-  };
-  scan(__dirname, 'server/scripts/');
-  scan(ROOT, '');
-  return out;
+  return suiteScope.listTestFiles();
 }
 
 const REG_SRC = fs.readFileSync(REG_PATH, 'utf8');

@@ -4,6 +4,11 @@
 // 覆盖：Case1 最佳 Profile+Flow 选 A；Case2 新站无经验→环境分+Planner；
 //      Case3 Failure 风险 warning；Case4 Decision 必须有理由；Case5 Cache hit。
 
+// ★ C135 数据根隔离：本套件此前直接读写真实 server/data
+//   （回归扫描面缺口使「已隔离」这一入集前提从未被施加）。必须在 require 任何业务模块
+//   **之前**设置 —— 否则 store 单例已按真实根建好。
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c135_p35_' + Date.now());
+
 const store = require('../agent/store');
 const profAnalyzer = require('../agent/intelligence/profile/profileAnalyzer');
 const flowMemory = require('../agent/intelligence/flowMemory');

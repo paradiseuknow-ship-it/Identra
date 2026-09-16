@@ -1,0 +1,95 @@
+{
+  "_说明": [
+    "回归套件**排除登记**（C135 建立）。",
+    "",
+    "语义：runRegression 的入集前提**不是**「文件名以 test_ 开头」，而是",
+    "「已做数据根隔离、可在无 server 的执行器下安全并跑」。",
+    "本文件登记「是 test 开头的候选套件、但当前不入集」的每一项，目的是让差异**永不隐身**：",
+    "候选集与入集集的差集必须与本表逐项一致，由 server/scripts/test_c135_regression_scope.js 双向守护",
+    "（漏登记 ⇒ 红；登记过期/文件不存在 ⇒ 红；缺字段 ⇒ 红；晋升项被悄悄移出 ⇒ 红）。",
+    "",
+    "背景（C135 §A 实测）：旧扫描规则 /^test_.*\\.js$/ 静默漏掉 21 个真实套件；",
+    "这 21 项**全部**未做数据根隔离（19 项直接写真实 server/data，其中 testAgentPhase32 的 clean()",
+    "会清空 aiElementMemory / aiFlowMemory / aiSiteMemory）。因此「放宽规则把它们扫进来」",
+    "等于每次全量回归都破坏真实数据 —— 是数据破坏，不是覆盖率提升。",
+    "",
+    "登记纪律：",
+    "  1. 「只登记能力/环境缺口，不登记测试写错」——测试过时应修断言（如 testAgentPhase22 已修并晋升），",
+    "     不因怕红而登记。",
+    "  2. 每条必须有 原因 / 归类 / 晋升条件 / 追踪 四项，缺一即红。",
+    "  3. 归类为「待归因」的项**优先级最高**：它们可能是真回归，不得长期停留。",
+    "  4. 本表不是白名单：任何人新增 test 开头的 .js 而不做隔离/不登记，守护测试立刻变红。"
+  ],
+  "suites": [
+    {
+      "file": "testAgentPhase2.js",
+      "原因": "需真实 LLM + 本机 Chrome + test-site(9555)。C135 实测唯一红因 = LLM HTTP 402 Insufficient Balance；用户声明充值后**已复跑复验，402 依旧**（.benchmark/c135_recheck/testAgentPhase2.out，PASS 2 / FAIL 6 全部由 402 引起）⇒ 账号仍不可用，非代码缺陷。且未做数据根隔离。",
+      "归类": "账号依赖",
+      "晋升条件": "① 顶部补 FPB_DATA_DIR 数据根隔离 ② LLM 账号可用 ③ 经执行器复跑通过",
+      "追踪": "C135-EX-01"
+    },
+    {
+      "file": "testAgentPhase3.js",
+      "原因": "同 testAgentPhase2：C135 实测红因 = LLM HTTP 402 Insufficient Balance；充值后复跑复验 402 依旧（.benchmark/c135_recheck/testAgentPhase3.out，PASS 16 / FAIL 1，该项即 402）⇒ 账号仍不可用，非代码缺陷。且未做数据根隔离。",
+      "归类": "账号依赖",
+      "晋升条件": "① 顶部补 FPB_DATA_DIR 数据根隔离 ② LLM 账号可用 ③ 经执行器复跑通过",
+      "追踪": "C135-EX-02"
+    },
+    {
+      "file": "testAgentPhase4.js",
+      "原因": "套件自述「依赖：后端已启动（PORT=7788）」。runRegression 不启动 server ⇒ fetch ECONNREFUSED(7788)。结构性不可入执行器集。",
+      "归类": "环境依赖",
+      "晋升条件": "套件自起后端（或把 HTTP 断言改为直调模块）后经执行器复跑通过",
+      "追踪": "C135-EX-03"
+    },
+    {
+      "file": "testAgentPhase5.js",
+      "原因": "① 未做数据根隔离 ② 执行器 180s 被 SIGTERM（浏览器 E2E 恢复链）③ 1 项断言红：恢复重定位成功（Proceed→Continue）— 点击继续需人工处理（重试4次耗尽）。红因未归因。",
+      "归类": "待归因（计时 + 语义）",
+      "晋升条件": "先归因该红项（判明测试过时 or 真缺陷），再按 C119 跨层不变量核定执行器超时",
+      "追踪": "C135-EX-04"
+    },
+    {
+      "file": "testAgentPhase23.js",
+      "原因": "① 未做数据根隔离 ② 执行器 180s 被 SIGTERM ③ 2 项断言红：未产生期待的 DISMISS_OVERLAY / WAIT_RETRY_RELOAD RepairAttempt（实得 [\"VERIFY_RETRY\"] 与 []）。红因未归因。",
+      "归类": "待归因（计时 + 语义）",
+      "晋升条件": "先归因 repair 策略路由差异，再按 C119 跨层不变量核定执行器超时",
+      "追踪": "C135-EX-05"
+    },
+    {
+      "file": "testAgentPhase31.js",
+      "原因": "① 未做数据根隔离 ② 纯逻辑段红：tools.resolveSelector 对 {semantic:'submit'} + 仅含文本 Continue 的元素返回 null，套件随即在 :104 读 r1.pattern 崩溃（测试自身缺 null 守卫）。疑似被 C94 F1「零证据候选出局」的有意收紧推翻 ⇒ 测试过时（待复核）。 ③ 集成段需浏览器。",
+      "归类": "测试过时（待复核）",
+      "晋升条件": "复核 F1 收紧是否即该红因 → 修断言（并补 null 守卫）→ 隔离 → 执行器复跑通过",
+      "追踪": "C135-EX-06"
+    },
+    {
+      "file": "testAgentPhase32.js",
+      "原因": "① 未做数据根隔离 ② 纯逻辑红：B2「二次同目标跳过 LLM」fromFlow=false、calls=2（其前序 B1「落库 flow conf≥0.85」已通过）⇒ planWithMemory 未复用已落库 flow。红因未归因。",
+      "归类": "待归因",
+      "晋升条件": "核查 flowPlanner/flowMemory 的键构造与新鲜度门槛后归因，再视结论修断言或修生产",
+      "追踪": "C135-EX-07"
+    },
+    {
+      "file": "testAgentPhase34.js",
+      "原因": "① 未做数据根隔离 ② 纯逻辑红：region 组选中真实数据里的遗留 profile（p_phase23_mu3amqhd）而非套件自建 fixture pp_* ⇒ 套件自身隔离缺陷，跨运行/跨套件脏数据污染。",
+      "归类": "测试隔离缺陷",
+      "晋升条件": "补 FPB_DATA_DIR 隔离（消除真实 profile 进入候选）后执行器复跑通过",
+      "追踪": "C135-EX-08"
+    },
+    {
+      "file": "testAgentPhase42.js",
+      "原因": "① 未做数据根隔离 ② 不启动浏览器；Case3「心跳丢失判定 DEAD」红（scan 未产出 DEAD 事件、worker 仍 READY）。心跳/DEAD 判定属**在用生产逻辑**（workerHeartbeat 被 scheduler 依赖）。",
+      "归类": "待归因（可能为真回归，高优先级）",
+      "晋升条件": "优先归因 workerHeartbeat 的 DEAD 判定链路；确认为真缺陷则修生产，确认为测试过时则修断言",
+      "追踪": "C135-EX-09"
+    },
+    {
+      "file": "testAgentPhase43.js",
+      "原因": "① 未做数据根隔离 ② 不启动浏览器；4 项超时红（taskA dispatch 未推进到 STARTED、worker 未进入 RUNNING、A/B 均 CANCELLED、暂停后未保持 QUEUED）。与 testAgentPhase42 同族（scheduler/worker 推进），且 schedulerLoop 的 dispatch 收尾逻辑刚在 C135 被改动。",
+      "归类": "待归因（可能为真回归，高优先级）",
+      "晋升条件": "优先归因 dispatch 推进链路（含 C135 schedulerLoop 结构守卫的影响面）",
+      "追踪": "C135-EX-10"
+    }
+  ]
+}

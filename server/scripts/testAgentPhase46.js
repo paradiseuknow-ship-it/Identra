@@ -4,6 +4,11 @@
 // 运营级验收：100 Task Stress / Failure→Recovery Trace / Intelligence ROI。
 // 原则：指标全部从「持久化集合」聚合验证（而非 mock 函数），确保真实可追责。
 
+// ★ C135 数据根隔离：本套件此前直接读写真实 server/data
+//   （回归扫描面缺口使「已隔离」这一入集前提从未被施加）。必须在 require 任何业务模块
+//   **之前**设置 —— 否则 store 单例已按真实根建好。
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c135_p46_' + Date.now());
+
 const assert = require('assert');
 const store = require('../agent/store');
 const obs = require('../agent/observability');
