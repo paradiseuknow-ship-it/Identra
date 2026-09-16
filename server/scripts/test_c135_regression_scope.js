@@ -101,6 +101,12 @@ const PROMOTED = [
   'server/scripts/testAgentPhase44.js',
   'server/scripts/testAgentPhase45.js',
   'server/scripts/testAgentPhase46.js',
+  // C136 归因而晋升：「可能为真回归（高优先级）」的 EX-09/EX-10 双双被定性为**测试自身缺陷**：
+  //  Phase42 = scan 自 Phase 5.8 起只判 ASSIGNED/RUNNING（测试把 worker 留在 READY）；
+  //  Phase43 = start() 会先 _reapZombieDispatches()（测试「先 submit 再 start」⇒ 刚入队被收割）。
+  //  生产代码两者均未改（归属证据：_reapZombieDispatches 在 C134 已存在、C135 未改）。
+  'server/scripts/testAgentPhase42.js',
+  'server/scripts/testAgentPhase43.js',
   'server/scripts/testMemoryIsolation.js',
   'server/scripts/testWorkerIsolation.js',
 ];

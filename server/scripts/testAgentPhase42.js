@@ -2,7 +2,13 @@
 
 // Phase 4.2 Worker 生命周期 + aiWorkers 心跳 验收测试。
 // 不启动浏览器（环境限制），仅验证 Worker 作为「可管理实体」的状态机、心跳、分配、优雅退出、防重复绑定。
+//
+// ★ C136：Case3 曾恒红 —— workerHeartbeat.scan 自 Phase 5.8 Finding #1 起**只对 ASSIGNED/RUNNING**
+//   判定死亡（注释原文：空闲 READY/STARTING 本就没有持续心跳，误判 DEAD 会清空 capacity 造成饿死）。
+//   旧 Case3 把 worker 留在 READY 就拨心跳 ⇒ 不在候选集内 ⇒ 永不产出 DEAD。本批把 worker 推进到
+//   RUNNING 后再拨心跳（跟随该生产收紧，不是放宽门槛）。
 
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c136_phase42_' + Date.now());
 const path = require('path');
 const store = require('../agent/store');
 const taskManager = require('../agent/taskManager');
@@ -72,6 +78,10 @@ console.log('Case3 心跳丢失判定 DEAD');
 clean();
 {
   const w = wm.startWorker({ id: 'w42_3' });
+  // ★ C136：必须先进入 ASSIGNED/RUNNING —— scan 只对这两个状态判 DEAD（Phase 5.8 Finding #1）。
+  const tDead = makeTask();
+  wm.assign(w.id, 'exec_dead', tDead.id);
+  wm.markRunning(w.id);
   // 手动把 lastHeartbeat 拨到 40s 前
   const rec = registry.get(w.id);
   rec.lastHeartbeat = Date.now() - 40000;
