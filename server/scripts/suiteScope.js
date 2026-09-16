@@ -37,6 +37,22 @@ const CANDIDATE_RE = /^test.*\.js$/i;
 // 若有人把候选规则退回成它，差集立刻非空 ⇒ 守护变红。
 const LEGACY_SCAN_RE = /^test_.*\.js$/;
 
+// ── Phase 9 兼容执行器的**声明扫面**（C137）──────────────────────────────────
+// 历史沿革：Phase 9 时代的套件全部命名 `test_*.js`，于是 `run_phase9_regression.sh` 一直内联
+// `ls server/scripts/test_*.js` —— 那是与**本模块**并列的**第三份扫描规则副本**；
+// `test_c94_safe_port.js` 的 P3 整类守卫另有一份内联 `/^test_.*\.js$/`（第四份）。
+// 两份都已收口到本模块：shell 只向本模块取清单（取不到即 **fail closed**，绝不回落内联 glob）。
+//
+// phase9Scope = 候选 ∩ server/scripts ∩ 历史命名 − 登记排除
+// 与 runRegression 入集构成**无黑洞划分**（phase9 面 ∪ 其余入集 = 全部入集），
+// 由 test_c137_scan_rule_and_terminal_singleton.js 双向守护（含「差集每项的理由必须成立」）。
+const PHASE9_RE = /^test_.*\.js$/;
+function phase9Scope() {
+  const excluded = loadExcluded();
+  return collectCandidates().filter((s) => s.label.startsWith('server/scripts/')
+    && PHASE9_RE.test(s.base) && !excluded.has(s.base));
+}
+
 // 排除登记：{ basename -> { file, 原因, 归类, 晋升条件, 追踪 } }
 function loadExcluded() {
   let j = null;
@@ -83,8 +99,25 @@ module.exports = {
   EXCLUDED_FILE,
   CANDIDATE_RE,
   LEGACY_SCAN_RE,
+  PHASE9_RE,
   collectCandidates,
   listTestFiles,
+  phase9Scope,
   excludedSuites,
   loadExcluded,
 };
+
+// ── CLI：shell 执行器取套件清单的**唯一入口**（C137）─────────────────────────
+//   node server/scripts/suiteScope.js --phase9   ⇒ 逐行打印 phase9 扫面（相对仓库根的路径）
+// 空清单 = 明确失败（避免「执行器正常退出但一个套件都没跑」这种静默假绿）。
+if (require.main === module) {
+  const mode = process.argv[2];
+  if (mode === '--phase9') {
+    const list = phase9Scope();
+    if (!list.length) { console.error('致命：phase9 扫面为空，拒绝以空清单继续'); process.exit(1); }
+    for (const s of list) console.log(s.label);
+    process.exit(0);
+  }
+  console.error('用法: node server/scripts/suiteScope.js --phase9');
+  process.exit(2);
+}

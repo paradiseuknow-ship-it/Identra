@@ -27,6 +27,8 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+// ★ C137：套件候选清单一律取自唯一事实源（本文件 P3 整类守卫的覆盖面前提）。
+const suiteScope = require('./suiteScope');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'fpb-c94-'));
 process.env.FPB_DATA_DIR = TMP;
@@ -115,10 +117,17 @@ async function p2() {
 }
 (async () => { await p2();
 
-// ===== P3 整类守卫：test_*.js 零裸 listen(0)，全量消费共享原语 =====
+// ===== P3 整类守卫：**任何 test 开头的套件**零裸 listen(0)，全量消费共享原语 =====
+// ★ C137 修复：本组原用内联 `/^test_.*\.js$/` 取文件 —— 那是与 suiteScope.js（唯一事实源）
+//   并列的**第四份扫描规则副本**，后果是「整类杀手」这个自称与实现**不等价**：
+//   testAgent*.js / testMemoryIsolation.js / testWorkerIsolation.js 等新式命名
+//   **从未被本组检查过**（L14 覆盖面静默漂移）。现改为向事实源取**候选全集**
+//   （= 任何 test 开头的 .js）⇒ 覆盖面严格扩张，且不可能再有命名黑洞。
 console.log('\n== P3 整类守卫 ==');
 const scriptsDir = path.join(__dirname);
-const testFiles = fs.readdirSync(scriptsDir).filter((f) => /^test_.*\.js$/.test(f));
+const testFiles = suiteScope.collectCandidates()
+  .filter((s) => s.label.startsWith('server/scripts/'))
+  .map((s) => s.base);
 const bare = [];
 for (const f of testFiles) {
   // 跳过自身：本文件的注释/断言文案必然含被禁模式（自指），扫自己恒红。
@@ -126,7 +135,7 @@ for (const f of testFiles) {
   const src = fs.readFileSync(path.join(scriptsDir, f), 'utf8');
   if (/listen\(0/.test(src)) bare.push(f);
 }
-assert('P3a 全部 test_*.js 零裸 listen(0)（整类杀手，未来新文件同样受约束）', bare.length === 0, bare);
+assert('P3a 全部 test 开头的套件零裸 listen(0)（整类杀手；候选集来自 suiteScope 唯一事实源）', bare.length === 0, bare);
 const consumers = testFiles.filter((f) => /lib_safe_port/.test(fs.readFileSync(path.join(scriptsDir, f), 'utf8')));
 assert('P3b 全量迁移锚：本批收口的 14 个测试文件均消费 lib_safe_port', consumers.length >= 14, { count: consumers.length, missing: testFiles.filter((f) => !consumers.includes(f)) });
 assert('P3c lib_safe_port.js 自身在盘', fs.existsSync(path.join(scriptsDir, 'lib_safe_port.js')));

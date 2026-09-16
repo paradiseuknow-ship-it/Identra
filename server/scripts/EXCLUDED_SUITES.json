@@ -44,28 +44,28 @@
     },
     {
       "file": "testAgentPhase5.js",
-      "原因": "① 未做数据根隔离 ② 执行器 180s 被 SIGTERM（浏览器 E2E 恢复链）③ 1 项断言红：恢复重定位成功（Proceed→Continue）— 点击继续需人工处理（重试4次耗尽）。红因未归因。",
+      "原因": "① 未做数据根隔离 ② 执行器 180s 被 SIGTERM（浏览器 E2E 恢复链）③ 1 项断言红：恢复重定位成功（Proceed→Continue）— 点击继续需人工处理（重试4次耗尽）。红因未归因。 【C137 隔离实测】FPB_DATA_DIR 指向 tmp 后 240s 内**未跑完**（browser 集成 + 真 Chromium，被 timeout 杀掉，EXIT=124）；已观测到 1 项红：`产生 DISMISS_OVERLAY RepairAttempt` 得到 [\"VERIFY_RETRY\"]（repair 种类不一致，待定级）。⇒ 本案兼有「计时」与「语义」两层，跑不完 + 语义待定。",
       "归类": "待归因（计时 + 语义）",
       "晋升条件": "先归因该红项（判明测试过时 or 真缺陷），再按 C119 跨层不变量核定执行器超时",
       "追踪": "C135-EX-04"
     },
     {
       "file": "testAgentPhase23.js",
-      "原因": "① 未做数据根隔离 ② 执行器 180s 被 SIGTERM ③ 2 项断言红：未产生期待的 DISMISS_OVERLAY / WAIT_RETRY_RELOAD RepairAttempt（实得 [\"VERIFY_RETRY\"] 与 []）。红因未归因。",
+      "原因": "① 未做数据根隔离 ② 执行器 180s 被 SIGTERM ③ 2 项断言红：未产生期待的 DISMISS_OVERLAY / WAIT_RETRY_RELOAD RepairAttempt（实得 [\"VERIFY_RETRY\"] 与 []）。红因未归因。 【C137 隔离实测】同样 240s 未跑完（EXIT=124）；已输出段为 `Phase 3.4 结果: 24 通过 / 3 失败`，红项集中在「region=US/HK → 选环境」类断言（chosen 恒为同一个 profile）。⇒ 计时 + 语义待定。",
       "归类": "待归因（计时 + 语义）",
       "晋升条件": "先归因 repair 策略路由差异，再按 C119 跨层不变量核定执行器超时",
       "追踪": "C135-EX-05"
     },
     {
       "file": "testAgentPhase31.js",
-      "原因": "① 未做数据根隔离 ② 纯逻辑段红：tools.resolveSelector 对 {semantic:'submit'} + 仅含文本 Continue 的元素返回 null，套件随即在 :104 读 r1.pattern 崩溃（测试自身缺 null 守卫）。疑似被 C94 F1「零证据候选出局」的有意收紧推翻 ⇒ 测试过时（待复核）。 ③ 集成段需浏览器。",
+      "原因": "① 未做数据根隔离 ② 纯逻辑段红：tools.resolveSelector 对 {semantic:'submit'} + 仅含文本 Continue 的元素返回 null，套件随即在 :104 读 r1.pattern 崩溃（测试自身缺 null 守卫）。疑似被 C94 F1「零证据候选出局」的有意收紧推翻 ⇒ 测试过时（待复核）。 ③ 集成段需浏览器。 【C137 隔离实测】测试**自身崩溃**：`TypeError: Cannot read properties of null (reading 'pattern') at testAgentPhase31.js:104`（读 null 的属性）⇒ 属测试缺陷（非生产缺陷）；崩溃前已有 1 项红：`Case1 首次走 semanticResolver`。修法 = 修测试（补空值防护 + 复核 Case1 断言），不涉生产代码。",
       "归类": "测试过时（待复核）",
       "晋升条件": "复核 F1 收紧是否即该红因 → 修断言（并补 null 守卫）→ 隔离 → 执行器复跑通过",
       "追踪": "C135-EX-06"
     },
     {
       "file": "testAgentPhase32.js",
-      "原因": "① 未做数据根隔离 ② 纯逻辑红：B2「二次同目标跳过 LLM」fromFlow=false、calls=2（其前序 B1「落库 flow conf≥0.85」已通过）⇒ planWithMemory 未复用已落库 flow。红因未归因。",
+      "原因": "① 未做数据根隔离 ② 纯逻辑红：B2「二次同目标跳过 LLM」fromFlow=false、calls=2（其前序 B1「落库 flow conf≥0.85」已通过）⇒ planWithMemory 未复用已落库 flow。红因未归因。 【C137 隔离实测】FPB_DATA_DIR 隔离后 **PASS 22 / FAIL 1**。唯一红项 = `B2 Case2 二次同目标跳过 LLM`（实测 `fromFlow=false calls=2`）⇒ 命中 **Flow 复用路径**（flowPlanner.planWithMemory 未从 flowMemory 取到历史）⇒ **待定级：可能为真缺陷（高优先级）**。",
       "归类": "待归因",
       "晋升条件": "核查 flowPlanner/flowMemory 的键构造与新鲜度门槛后归因，再视结论修断言或修生产",
       "追踪": "C135-EX-07"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Phase 9 完整回归执行器
-# 串行执行 server/scripts 下全部 test_*.js，逐个采集 PASS/FAIL/SKIP 与退出码，最后汇总。
+# 串行执行 server/scripts 下的**兼容子集套件**（清单来自唯一事实源 suiteScope.js --phase9，
+# 历史命名 `test_*.js`；完整入集见 npm test / runRegression.js），逐个采集 PASS/FAIL/SKIP 与退出码，最后汇总。
 # 串行原因：测试共享浏览器 profile 锁与持久化 store，并行会互相干扰（实测会触发非法状态转换）。
 set -u
 cd "$(dirname "$0")/../.." || exit 1
@@ -43,7 +44,24 @@ ok_files=0
 bad_files=0
 bad_list=""
 
-for f in $(ls server/scripts/test_*.js | sort); do
+# ── 扫面唯一事实源（C137）──────────────────────────────────────────────────
+# 此处原为 `for f in $(ls server/scripts/test_*.js | sort)` —— 是与 suiteScope.js
+# （runRegression 的入集事实源）并列的**第三份扫描规则副本**：任一侧演化都会让本执行器
+# 静默少覆盖/多覆盖，且没有任何断言能发现（历史教训：旧窄规则曾漏掉 21 个真实套件）。
+# 现一律向事实源取清单；取不到就 **fail closed**（绝不回落到某个内联 glob，
+# 也不接受空清单 —— 那会变成「正常退出但一个套件都没跑」的静默假绿）。
+# 与 tmpEnvGuard 同一模式：判定权交给 Node 侧唯一事实源，env/清单正常时零行为变化。
+# ── C137-SCOPE-BEGIN ──
+FILES="$("$NODE" server/scripts/suiteScope.js --phase9)" || {
+  echo "致命：无法从唯一事实源取得套件清单（node server/scripts/suiteScope.js --phase9）" >&2
+  exit 1
+}
+if [ -z "$FILES" ]; then
+  echo "致命：事实源返回空清单，拒绝以空扫面继续" >&2
+  exit 1
+fi
+# ── C137-SCOPE-END ──
+for f in $FILES; do
   name="$(basename "$f")"
   printf '\n──────── %s ────────\n' "$name" >> "$OUT"
   log="$("$NODE" "$f" 2>&1)"

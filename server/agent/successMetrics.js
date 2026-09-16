@@ -8,7 +8,12 @@
 //   - 若不同口径出现冲突，默认按「更严格的真实业务终态」处理，绝不取高值。
 //   - 提供一致性断言：harness 派生 success 必须等于 store 派生 success，否则视为度量缺陷。
 
-const TERMINAL = ['SUCCESS', 'FAILED', 'HUMAN_ESCALATION', 'CANCELLED'];
+// ★ C137（B 类·同域第二份副本）：终态集合的唯一事实源是 taskStateManager.TASK_TERMINAL。
+// 此处曾内联字面量副本（与 TASK_TERMINAL 同域同集合、**仅顺序不同**），且经全仓扫描
+// **零消费者**（`successMetrics.TERMINAL` 与解构引用均无命中）⇒ 当下影响为零，属典型漂移点。
+// 现改为**静态委托**（同一数组引用，而非再复制一份）：顺序/成员漂移不可能再发生；
+// 导出保留以维持公共面不变（benchmark/gate 侧另有副本，受 Phase 6 冻结，已在 C137 守护中登记）。
+const { TASK_TERMINAL: TERMINAL } = require('./taskStateManager');
 
 // 一个 task 是否业务成功：唯一判定 = 终态 SUCCESS。
 function isBusinessSuccess(task) {
