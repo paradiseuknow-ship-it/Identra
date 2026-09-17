@@ -10,6 +10,14 @@
 //   [region] 地区偏好：US 环境在 region=US 时优先；DISABLED 被跳过
 //   [lifecycle] 连续失败 → WARNING/DEGRADED（不删除）
 
+// C139：数据根隔离 —— 必须位于本文件**首个 require 之前**（store 的数据根为模块加载期解析）。
+// EX-08 红因：clean() 的白名单 realProfileIds() 读的是**真实** <repo>/data/profiles.json，
+// 于是「真实 Profile 的评分记录」被有意保留在集合里 ⇒ region 组选中遗留真实 profile
+// （实测 p_phase23_*）而不是套件自建的 pp_* fixture。隔离后白名单读的是 tmp 里的
+// profiles.json（不存在 ⇒ 空集）⇒ clean() 语义退化为「清空全部」＝本套件需要的干净考场，
+// 且不再有把真实评分记录写回/丢弃的风险。一条隔离行同时覆盖 dataRoot() 与 aiStoreRoot()。
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c139_phase34_' + Date.now());
+
 const store = require('../agent/store');
 const analyzer = require('../agent/intelligence/profile/profileAnalyzer');
 const matcher = require('../agent/intelligence/profile/profileMatcher');
@@ -20,13 +28,18 @@ const schema = require('../agent/intelligence/profile/schema');
 const COLLECTION = analyzer.COLLECTION;
 const TEST_IDS = ['pp_a', 'pp_b', 'pp_c', 'pp_d', 'pp_e', 'pp_f', 'pp_g', 'pp_h', 'pp_p', 'pp_q'];
 
-// 真实 Profile 白名单：仅保留 data/profiles.json 中存在的 Profile 评分，
-// 其余（测试注入 + 其它测试脚本经 taskManager 钩子产生的记录）一律清除，保证本测试隔离。
+// Profile 白名单（读 `<dataRoot>/profiles.json`）：
+// ★ C139 根因：原实现硬编码 `path.join(__dirname,'..','..','data','profiles.json')` —— 这是
+//   **第二份数据根口径**（不随 FPB_DATA_DIR 走）。隔离行只隔离了 store 集合的位置，白名单却仍
+//   指向真实仓库目录 ⇒ 真实 Profile 的评分记录被「有意保留」，region 组于是选中遗留真实 profile
+//   （实测 p_phase23_*）而非套件 fixture。收口为 dataRoot() 后：
+//   · 无隔离时 dataRoot() = <repo>/data ⇒ 与旧路径**逐字相同**，行为中性；
+//   · 有隔离时两个根都落 tmp ⇒ 白名单为空集 ⇒ clean() 语义 = 清空考场（本套件所需）。
 function realProfileIds() {
   try {
     const fs = require('fs');
     const path = require('path');
-    const p = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'data', 'profiles.json'), 'utf8'));
+    const p = JSON.parse(fs.readFileSync(path.join(require('../dataRoot').dataRoot(), 'profiles.json'), 'utf8'));
     const arr = Array.isArray(p) ? p : Object.values(p);
     return new Set(arr.map((x) => x && x.id).filter(Boolean));
   } catch (e) { return new Set(); }
@@ -42,6 +55,22 @@ let pass = 0, fail = 0;
 function ok(cond, name, extra) {
   if (cond) { pass++; console.log('  ✓ ' + name + (extra != null ? '  [' + extra + ']' : '')); }
   else { fail++; console.log('  ✗ ' + name + (extra != null ? '  [' + extra + ']' : '')); }
+}
+
+// ---------- 隔离自检（C139）----------
+// 隔离行被移除时必须**显式变红**，而不是悄悄回到污染态（EX-08 的原红因就是污染）。
+console.log('[isolation]');
+{
+  const os = require('os');
+  const roots = require('../dataRoot');
+  const inTmp = (p) => String(p).indexOf(os.tmpdir()) === 0;
+  ok(inTmp(roots.dataRoot()), 'dataRoot() 落在系统临时目录（隔离生效）', roots.dataRoot());
+  ok(inTmp(roots.aiStoreRoot()), 'aiStoreRoot() 落在系统临时目录（隔离生效）', roots.aiStoreRoot());
+  ok(realProfileIds().size === 0, '隔离下真实 Profile 白名单为空集（clean() 语义=清空考场）', 'n=' + realProfileIds().size);
+  // 直接钉住 EX-08 的症状：clean() 之后集合内**不得**残留任何非 fixture 记录
+  // （原红因 = 遗留真实 profile p_phase23_* 进入候选，并在 region 组赢过 pp_p/pp_q）。
+  const leftover = store.read(COLLECTION, []).filter((r) => r && !TEST_IDS.includes(r.profileId));
+  ok(leftover.length === 0, 'clean() 后集合内无遗留非 fixture 记录（EX-08 症状直钉）', 'leftover=' + leftover.map((r) => r.profileId).join(','));
 }
 
 console.log('\n=== Phase 3.4 Profile Intelligence ===\n');

@@ -115,6 +115,18 @@ const PROMOTED = [
   'server/scripts/testAgentPhase32.js',
   'server/scripts/testMemoryIsolation.js',
   'server/scripts/testWorkerIsolation.js',
+  // C139 归因而晋升（EX-06/EX-08 双双定性为**测试自身缺陷**，生产业务零改动）：
+  //  Phase31 = 旧 fixture 的语义/标签组合（semantic 'submit' + 标签 Continue/Proceed）建立在
+  //    **C105 F1 之前**的可行性假设上（那时兜底给所有 button 0.4 同分、DOM 顺序决胜）；
+  //    F1 已用真实站点实证改为「兜底候选必须与元素自身身份信号有词法关联」⇒ 该 fixture 恒零候选。
+  //    另修两个测试自身缺陷：缺 null 守卫（崩溃吃掉整段下游断言）、异常路径自赋值 no-op（spy 不还原）。
+  //    实测 28/0（原 11/13 + 崩溃）。集成段断言改为契约稳定形态（key 无关的标签 pattern 统计 +
+  //    「零证据语义不复用记忆」显式契约）。
+  //  Phase34 = realProfileIds() 硬编码 `__dirname/../../data/profiles.json`，是**第二份数据根口径**
+  //    ⇒ 隔离只覆盖 store 集合位置，白名单仍指向真实目录 ⇒ 遗留真实 profile（p_phase23_*）赢得
+  //    region 组。收口为 dataRoot()（无隔离时与旧路径逐字相同 ⇒ 行为中性）+ 症状直钉断言。实测 31/0。
+  'server/scripts/testAgentPhase31.js',
+  'server/scripts/testAgentPhase34.js',
 ];
 
 (async () => {
@@ -209,7 +221,9 @@ const PROMOTED = [
   // ── E 晋升项在位 ─────────────────────────────────────────────────────────
   {
     const notRun = PROMOTED.filter((p) => !runSet.has(p));
-    check('E1 ★ C135 晋升的 11 项均在入集内（不得被悄悄移出）', notRun.length === 0, JSON.stringify(notRun));
+    // C139：去掉标签里硬编码的项数（「11 项」随每批晋升必然漂移）⇒ 改为自描述计数，
+    // 与 D4 一样从 PROMOTED 派生（单调递增字段不得人工快照）。
+    check('E1 ★ C135 起晋升的项（共 ' + PROMOTED.length + '）均在入集内（不得被悄悄移出）', notRun.length === 0, JSON.stringify(notRun));
   }
 
   // ── F ★ 入集前提：晋升项必须真的做了数据根隔离 ──────────────────────────────

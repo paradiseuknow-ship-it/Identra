@@ -55,20 +55,6 @@
       "归类": "待归因（计时 + 语义）",
       "晋升条件": "先归因 repair 策略路由差异，再按 C119 跨层不变量核定执行器超时",
       "追踪": "C135-EX-05"
-    },
-    {
-      "file": "testAgentPhase31.js",
-      "原因": "① 未做数据根隔离 ② 纯逻辑段红：tools.resolveSelector 对 {semantic:'submit'} + 仅含文本 Continue 的元素返回 null，套件随即在 :104 读 r1.pattern 崩溃（测试自身缺 null 守卫）。疑似被 C94 F1「零证据候选出局」的有意收紧推翻 ⇒ 测试过时（待复核）。 ③ 集成段需浏览器。 【C137 隔离实测】测试**自身崩溃**：`TypeError: Cannot read properties of null (reading 'pattern') at testAgentPhase31.js:104`（读 null 的属性）⇒ 属测试缺陷（非生产缺陷）；崩溃前已有 1 项红：`Case1 首次走 semanticResolver`。修法 = 修测试（补空值防护 + 复核 Case1 断言），不涉生产代码。",
-      "归类": "测试过时（待复核）",
-      "晋升条件": "复核 F1 收紧是否即该红因 → 修断言（并补 null 守卫）→ 隔离 → 执行器复跑通过",
-      "追踪": "C135-EX-06"
-    },
-    {
-      "file": "testAgentPhase34.js",
-      "原因": "① 未做数据根隔离 ② 纯逻辑红：region 组选中真实数据里的遗留 profile（p_phase23_mu3amqhd）而非套件自建 fixture pp_* ⇒ 套件自身隔离缺陷，跨运行/跨套件脏数据污染。",
-      "归类": "测试隔离缺陷",
-      "晋升条件": "补 FPB_DATA_DIR 隔离（消除真实 profile 进入候选）后执行器复跑通过",
-      "追踪": "C135-EX-08"
     }
   ]
 }
