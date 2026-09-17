@@ -80,6 +80,15 @@ function extractWaitWindows(raw) {
   const re = /waitTaskTerminal\(\s*[^,()]+,\s*(\d+)/g;
   let m;
   while ((m = re.exec(src))) wins.push(Number(m[1]));
+  // ★ C140：同族**第二个**等待原语 —— `waitStatus(taskId, targets, N)`（三参：终态集合由调用方给）。
+  // 旧提取器只认 `waitTaskTerminal`，于是 Phase5/Phase22/Phase23/Phase31 的内部窗（90s/120s）
+  // 对本守护**结构性不可见** ⇒ C1/C2「窗 > 生效超时」「窗 > 全局默认必须登记 override」
+  // 在这 4 个套件上永远无法触发（L14 覆盖面静默漂移；本批正是靠人手核对才发现）。
+  // 目标集合只支持**标识符**（如 TASK_TERMINAL）或不可达的数组字面量：本批已把 4 个套件的
+  // 终态等待全部改为派生事实源 `TASK_TERMINAL` ⇒ 标识符形态即事实形态；
+  // 提取数量与调用点数量的自洽性由 A6 断言（防「改了写法但提取器静默漏配」）。
+  const re2 = /waitStatus\(\s*[^,()]+,\s*[A-Za-z_$][\w$]*\s*,\s*(\d+)\s*\)/g;
+  while ((m = re2.exec(src))) wins.push(Number(m[1]));
   // 调用方省略窗时的兜底默认：Date.now() + (timeoutMs || N)
   const d = src.match(/Date\.now\(\)\s*\+\s*\(timeoutMs\s*\|\|\s*(\d+)\)/);
   if (d) wins.push(Number(d[1]));
@@ -126,6 +135,34 @@ const STEP22_EFFECTIVE = (OVERRIDES && OVERRIDES['test_step22_business_e2e.js'])
   }
   check('A5 最大内部窗已落在 600000（C118 重基线后的真实值）',
     STEP22_MAX_WINDOW === 600000, 'STEP22_MAX_WINDOW=' + STEP22_MAX_WINDOW);
+
+  // ★ C140：同族原语 `waitStatus` 的提取自洽 —— 「调用点数 − 定义数」必须 === 提取到的窗数量。
+  // 若未来有人换了写法（例如把目标集合写成含逗号的表达式），提取器会**静默少配** ⇒ 本断言先红。
+  {
+    const FAMILY = ['testAgentPhase5.js', 'testAgentPhase22.js', 'testAgentPhase23.js', 'testAgentPhase31.js'];
+    const bad = []; const found = [];
+    for (const f of FAMILY) {
+      let src = '';
+      try { src = strip(fs.readFileSync(path.join(__dirname, f), 'utf8')); } catch (e) { bad.push(f + ' 读取失败'); continue; }
+      const calls = (src.match(/waitStatus\(/g) || []).length;
+      const defs = (src.match(/function\s+waitStatus\(/g) || []).length;
+      const wins = extractWaitWindows(src).length;
+      found.push(f + '=' + wins);
+      if (wins !== calls - defs) bad.push(f + ' wins=' + wins + ' calls=' + calls + ' defs=' + defs);
+    }
+    check('A6 ★ waitStatus 族窗提取自洽（调用点数 − 定义数 === 提取数）',
+      bad.length === 0 && found.length === FAMILY.length, bad.join(' | ') || found.join(' '));
+  }
+  // ⚠ 同 F 组教训：人造源码必须**运行时拼接**构造，不得把窗口的完整字面形式直写进本文件 ——
+  // 直写会让本文件自身的文本面被自己的测试数据污染，G3「本套件自身无等待窗」随即假红
+  // （本批第一次运行正是这样红的，detail=[123456,123456,123456]；根因是 maskStrings 基于正则，
+  //  遇到本文件里含引号的**正则字面量**会失准，于是漏网）。
+  {
+    const PROBE = 'const r = await ' + 'waitStatus(' + 't.id, TERMS, ' + '123456' + ');';
+    check('A7 revert 对照：waitStatus 的窗必须能被现提取器检出（旧实现只认 waitTaskTerminal ⇒ 检不出）',
+      extractWaitWindows(PROBE).includes(123456) && !/waitTaskTerminal/.test(PROBE),
+      JSON.stringify(extractWaitWindows(PROBE)));
+  }
 
   // ════════════════════════════════════════════════════════════════════════════
   // B 硬不变量（本批次核心）：执行器超时 > 内部最大窗，否则那个窗永远无法兑现

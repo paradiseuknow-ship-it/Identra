@@ -20,6 +20,10 @@ const testSite = require('./_testSite'); // 带版本探针的 test-site 助手
 const diagnosisSchema = require('../agent/diagnosis/diagnosisSchema');
 const diagnosisEngine = require('../agent/diagnosis/diagnosisEngine');
 const failureSnapshot = require('../agent/recovery/failureSnapshot');
+// C140：等待「终态」必须用生产的**真终态集合**（唯一事实源），不得手写字面清单 —— 旧清单混入非终态
+// `PAUSED_FOR_HUMAN`（不在 TASK_TERMINAL 内，是被 replan 带回去继续执行的中间态）⇒ waitStatus 会提前
+// 返回，断言随之变成「中间态是否恰好可观测」的竞态依赖。同族实证见 testAgentPhase23.js §7 注释。
+const { TASK_TERMINAL } = require('../agent/taskStateManager');
 
 let pass = 0, fail = 0;
 function ok(cond, name, extra) {
@@ -106,25 +110,29 @@ async function main() {
   ok(!!snap.id && snap.errorType === 'ELEMENT_NOT_FOUND' && Array.isArray(snap.visibleTexts) && snap.visibleTexts.join(' ').includes('Proceed'), 'FailureSnapshot 结构化落库（可见文本行取自真实字段）');
   ok(failureSnapshot.latestForTask('task_demo').id === snap.id, 'latestForTask 可取回');
 
-  // ---- 4) 集成：真实失败 → 诊断（Phase 2.3 后修复耗尽 → PAUSED_FOR_HUMAN）----
+  // ---- 4) 集成：真实失败 → 诊断（Phase 2.3 后修复耗尽 → HUMAN_ESCALATION）----
   console.log('[integration] /empty 点击不存在元素 → 修复耗尽 → 诊断 + 人工');
   await ensureTestSite();
   await makeProfile();
-  const t1 = taskManager.createTask({ name: 'p22', objective: 'x', targetUrl: 'http://localhost:9555/empty', profileId: PROFILE, executionMode: 'AUTONOMOUS', policy: { riskFloor: 'HIGH' } });
+  // C140：**显式关闭 replan**（maxReplans=0）—— 否则「修复耗尽」的归宿取决于 replan 能否收敛
+  // （LLM 可用性）：探针实测放开 replan 时 /empty 会被重规划收敛为 SUCCESS，断言随之漂移。
+  const t1 = taskManager.createTask({ name: 'p22', objective: 'x', targetUrl: 'http://localhost:9555/empty', profileId: PROFILE, executionMode: 'AUTONOMOUS', policy: { riskFloor: 'HIGH', maxReplans: 0 } });
   taskManager.attachPlan(t1.id, {
     goal: 'diag', steps: [
       { id: 'nav', type: 'NAVIGATE', description: '打开', expectedOutcome: 'o', risk: 'LOW', action: { type: 'navigate', target: { url: 'http://localhost:9555/empty' }, risk: 'LOW', verification: { type: 'page_change' } } },
-      { id: 'click', type: 'ACT', description: '点击 xyzzy', expectedOutcome: 'o', risk: 'MEDIUM', action: { type: 'click', target: { semantic: 'xyzzy' }, risk: 'MEDIUM', verification: { type: 'none' } }, maxRetries: 2 },
+      // C140 同源缺陷修复：原为 `verification: { type: 'none' }` —— `click` 在 schema/action.js 的
+      // MUST_VERIFY 名单内，tools.execute 第 171-172 行对每个动作再校验一次 ⇒ 本动作恒被判
+      // ACTION_INVALID，**根本没点出去**。断言不依赖点击成功（只判终态/诊断），故该缺陷长期隐身，
+      // 但用例自称的「点击不存在元素 → ELEMENT_NOT_FOUND → 诊断」从未被真正执行。
+      // 改为 page_change（点击的真实效果，也是 §7/Phase5 同款）；真实成功门仍是 executor 的 step.verification。
+      { id: 'click', type: 'ACT', description: '点击 xyzzy', expectedOutcome: 'o', risk: 'MEDIUM', action: { type: 'click', target: { semantic: 'xyzzy' }, risk: 'MEDIUM', verification: { type: 'page_change' } }, maxRetries: 2 },
     ],
   });
   taskManager.start(t1.id);
-  // C135：Phase 5.8 起「修复耗尽」走 HUMAN_ESCALATION **显式终态**（runtime.js:1205-1211 的
-  // outcome.paused 分支 → taskManager.escalate；原 PAUSED_FOR_HUMAN 非终态，会永久悬挂）。
-  // 断言口径应锚「已离开重试循环并交人工」这一意图，而不是某一个具体状态名 —— 否则每次
-  // 状态机语义升级都会产出一次假红（本套件此前正是如此，且因扫描面缺口长期无人发现）。
-  const r1 = await waitStatus(t1.id, ['SUCCESS', 'FAILED', 'PAUSED_FOR_HUMAN', 'HUMAN_ESCALATION'], 90000);
-  ok(['PAUSED_FOR_HUMAN', 'HUMAN_ESCALATION'].includes(r1.status),
-    '修复耗尽后离开重试循环并交人工（非无限循环）', r1.status + ' ' + (r1.error || ''));
+  // C140：等待目标 = 生产真终态集合（唯一事实源）；断言锚**具体终态 + 根因文案**，不接受中间态。
+  const r1 = await waitStatus(t1.id, TASK_TERMINAL, 120000);
+  ok(r1.status === 'HUMAN_ESCALATION' && /需人工处理/.test(String(r1.error || '')),
+    '修复耗尽后离开重试循环并交人工（非无限循环，带根因）', r1.status + ' ' + (r1.error || ''));
   const final = taskManager.getTask(t1.id);
   ok(!!final.lastDiagnosis && hasFourLayers(final.lastDiagnosis), '失败后生成结构化诊断（四层）', JSON.stringify(final.lastDiagnosis || {}).slice(0, 200));
   const diagResp = (() => { const fs = require('../agent/recovery/failureSnapshot'); return fs.listForTask(t1.id); })();

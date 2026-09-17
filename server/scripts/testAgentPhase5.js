@@ -4,6 +4,11 @@
 // 注意：本测试启动浏览器 Runtime，必须**停止 server 进程**后独立运行。
 // 用法：node server/scripts/testAgentPhase5.js
 
+// C140：数据根隔离。必须在**任何 require 之前** —— dataRoot / browserManager / identityStore
+// 的数据根在模块加载期解析，晚于首个 require 的隔离行只覆盖一半（EX-08 同族实证）。
+// 入集前提 = 已做数据根隔离（EXCLUDED_SUITES.json 登记纪律第 1/4 条）。
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c140_phase5_' + Date.now());
+
 const db = require('../db');
 const vault = require('../vault');
 const taskManager = require('../agent/taskManager');
@@ -22,6 +27,10 @@ const recorder = require('../agent/recorder');
 const sites = require('../agent/sites');
 const { JsonStore } = require('../agent/storage/jsonStore');
 const { StoreInterface } = require('../agent/storage/store.interface');
+// C140：等待「终态」必须用生产的**真终态集合**（唯一事实源），不得手写字面清单 —— 旧清单既可能漏
+// `HUMAN_ESCALATION`（Phase 5.8 起的显式交人终态 ⇒ 任务已终态仍空转满观测窗），也可能混入非终态
+// `PAUSED_FOR_HUMAN`（taskStateManager.TASK_TERMINAL 不含它 ⇒ waitStatus 提前返回 ⇒ TOCTOU 竞态读）。
+const { TASK_TERMINAL } = require('../agent/taskStateManager');
 
 let pass = 0, fail = 0;
 function ok(cond, name, extra) {
@@ -38,6 +47,10 @@ function portOpen(port) {
 
 let testSiteProc = null;
 const ensureTestSite = () => testSite.ensure();
+// C140：targets 必须覆盖**当前**终态词表 —— Phase 5.8 起「修复耗尽/需人工」是 HUMAN_ESCALATION
+// 显式终态（runtime.js:1206 + taskManager.escalate.js:635；原 PAUSED_FOR_HUMAN 非终态会永久悬挂）。
+// 旧词表漏掉它 ⇒ 任务早已终态仍空转满 90s 观测窗（§5/§6/§7 共 270s），
+// 这正是 C135 实测「执行器 180s SIGTERM」的真因，而非套件跑不完。
 async function waitStatus(taskId, targets, timeoutMs) {
   const end = Date.now() + timeoutMs;
   while (Date.now() < end) {
@@ -78,7 +91,10 @@ async function cleanup(ids) {
 }
 
 const NAV_ACT = (url, timeoutMs) => ({ type: 'navigate', target: { url }, risk: 'LOW', verification: { type: 'page_change' }, timeoutMs: timeoutMs || 15000 });
-const CLICK_ACT = (semantic) => ({ type: 'click', target: { semantic }, risk: 'MEDIUM', verification: { type: 'none' } });
+// C140：click 属 schema/action.js MUST_VERIFY ⇒ verification 不能是 none（否则 tools.execute
+// 第 171 行 validateAction 恒拒 ACTION_INVALID，与解析/恢复链无关）。目标页面改为 /renamed-nav
+// （按钮同文案 Continue，但点击真实跳转）⇒ page_change 是可验证的真实效果。
+const CLICK_ACT = (semantic) => ({ type: 'click', target: { semantic }, risk: 'MEDIUM', verification: { type: 'page_change' } });
 
 async function main() {
   console.log('== Phase 1.5 + Phase 2.1 验收 ==');
@@ -122,18 +138,21 @@ async function main() {
   ok(v2.planVersion === 'plan_v2' && v2.planHistory.length === 1, '修订后 = plan_v2 + 旧计划入 history', v2.planVersion + ' hist=' + v2.planHistory.length);
 
   // ---- 5) 确定性恢复：按钮文字变化（Proceed → 实际是 Continue）----
-  console.log('[recovery-element] /renamed: 语义 Proceed 不存在 → 恢复探测 Continue → SUCCESS');
+  // C140：页面由 /renamed 改为 /renamed-nav —— 旧页按钮无 onclick、点击无任何页面变化，
+  // 在 click 强制 verification 契约（schema/action.js MUST_VERIFY）下**无法诚实验证**：
+  // 写 verification:none 会被判 ACTION_INVALID，写任何 DOM 断言都是恒真假绿。新页同文案但真实跳转。
+  console.log('[recovery-element] /renamed-nav: 语义 Proceed 不存在 → 恢复探测 Continue → page_change 成立 → SUCCESS');
   await ensureTestSite();
   const ref = await makeProfile(false);
-  const t1 = taskManager.createTask({ name: 'p5 element', objective: 'x', targetUrl: 'http://localhost:9555/renamed', profileId: PROFILE, executionMode: 'AUTONOMOUS', policy: { riskFloor: 'HIGH' } });
+  const t1 = taskManager.createTask({ name: 'p5 element', objective: 'x', targetUrl: 'http://localhost:9555/renamed-nav', profileId: PROFILE, executionMode: 'AUTONOMOUS', policy: { riskFloor: 'HIGH' } });
   taskManager.attachPlan(t1.id, {
     goal: 'element', steps: [
-      { id: 'nav', type: 'NAVIGATE', description: '打开', expectedOutcome: 'o', risk: 'LOW', action: NAV_ACT('http://localhost:9555/renamed') },
+      { id: 'nav', type: 'NAVIGATE', description: '打开', expectedOutcome: 'o', risk: 'LOW', action: NAV_ACT('http://localhost:9555/renamed-nav') },
       { id: 'click', type: 'ACT', description: '点击继续', expectedOutcome: 'o', risk: 'MEDIUM', action: CLICK_ACT('Proceed') },
     ],
   });
   taskManager.start(t1.id);
-  const r1 = await waitStatus(t1.id, ['SUCCESS', 'FAILED'], 90000);
+  const r1 = await waitStatus(t1.id, TASK_TERMINAL, 90000);
   ok(r1.status === 'SUCCESS', '恢复重定位成功（Proceed→Continue）', r1.error || '');
   const att1 = store.read('aiAttempts', []).filter((a) => { const st = store.find('aiSteps', a.stepId); return st && st.taskId === t1.id; });
   ok(att1.length >= 2, '多次 Attempt（含恢复）', 'attempts=' + att1.length);
@@ -147,7 +166,7 @@ async function main() {
     ],
   });
   taskManager.start(t2.id);
-  const r2 = await waitStatus(t2.id, ['SUCCESS', 'FAILED'], 90000);
+  const r2 = await waitStatus(t2.id, TASK_TERMINAL, 90000);
   ok(r2.status === 'SUCCESS', 'timeout 恢复成功（重试后命中快速响应）', r2.error || '');
 
   // ---- 7) 任务恢复：模拟 Node 重启（RUNNING 任务 → recover → 继续到 SUCCESS）----
@@ -165,7 +184,7 @@ async function main() {
   checkpoint.save(t3.id, { profileId: PROFILE, url: 'http://localhost:9555/form', lastVerifiedState: { stepId: 'nav' } });
   const recovered = recoveryManager.recoverInterruptedTasks();
   ok(recovered.includes(t3.id), '启动扫描识别并恢复 RUNNING 任务', recovered.join(','));
-  const r3 = await waitStatus(t3.id, ['SUCCESS', 'FAILED'], 90000);
+  const r3 = await waitStatus(t3.id, TASK_TERMINAL, 90000);
   ok(r3.status === 'SUCCESS', '恢复后继续执行到 SUCCESS', r3.error || '');
   const rp = replay.buildTaskReplay(taskManager.getTask(t3.id));
   ok(rp.chain.length >= 2, '恢复后可 replay 动作链', String(rp.chain.length));

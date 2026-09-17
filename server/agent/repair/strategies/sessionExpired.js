@@ -19,7 +19,10 @@ async function execute({ task, step, ctx }) {
   // 安全策略：不自动输入凭据。除非任务显式允许（policy.reauth === 'auto' 且已配置凭据）
   const allowAuto = task && task.policy && task.policy.reauth === 'auto';
   if (allowAuto && Array.isArray(task.secretRefs) && task.secretRefs.length) {
-    const res = await ctx.runAction({ type: 'click', target: { semantic: 'login' }, risk: 'MEDIUM', verification: { type: 'none' } });
+    // C140 A 类修复（死路径）：原 verification:{type:'none'} 会被 tools.execute → validateAction
+    // 的 MUST_VERIFY 恒拒（click 在禁盲执行名单内）⇒ REAUTH_OR_PAUSE 的自动重登动作结构性不可达。
+    // 改为 page_change（重登必然改变页面），真实成功门仍是 executor 的 step.verification。
+    const res = await ctx.runAction({ type: 'click', target: { semantic: 'login' }, risk: 'MEDIUM', verification: { type: 'page_change' } });
     return { ok: !!res.success, actions: [{ tool: 'click', target: 'login', ok: !!res.success }] };
   }
   return { ok: false, needsApproval: true, actions: [{ tool: 'pause', ok: false, error: '会话过期：需人工处理，不自动输入密码' }] };

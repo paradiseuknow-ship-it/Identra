@@ -26,6 +26,10 @@ const memoryRecord = require('../agent/intelligence/memoryRecord');
 const elementMemory = require('../agent/intelligence/elementMemory');
 const siteMemory = require('../agent/intelligence/siteMemory');
 const semanticResolver = require('../agent/semanticResolver');
+// C140：等待「终态」必须用生产的**真终态集合**（唯一事实源），不得手写字面清单 —— 旧清单混入非终态
+// `PAUSED_FOR_HUMAN`（不在 taskStateManager.TASK_TERMINAL 内）⇒ waitStatus 会在该中间态提前返回，
+// 随后读到的是 TOCTOU 竞态读。同族实证：Phase23 两次运行给出相反读数（一次中间态/一次真终态）。
+const { TASK_TERMINAL } = require('../agent/taskStateManager');
 
 let pass = 0, fail = 0;
 // C139：把 origResolve 提升到模块作用域 —— 异常路径（main().catch）此前写的是
@@ -194,7 +198,7 @@ async function main() {
       ],
     });
     taskManager.start(t.id);
-    const r = await waitStatus(t.id, ['SUCCESS', 'FAILED', 'PAUSED_FOR_HUMAN'], 90000);
+    const r = await waitStatus(t.id, TASK_TERMINAL, 90000);
     return { t, r };
   };
 

@@ -59,6 +59,11 @@ benchmark/results/
 _*.js
 _*.json
 _*.txt
+# 例外：_testSite.js 是**常驻共享依赖**（server/scripts/testAgentPhase5/22/23/31.js 四个已入库
+# 套件都 require('./_testSite') + server/test-site/server.js 的 VERSION 必须与之成对），
+# 被上面 `_*.js` 的「一次性脚本」通配误伤 ⇒ 新 clone 跑任何浏览器套件都 MODULE_NOT_FOUND。
+# C140 归因副产物：VERSION 常量在两处必须同步演进，其中一处不入库则配对无法保证。
+!server/scripts/_testSite.js
 tmp_*.js
 vite.config.js.timestamp-*.mjs
 

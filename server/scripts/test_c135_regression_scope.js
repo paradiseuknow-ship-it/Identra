@@ -127,6 +127,24 @@ const PROMOTED = [
   //    region 组。收口为 dataRoot()（无隔离时与旧路径逐字相同 ⇒ 行为中性）+ 症状直钉断言。实测 31/0。
   'server/scripts/testAgentPhase31.js',
   'server/scripts/testAgentPhase34.js',
+  // C140 归因而晋升（EX-04/EX-05 双双由「待归因（计时 + 语义）」定性为**测试过时 + 夹具契约漂移**，
+  //  生产业务**唯一改动**是两条修复策略内部的死路径，详见 .benchmark/C140_EX04_EX05_ATTRIBUTION_REPORT.md）：
+  //  Phase5  = ① 夹具 click 写 verification:{type:'none'}，而 click 在 schema/action.js 的 MUST_VERIFY
+  //    名单内、tools.execute 对每个动作再校验一次 ⇒ 恒 ACTION_INVALID（探针实测 25 attempts 全为
+  //    `ACTION_INVALID:click 必须提供有意义的验证`，与语义/恢复链无关）；② waitStatus 终态词表漏
+  //    HUMAN_ESCALATION 而 taskManager.escalate 写的就是它 ⇒ 任务已终态仍空转 90s×3（这就是 C135
+  //    实测「180s 被 SIGTERM」的真因）；③ §5 目标页 /renamed 的按钮**无 onclick**，在强制验证契约下
+  //    无法诚实验证 ⇒ 改用新增的可验证夹具 /renamed-nav。实测 20/0（71s，原 180s+ 被杀）。
+  //  Phase23 = ① 同 Phase5 的夹具 click 契约 + 终态词表问题；② §5「/cookie 点击被遮罩应产出
+  //    DISMISS_OVERLAY」**原理上不可能成立** —— repairManager.js:99-101 对 VERIFICATION_FAILED
+  //    强制改写诊断类别（Phase 7 Step 5 有意规则：禁止被重分类后误用 SEMANTIC_RELOCATE）⇒ 只可能
+  //    VERIFY_RETRY；③ §6 /flaky4 的慢请求数 4 是「恢复 ≤3 次」时代的快照，而真实恢复预算 =
+  //    1 + stepMax(默认 3) 次导航 + ≤1 次 reload（recoveryManager RELOAD_CAP_PER_STEP=1）⇒ 确定性
+  //    恢复在第 4 次导航即成功、Repair 层**恒不被触达**（实测 repairs=[]）⇒ 夹具改为 6 并由跨层
+  //    不变量守护；④ 新增 /flaky4-reset，避免夹具跨次运行计数器不复位导致断言静默变红。
+  //  两者均已补数据根隔离（隔离行早于首个 require）⇒ 满足入集前提。
+  'server/scripts/testAgentPhase5.js',
+  'server/scripts/testAgentPhase23.js',
 ];
 
 (async () => {

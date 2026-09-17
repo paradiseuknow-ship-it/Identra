@@ -6,6 +6,11 @@
 // 注意：集成部分启动浏览器，必须**停止 server 进程**后独立运行。
 // 用法：node server/scripts/testAgentPhase23.js
 
+// C140：数据根隔离。必须在**任何 require 之前** —— dataRoot / browserManager / identityStore
+// 的数据根在模块加载期解析，晚于首个 require 的隔离行只覆盖一半（EX-08 同族实证）。
+// 入集前提 = 已做数据根隔离（EXCLUDED_SUITES.json 登记纪律第 1/4 条）。
+process.env.FPB_DATA_DIR = require('path').join(require('os').tmpdir(), 'c140_phase23_' + Date.now());
+
 const db = require('../db');
 const taskManager = require('../agent/taskManager');
 const browserManager = require('../browserManager');
@@ -17,6 +22,14 @@ const repairSchema = require('../agent/repair/repairSchema');
 const repairPolicy = require('../agent/repair/repairPolicy');
 const repairPlanner = require('../agent/repair/repairPlanner');
 const repairAttempts = require('../agent/repair/repairAttempts');
+// C140：终态词表的**唯一事实源**（必须是生产同一集合，不得手写字面清单）。旧字面清单同时犯两个错：
+//  ① 漏 `HUMAN_ESCALATION` —— Phase 5.8 起它是「修复耗尽/需人工」的**显式终态**（runtime.js:1205-1210
+//     的 `taskManager.escalate`）⇒ 任务已终态仍要空转满 120s 观测窗（本套件旧版 305s 的真因之一）；
+//  ② 混入 `PAUSED_FOR_HUMAN` —— 而它**不是终态**（taskStateManager.TASK_TERMINAL 不含它，语义是
+//     「等待人工、可 resume」）⇒ waitStatus 会在该中间态**提前返回**，随后读到的状态是 TOCTOU 竞态读。
+//     本套件实测两次运行给出相反读数（一次 PAUSED_FOR_HUMAN / 一次 HUMAN_ESCALATION）即此。
+// 改为派生自事实源后，非终态在结构上不可能再被当作等待目标。
+const { TASK_TERMINAL } = require('../agent/taskStateManager');
 
 let pass = 0, fail = 0;
 function ok(cond, name, extra) {
@@ -57,13 +70,19 @@ async function cleanup(ids) {
 }
 
 const NAV = (url, timeoutMs) => ({ type: 'navigate', target: { url }, risk: 'LOW', verification: { type: 'page_change' }, timeoutMs: timeoutMs || 15000 });
-const CLICK = (semantic, timeoutMs) => ({ type: 'click', target: { semantic }, risk: 'MEDIUM', verification: { type: 'none' }, timeoutMs: timeoutMs || 15000 });
+// C140：click 属 schema/action.js MUST_VERIFY ⇒ verification 不能是 none（tools.execute 第 171 行
+// validateAction 会恒拒 ACTION_INVALID）。§8 目标页改为 /renamed-nav（按钮同文案 Continue 但
+// 点击真实跳转）⇒ page_change 成立；§7 的 ELEMENT_NOT_FOUND 场景不受影响。
+const CLICK = (semantic, timeoutMs) => ({ type: 'click', target: { semantic }, risk: 'MEDIUM', verification: { type: 'page_change' }, timeoutMs: timeoutMs || 15000 });
 
-async function runPlan(name, url, steps) {
-  const t = taskManager.createTask({ name, objective: 'x', targetUrl: url, profileId: PROFILE, executionMode: 'AUTONOMOUS', policy: { riskFloor: 'HIGH' } });
+async function runPlan(name, url, steps, extraPolicy) {
+  const t = taskManager.createTask({ name, objective: 'x', targetUrl: url, profileId: PROFILE, executionMode: 'AUTONOMOUS', policy: { riskFloor: 'HIGH', ...(extraPolicy || {}) } });
   taskManager.attachPlan(t.id, { goal: name, steps });
   taskManager.start(t.id);
-  const r = await waitStatus(t.id, ['SUCCESS', 'FAILED', 'PAUSED_FOR_HUMAN'], 120000);
+  // C140：等待目标 = 生产**真终态集合**（唯一事实源 TASK_TERMINAL），不是手写字面清单 —— 见文件头
+  // 注释：旧清单既漏 HUMAN_ESCALATION（空转满窗，是旧执行器 180s/240s 被 SIGTERM 的真因），
+  // 又混入非终态 PAUSED_FOR_HUMAN（提前返回 ⇒ 竞态读，本套件两次运行相反读数）。断言口径零变化。
+  const r = await waitStatus(t.id, TASK_TERMINAL, 120000);
   return { t, r };
 }
 
@@ -117,34 +136,61 @@ async function main() {
   ]);
   ok(c1.r.status === 'SUCCESS', 'Cookie 弹窗修复成功', c1.r.error || '');
   const repairs1 = repairAttempts.listForTask(c1.t.id);
-  ok(repairs1.length >= 1 && repairs1.some((x) => x.strategy === 'DISMISS_OVERLAY'), '产生 DISMISS_OVERLAY RepairAttempt', JSON.stringify(repairs1.map((x) => x.strategy)));
+  // C140 归因：本用例的失败是**验证失败**（点击被遮罩挡住 → 未跳转 → page_change 不成立），
+  // 而 repairManager.js:99-101 对 classifier.type === 'VERIFICATION_FAILED' **强制**把诊断类别
+  // 改写为 VERIFICATION_FAILED（Phase 7 Step 5 的有意规则：禁止被重分类成 ELEMENT_CHANGED 后
+  // 误用 SEMANTIC_RELOCATE）⇒ repairPlanner 必然产出 VERIFY_RETRY，
+  // DISMISS_OVERLAY 在该场景**原理上不可达**（旧断言写在「验证失败强制路由」之前）。
+  // 遮挡修复能力本身的覆盖由 [repair-planner] 段的 OBSTRUCTION → DISMISS_OVERLAY 断言承担。
+  ok(repairs1.length >= 1 && repairs1.some((x) => x.strategy === 'VERIFY_RETRY'),
+    '遮挡导致的验证失败 → VERIFY_FAILED 强制路由产出 VERIFY_RETRY RepairAttempt', JSON.stringify(repairs1.map((x) => x.strategy)));
   const attempts1 = store.read('aiAttempts', []).filter((a) => { const st = store.find('aiSteps', a.stepId); return st && st.taskId === c1.t.id; });
   ok(attempts1.length >= 1 && repairs1.length >= 1, '原始 Attempt 与 RepairAttempt 均保留', 'attempts=' + attempts1.length + ' repairs=' + repairs1.length);
 
-  // ---- 6) 集成 Case 2：timeout 进入 Repair 层（前 4 次都慢）----
-  console.log('[integration-timeout] /flaky4 确定性恢复失败 → WAIT_RETRY_RELOAD 修复 → 成功');
+  // ---- 6) 集成 Case 2：timeout 进入 Repair 层（慢请求数 > 确定性恢复预算）----
+  console.log('[integration-timeout] /flaky4 确定性恢复耗尽 → WAIT_RETRY_RELOAD 修复 → 成功');
+  // C140：复位夹具计数器（见 test-site /flaky4-reset 注释）—— 不复位会让本用例在第 2 次运行时
+  // 夹具恒快、Repair 层不被触达，断言静默变红。
+  await testSite.resetFlaky4();
   const c2 = await runPlan('p23 timeout', 'http://localhost:9555/flaky4', [
     { id: 'nav', type: 'NAVIGATE', description: '打开', expectedOutcome: 'o', risk: 'LOW', action: NAV('http://localhost:9555/flaky4', 1500) },
   ]);
   ok(c2.r.status === 'SUCCESS', 'Timeout Repair 成功', c2.r.error || '');
   const repairs2 = repairAttempts.listForTask(c2.t.id);
+  // C140：夹具慢请求数已提到 > 确定性恢复预算（1+默认重试 3 次导航 + reload 上限 1）⇒ 恢复必然
+  // 耗尽、Repair 层必然被触达。断言**不放宽**：仍要求真的产出 WAIT_RETRY_RELOAD。
   ok(repairs2.some((x) => x.strategy === 'WAIT_RETRY_RELOAD'), '产生 WAIT_RETRY_RELOAD RepairAttempt', JSON.stringify(repairs2.map((x) => x.strategy)));
 
-  // ---- 7) 集成 Case 4：修复失败 → PAUSED_FOR_HUMAN ----
-  console.log('[integration-fail] /empty 完全找不到 → 修复耗尽 → 人工');
+  // ---- 7) 集成 Case 4：修复失败 → 显式交人终态 ----
+  console.log('[integration-fail] /empty 完全找不到 → 修复耗尽 → HUMAN_ESCALATION');
+  // C140：**显式关闭 replan**（maxReplans=0），使本用例只覆盖它自称的那条分支 —— 否则归宿取决于
+  // 「replan 能否收敛」（LLM 可用性），断言会随外部条件漂移。探针实测（.benchmark/c140_probe_empty*.log）：
+  //   · 放开 replan：RUNNING → PAUSED_FOR_HUMAN(69.2s) → RUNNING(70.5s) → **SUCCESS**(73.8s)
+  //     —— replan 被 runtime.js:1171 用来「基于实况重规划剩余步骤」并**成功**，PAUSED_FOR_HUMAN
+  //        在这里是**中间态**（窗口 ~1.2s ≥ 600ms 轮询 ⇒ 旧断言会读到它 ⇒ 两次运行相反读数）。
+  //   · maxReplans=0：RUNNING → **HUMAN_ESCALATION**(69.5s)，不经过可观测的 PAUSED_FOR_HUMAN
+  //     （task.paused 事件与 task.escalated 相隔 9ms），error 带根因。
+  // ⇒ 「修复耗尽 → 显式交人终态」这条契约（Phase 5.8 / runtime.js:1205-1210）被**确定地**覆盖。
   const c3 = await runPlan('p23 fail', 'http://localhost:9555/empty', [
     { id: 'nav', type: 'NAVIGATE', description: '打开', expectedOutcome: 'o', risk: 'LOW', action: NAV('http://localhost:9555/empty') },
     { id: 'click', type: 'ACT', description: '点击 xyzzy', expectedOutcome: 'o', risk: 'MEDIUM', action: CLICK('xyzzy', 2500), maxRetries: 2 },
-  ]);
-  ok(c3.r.status === 'PAUSED_FOR_HUMAN', '修复耗尽 → PAUSED_FOR_HUMAN（不无限循环）', c3.r.error || '');
+  ], { maxReplans: 0 });
+  // C140：Phase 5.8 起「修复耗尽/需人工」是 HUMAN_ESCALATION **显式终态**（taskManager.escalate
+  // 第 635 行；原 PAUSED_FOR_HUMAN 非终态会永久悬挂，runtime.js:1206 有明确记载）
+  // ⇒ 断言改到当前契约，且同时咬住根因文案（不是只判状态）。**刻意不接受 PAUSED_FOR_HUMAN** ——
+  // 它不在 TASK_TERMINAL 内，是被 replan 带回去继续执行的中间态，接受它等于接受竞态读。同族先例：Phase22:126。
+  ok(c3.r.status === 'HUMAN_ESCALATION' && /需人工处理/.test(String(c3.r.error || '')),
+    '修复耗尽 → HUMAN_ESCALATION 显式终态（带根因，不无限循环）', c3.r.status + ' / ' + (c3.r.error || ''));
   const repairs3 = repairAttempts.listForTask(c3.t.id);
   ok(repairs3.filter((x) => x.status === 'FAILED').length >= 1, '存在 FAILED RepairAttempt', String(repairs3.length));
   ok(repairs3.length <= 3, '修复尝试受 maxRepairAttempts 限制', String(repairs3.length));
 
   // ---- 8) 集成 Case 1：按钮变化（走确定性恢复层）----
-  console.log('[integration-element] /renamed Proceed→Continue 语义重定位成功');
-  const c4 = await runPlan('p23 element', 'http://localhost:9555/renamed', [
-    { id: 'nav', type: 'NAVIGATE', description: '打开', expectedOutcome: 'o', risk: 'LOW', action: NAV('http://localhost:9555/renamed') },
+  // C140：目标页由 /renamed 改为 /renamed-nav（同文案 Continue，但点击真实跳转）——
+  // 旧页按钮无 onclick，在 click 强制 verification 契约下无法诚实验证。
+  console.log('[integration-element] /renamed-nav Proceed→Continue 语义重定位成功');
+  const c4 = await runPlan('p23 element', 'http://localhost:9555/renamed-nav', [
+    { id: 'nav', type: 'NAVIGATE', description: '打开', expectedOutcome: 'o', risk: 'LOW', action: NAV('http://localhost:9555/renamed-nav') },
     { id: 'click', type: 'ACT', description: '点击 Proceed', expectedOutcome: 'o', risk: 'MEDIUM', action: CLICK('Proceed', 2500) },
   ]);
   ok(c4.r.status === 'SUCCESS', '按钮文字变化自动恢复成功', c4.r.error || '');

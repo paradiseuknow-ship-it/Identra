@@ -53,14 +53,24 @@ app.get('/flaky', (req, res) => {
   }, delay);
 });
 
-// 前 4 次都慢（5s）、第 5 次起快 —— 确定性恢复(≤3 次)失败 → 进入 Repair 层 WAIT_RETRY_RELOAD 后成功
+// 前 N 次都慢（5s）、之后快 —— 让**当前**确定性恢复预算必然耗尽，从而真正进入 Repair 层
+// WAIT_RETRY_RELOAD 并成功。
+// C140 归因：旧值 n<4 是「确定性恢复 ≤3 次」时代的快照。实测恢复预算 = 1 + stepMax(默认 3)
+// = 4 次导航 + ≤1 次 reload（recoveryManager RELOAD_CAP_PER_STEP=1）⇒ 第 5 个请求(n=4)恰好快
+// ⇒ 确定性恢复在第 4 次导航即成功，Repair 层**恒不被触达**（实测 repairs=[]）。
+// 现取 6（>5，留 1 单位余量），并由 test_c140_repair_action_contract.js 对
+// 「6 > 1 + 运行时默认重试 3 + reload 上限 1」做跨层不变量守护（防再次静默漂移）。
+const FLAKY4_SLOW_REQUESTS = 6;
 let flaky4Count = 0;
+// 复位入口：test-site 进程可能跨套件/跨次回归存活（端口已有且版本匹配时 _testSite.ensure()
+// 不重启进程）⇒ 计数不复位会让本夹具在第 2 次运行时恒快，断言静默变红。套件在用例前 GET 本路由。
+app.get('/flaky4-reset', (req, res) => { flaky4Count = 0; res.json({ ok: true, slowRequests: FLAKY4_SLOW_REQUESTS }); });
 app.get('/flaky4', (req, res) => {
   const n = flaky4Count++;
-  const delay = n < 4 ? 5000 : 100;
+  const slow = n < FLAKY4_SLOW_REQUESTS;
   setTimeout(() => {
-    res.send(PAGE('Flaky4 Page', `<h1>Flaky4 Page (${n < 4 ? 'slow#' + (n + 1) : 'fast'})</h1><button>Continue</button>`));
-  }, delay);
+    res.send(PAGE('Flaky4 Page', `<h1>Flaky4 Page (${slow ? 'slow#' + (n + 1) : 'fast'})</h1><button>Continue</button>`));
+  }, slow ? 5000 : 100);
 });
 
 // 无任何交互元素 —— 测试最终失败 + AI Diagnosis（元素不存在且无同义命中）
@@ -100,6 +110,19 @@ app.get('/renamed', (req, res) => {
     <button type="button" name="action">Continue</button>`));
 });
 
+// 语义重定位 + 可验证效果（C140）：旧 /renamed 的按钮**没有 onclick**，点击不产生任何页面变化。
+// 而 click 属 schema/action.js MUST_VERIFY ⇒ 必须有 verification(type≠none) 或 expectedBusinessState；
+// 于是「语义 Proceed 不在 → 恢复探测 Continue → 点击」这条链在 /renamed 上**无法诚实验证**：
+// 写 verification:{type:'none'} 判 ACTION_INVALID（实测恒败），写任何 DOM 断言都是恒真的假绿。
+// 故新增本夹具：按钮文案同为 Continue（与 /renamed 同形），但点击真实跳转 ⇒ page_change 可验证。
+app.get('/renamed-nav', (req, res) => {
+  res.send(PAGE('Renamed Nav', `
+    <h1>Renamed Nav</h1>
+    <p>Follow the steps</p>
+    <button type="button" name="action" onclick="location.href='/renamed-done'">Continue</button>`));
+});
+app.get('/renamed-done', (req, res) => res.send(PAGE('Renamed Done', `<h1>Renamed Done</h1><p>Relocated to Continue and navigated.</p>`)));
+
 // Modal 遮挡（测试模态框识别）
 app.get('/modal', (req, res) => {
   res.send(PAGE('Modal', `
@@ -117,6 +140,6 @@ app.get('/modal', (req, res) => {
 app.get('/', (req, res) => res.send(PAGE('Test Site Home', '<h1>Test Site</h1><ul><li><a href="/form">/form</a></li><li><a href="/slow">/slow</a></li><li><a href="/renamed">/renamed</a></li><li><a href="/modal">/modal</a></li></ul>')));
 
 const PORT = 9555;
-const VERSION = 9; // 递增版本号：测试脚本据此检测"残留旧进程"
+const VERSION = 10; // 递增版本号：测试脚本据此检测"残留旧进程"（C140：新增 /renamed-nav·/renamed-done·/flaky4-reset）
 app.get('/ping', (req, res) => res.json({ ok: true, version: VERSION }));
 app.listen(PORT, () => console.log(`[test-site] v${VERSION} http://localhost:${PORT}`));
