@@ -30,6 +30,8 @@ const semanticResolver = require('../agent/semanticResolver');
 // `PAUSED_FOR_HUMAN`（不在 taskStateManager.TASK_TERMINAL 内）⇒ waitStatus 会在该中间态提前返回，
 // 随后读到的是 TOCTOU 竞态读。同族实证：Phase23 两次运行给出相反读数（一次中间态/一次真终态）。
 const { TASK_TERMINAL } = require('../agent/taskStateManager');
+// C141：等待原语收口到单一实现（不得再复制循环体）。
+const taskWait = require('./taskWait');
 
 let pass = 0, fail = 0;
 // C139：把 origResolve 提升到模块作用域 —— 异常路径（main().catch）此前写的是
@@ -42,14 +44,12 @@ function ok(cond, name, extra) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// C141：委托单一实现（server/scripts/taskWait.js）。**必须保留其声明外壳**（即仍以
+// `async function <该名字>(` 形式定义，只是体内改为一行委托）：c119 A6 以「该名字的出现数 −
+// 其函数定义数 === 提取到的等待窗数」做自洽校验，去掉定义会使算式漂移。
+// ★ 注释里刻意不写出带左括号的完整函数名 —— 否则会污染任何按字面形状计数的既有守护（C131 同族教训）。
 async function waitStatus(taskId, targets, timeoutMs) {
-  const end = Date.now() + timeoutMs;
-  while (Date.now() < end) {
-    const t = taskManager.getTask(taskId);
-    if (t && targets.includes(t.status)) return t;
-    await sleep(600);
-  }
-  return taskManager.getTask(taskId);
+  return taskWait.waitTaskStatus(taskId, targets, timeoutMs);
 }
 
 const PROFILE = 'p_phase31_' + Date.now().toString(36);

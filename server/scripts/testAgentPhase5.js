@@ -31,6 +31,8 @@ const { StoreInterface } = require('../agent/storage/store.interface');
 // `HUMAN_ESCALATION`（Phase 5.8 起的显式交人终态 ⇒ 任务已终态仍空转满观测窗），也可能混入非终态
 // `PAUSED_FOR_HUMAN`（taskStateManager.TASK_TERMINAL 不含它 ⇒ waitStatus 提前返回 ⇒ TOCTOU 竞态读）。
 const { TASK_TERMINAL } = require('../agent/taskStateManager');
+// C141：等待原语收口到单一实现（不得再复制循环体）。
+const taskWait = require('./taskWait');
 
 let pass = 0, fail = 0;
 function ok(cond, name, extra) {
@@ -51,14 +53,12 @@ const ensureTestSite = () => testSite.ensure();
 // 显式终态（runtime.js:1206 + taskManager.escalate.js:635；原 PAUSED_FOR_HUMAN 非终态会永久悬挂）。
 // 旧词表漏掉它 ⇒ 任务早已终态仍空转满 90s 观测窗（§5/§6/§7 共 270s），
 // 这正是 C135 实测「执行器 180s SIGTERM」的真因，而非套件跑不完。
+// C141：委托单一实现（server/scripts/taskWait.js）。**必须保留其声明外壳**（即仍以
+// `async function <该名字>(` 形式定义，只是体内改为一行委托）：c119 A6 以「该名字的出现数 −
+// 其函数定义数 === 提取到的等待窗数」做自洽校验，去掉定义会使该算式漂移。
+// ★ 注释里刻意不写出带左括号的完整函数名 —— 否则会污染任何按字面形状计数的既有守护（C131 同族教训）。
 async function waitStatus(taskId, targets, timeoutMs) {
-  const end = Date.now() + timeoutMs;
-  while (Date.now() < end) {
-    const t = taskManager.getTask(taskId);
-    if (t && targets.includes(t.status)) return t;
-    await sleep(600);
-  }
-  return taskManager.getTask(taskId);
+  return taskWait.waitTaskStatus(taskId, targets, timeoutMs);
 }
 
 const PROFILE = 'p_phase5_' + Date.now().toString(36);

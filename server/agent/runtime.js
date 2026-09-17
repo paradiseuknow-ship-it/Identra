@@ -137,8 +137,13 @@ async function ensureBrowser(task) {
         lastErr = e;
         try { await browserManager.close(task.profileId).catch(() => {}); } catch (_) {}
         if (attempt < 2) {
-          const end = Date.now() + (attempt + 1) * 300;
-          while (Date.now() < end) { /* 微退避 */ }
+          // C141（2026-09-17）：原为同步忙等 `const end = Date.now() + (attempt + 1) * 300;
+          // while (Date.now() < end) { /* 微退避 */ }` —— 位于 async 函数内，会**阻塞事件循环**
+          // 300ms/600ms，期间定时器、IO 回调、其他并发任务全部饥饿（本文件 :110 已有正确的
+          // 非阻塞退避 backoffSleep，属同文件两种写法并存）。改为委托该单一实现。
+          // 等价性：attempt=0 → 300ms、attempt=1 → 600ms，与旧式 (attempt+1)*300 逐值相同，
+          // 仅为「去阻塞」，不改退避时序语义。
+          await backoffSleep(attempt + 1);
         }
       }
     }

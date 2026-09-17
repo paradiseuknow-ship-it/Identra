@@ -24,6 +24,8 @@ const failureSnapshot = require('../agent/recovery/failureSnapshot');
 // `PAUSED_FOR_HUMAN`（不在 TASK_TERMINAL 内，是被 replan 带回去继续执行的中间态）⇒ waitStatus 会提前
 // 返回，断言随之变成「中间态是否恰好可观测」的竞态依赖。同族实证见 testAgentPhase23.js §7 注释。
 const { TASK_TERMINAL } = require('../agent/taskStateManager');
+// C141：等待原语收口到单一实现（不得再复制循环体）。
+const taskWait = require('./taskWait');
 
 let pass = 0, fail = 0;
 function ok(cond, name, extra) {
@@ -32,14 +34,12 @@ function ok(cond, name, extra) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ensureTestSite = () => testSite.ensure();
+// C141：委托单一实现（server/scripts/taskWait.js）。**必须保留其声明外壳**（即仍以
+// `async function <该名字>(` 形式定义，只是体内改为一行委托）：c119 A6 以「该名字的出现数 −
+// 其函数定义数 === 提取到的等待窗数」做自洽校验，去掉定义会使该算式漂移。
+// ★ 注释里刻意不写出带左括号的完整函数名 —— 否则会污染任何按字面形状计数的既有守护（C131 同族教训）。
 async function waitStatus(taskId, targets, timeoutMs) {
-  const end = Date.now() + timeoutMs;
-  while (Date.now() < end) {
-    const t = taskManager.getTask(taskId);
-    if (t && targets.includes(t.status)) return t;
-    await sleep(600);
-  }
-  return taskManager.getTask(taskId);
+  return taskWait.waitTaskStatus(taskId, targets, timeoutMs);
 }
 
 function hasFourLayers(d) {
