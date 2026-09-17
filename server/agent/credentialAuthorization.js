@@ -104,6 +104,35 @@ function isOriginlessLocalContext(url) {
   return false;
 }
 
+/**
+ * 凭据字段名归一化 —— **唯一实现**（C142-A）。
+ *   小写 + 去首尾空白；复合键取点号尾段（"billing.card" → "card"）。
+ *
+ * 为什么必须两条分支共用同一个归一（同文件内不对称 = 形式缺陷）：
+ *   `field` 与 `semantic` 承载同一语义概念，但旧实现里 field 侧做了「小写 + 尾段」，
+ *   semantic 侧只做「小写 + 全等」——同一语义在两条分支上口径不同，
+ *   任何一处口径演进都会静默地只作用于一侧。
+ *
+ * ⚠️ 诚实声明（C142 实测，不可略去）：
+ *   真实落盘数据（server/data + .benchmark，1051 个 JSON）中 `target.semantic` 的
+ *   点号形态为 **0 例**（形态分布：中文 47257 / 纯拉丁 5973 / 其它 1207）。
+ *   因此本次归一**行为中性（no-op）**，收益是「两条分支此后不可能再各自漂移」，
+ *   **不是**「修复了某个正在发生的漏判」。真正的 semantic 侧漏判根因见下方说明。
+ */
+function normalizeCredentialField(v) {
+  const s = String(v === undefined || v === null ? '' : v).toLowerCase().trim();
+  if (!s) return '';
+  if (s.indexOf('.') < 0) return s;
+  const tail = s.split('.').pop();
+  return tail ? tail.trim() : s;
+}
+
+/** 归一化后是否命中凭据字段词表（唯一判定入口，field 与 semantic 共用）。 */
+function isCredentialFieldName(v) {
+  const f = normalizeCredentialField(v);
+  return !!f && CREDENTIAL_FIELDS.indexOf(f) >= 0;
+}
+
 /** 该动作是否属于「凭据类」：credentialRef、敏感 field，或凭据类动作类型。 */
 function isCredentialAction(action) {
   const a = action || {};
@@ -111,17 +140,20 @@ function isCredentialAction(action) {
   if (t.credentialRef) return true;
   if (CREDENTIAL_ACTION_TYPES.indexOf(a.type) >= 0) return true;
   const field = String(t.field || '').toLowerCase().trim();
-  if (field && CREDENTIAL_FIELDS.indexOf(field) >= 0) return true;
-  // field 可能是复合键（如 "billing.card"）—— 取最后一段再判
-  if (field && field.indexOf('.') >= 0) {
-    const tail = field.split('.').pop();
-    if (tail && CREDENTIAL_FIELDS.indexOf(tail) >= 0) return true;
-  }
-  // semantic 仅在**没有** field 时参与判定：避免把「点密码框旁边的按钮」误判成凭据动作
-  if (!field) {
-    const sem = String(t.semantic || '').toLowerCase().trim();
-    if (sem && CREDENTIAL_FIELDS.indexOf(sem) >= 0) return true;
-  }
+  if (isCredentialFieldName(field)) return true;
+  // semantic 仅在**没有** field 时参与判定：避免把「点密码框旁边的按钮」误判成凭据动作。
+  // 归一函数与 field 分支共用（C142-A）。
+  //
+  // ⚠️ 已知边界（C142 实测，本批**不修**，已立项 C143）：
+  //   CREDENTIAL_FIELDS 是纯英文词表，而真实数据里 semantic 以中文为主
+  //   （"密码输入框" / "用户名输入框" / "邮箱输入框" / "手机号输入框"，1051 个 JSON 中
+  //   去重后 4 种取值、均 type=fill 且无 field）⇒ 这条分支对它们恒为 false，
+  //   即闸门在该形态上 fail-open。
+  //   为什么不在此处直接补中文词：同一批数据里「登录按钮」等 **click** 语义
+  //   （CJK 凭据词 × click 共 232 例）一旦被无差别纳入，就会违反本模块红线第 1 条
+  //   （不得误伤普通控件）。正确解法需要「按动作类型分层的本地化词表」，
+  //   属改闸门语义，另批独立取证 + 独立守护。
+  if (!field && isCredentialFieldName(t.semantic)) return true;
   return false;
 }
 

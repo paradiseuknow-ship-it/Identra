@@ -22,6 +22,8 @@
 const verification = require('../../verification');
 const { verifyWithAlternatives } = require('../../verification/verificationWindow');
 const elementChanged = require('./elementChanged');
+// C142-B：凭据判据唯一事实源（该模块零 require，无环依赖）。
+const credentialAuthorization = require('../../credentialAuthorization');
 
 // 同一 step 进入 verifyFailed 的次数（判断 plan 是否已过期：常规重定位/重试已连续失败）。
 const _verifyFailCount = new Map();
@@ -42,14 +44,39 @@ function looksLikeErrorPage(obs) {
   return /(access denied|forbidden|请求被拒绝|已被注册|already exists|已存在|操作失败|提交失败)/i.test(t);
 }
 
-// 凭证/支付/登录类动作（需人工，不可自动重规划）
+// 凭证/支付/登录类动作（需人工，不可自动重规划）。
+//
+// C142-B：本处原先自带**第二份实现**（与 credentialAuthorization 的凭据判据并存）。
+// 1051 个真实 JSON 逐案对拍实测，两份口径双向分歧：
+//   漏判 15 项（事实源 true 而此处 false）：email / credentialRef / username / user_id /
+//     passwd / pwd / cvc / securitycode / expiry / ssn / token / code / Password / CVV / 验证码
+//     ⇒ 凭据动作失败被判为普通失败 ⇒ 走自动重执行（= 把凭据再填进可能已漂移的页面，
+//       正是 17-A 原始事故形态），违反本文件「不可自动重规划」红线。
+//   过判：此处的中文正则对**动作类型不敏感**，真实数据里「登录按钮」等 click 语义
+//     （CJK 凭据词 × click 共 232 例）同样命中 ⇒ 无谓升级人工。
+// 现改为**委托唯一事实源**，并把原有三项条件**逐字保留**为显式登记项。
+//
+// ★ 为什么登记项必须保留（删除任一 = 放宽，须显式授权）：
+//   事实源是「归一后全等」判定，而此处原正则是**子串**判定 —— 直接委托会让
+//   password_confirm / cardholder / otp_code 这类真实子串形态由 true 变 false。
+//   保留后本函数是旧行为的**严格超集** ⇒ 零放宽，只收紧。
+//
+// ⚠️ 已登记的过判（C142 实测，本批不修）：登记项 c 对动作类型不敏感，
+//    click 类语义仍会命中。修正需先设计「按动作类型分层的本地化词表」，另批立项。
+const CREDENTIAL_FIELD_LEGACY_RE = /password|card|cvv|otp|支付|付款|登录|密码|卡号/;
+
 function isCredentialAction(step) {
   const a = step && step.action;
   if (!a) return false;
+  // ① 唯一事实源（英文词表 + credentialRef + 凭据类动作类型）
+  if (credentialAuthorization.isCredentialAction(a)) return true;
+  // ② 登记项 a：风险等级（事实源不读 risk）
   if (a.risk === 'CRITICAL') return true;
-  if (['purchase', 'payment', 'password_change', 'delete', 'login'].includes(a.type)) return true;
+  // ③ 登记项 b：delete（事实源的 CREDENTIAL_ACTION_TYPES 不含 delete）
+  if (a.type === 'delete') return true;
+  // ④ 登记项 c：本地化词 + 子串判定（事实源是纯英文词表 + 归一后全等）
   const f = String((a.target && (a.target.field || a.target.semantic)) || '');
-  if (/password|card|cvv|otp|支付|付款|登录|密码|卡号/.test(f)) return true;
+  if (CREDENTIAL_FIELD_LEGACY_RE.test(f)) return true;
   return false;
 }
 
