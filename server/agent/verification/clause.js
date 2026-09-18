@@ -44,9 +44,38 @@ function evalTextPresent(after, expect) {
   };
 }
 
+// C146：缺 expect（含空串/纯空白）不再「无条件成立」，改为 fail-closed。
+//
+// 改前实测（真实调用，非手写模拟）：`evalTextAbsent(page, '')` 返回成立（confidence 0.85，
+// 理由文案自述「无条件成立」）。它是本模块 6 个判定器中**唯一**的 fail-open ——
+// text_present / storage / url_contains / url_pattern 的缺参分支全部 fail-closed
+// （因此本文件里「缺参 ⇒ 无条件成立」的形状只此一处；C146 守护按该**内容形状**做自动对账，
+// 新增判定器会被自动覆盖，不会出现覆盖面漂移）。
+//
+// 为什么在 JS 上「不加固」必然 fail-open：`''.includes('')` 恒为 true ⇒ 两侧朴素实现都恒真。
+// C126 只给 `text_present` 补了 fail-closed 守卫（其守护的「E 组：fail-closed / 健壮性」里
+// 明确断言「expect 为空串 ⇒ text_present 不成立」），而**同一后果面的姊妹** text_absent
+// —— 同一文本源（pageText）、同一归一化（normalizeText）、相邻定义、同一批消费者 ——
+// 被漏掉（L6：同一后果面不得两条路径不一致）。本批即把那份加固补到姊妹上。
+//
+// 危害**双向**、同一根因，真实 `evaluateContract` 调用取证：
+//   ① 落在 requiredEvidence 槽 ⇒ 契约无条件满足（success=true / conf 0.85 / evidence 为空）
+//      ⇒ 伪成功通道（与「不设伪成功」纪律冲突）；
+//   ② 落在 forbiddenEvidence 槽 ⇒ evaluateContract 第 1 步「任一命中即硬失败」被无条件触发
+//      ⇒ 真实成功被恒判失败（conf 0.95）。
+//   同一份 `{ type:'text_absent', expect:'' }` 在两个槽位产生**相反极性**，两者都错。
+// 可达性：schema/action.js 的 verification 校验只断言 type ∈ VERIFICATION_TYPES
+// （`text_absent` 在内），**不强制 expect** ⇒ 畸形输入可经计划校验进入执行链；
+// normalizeContract / validateContract 亦只按 `.type` 过滤 ⇒ 合约侧同样可达。
+//
+// 方向 = **收紧**（更不容易误判成功），与 C131 的 P2 守卫同向。**不改 Success Definition**：
+// 只影响畸形子句；真实语料（server/data + .step22-e2e）text_absent 子句总数 = 0，
+// 内部构造点（contract.deriveContract 的派生契约）全部带非空 expect ⇒ 良构计划零影响。
+// confidence 取 0.7 与姊妹 evalTextPresent 的缺参分支同值；且失败时 evaluateContract
+// 会统一覆盖为 0.5，故该数值不参与成功裁决。
 function evalTextAbsent(after, expect) {
   const e = normalizeText(expect);
-  if (!e) return { ok: true, confidence: 0.85, reason: 'text_absent: 子句无 expect（无条件成立）' };
+  if (!e) return { ok: false, confidence: 0.7, reason: 'text_absent: 子句缺少 expect（fail-closed）' };
   const ok = !pageText(after).includes(e);
   return {
     ok,

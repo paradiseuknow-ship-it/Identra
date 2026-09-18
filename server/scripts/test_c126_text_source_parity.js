@@ -154,7 +154,18 @@ ok(/const sideText = \(o\) => existence\.normalizeText\(\(o && \(o\.visibleText 
 console.log('=== E 组：fail-closed / 健壮性 ===');
 const robust = [
   ['expect 为空串 → text_present 不成立', () => verification.verify({ type: 'text_present', expect: '' }, shortPage, null).success === false],
-  ['expect 为空串 → text_absent 成立（无条件）', () => verification.verify({ type: 'text_absent', expect: '' }, shortPage, null).success === true],
+  // C146 改锚：原条目锚的是**改前行为字形**（记为「无条件成立」），与本节标题
+  // 「E 组：fail-closed / 健壮性」**自身声明的不变量**相反 —— 且紧邻的姊妹条目
+  // （text_present 同形状）期望的正是「不成立」。
+  // 改前实测（真实调用）：text_absent 缺 expect 时直接返回成立，是 clause.js 六个判定器里
+  // **唯一**的 fail-open（其余 text_present / storage / url_contains / url_pattern 全 fail-closed）。
+  // 危害双向：同一份畸形子句落在 requiredEvidence 槽 ⇒ 契约无条件满足（伪成功）；
+  // 落在 forbiddenEvidence 槽 ⇒ evaluateContract 首步「任一命中即硬失败」被无条件触发
+  // ⇒ 真实成功被恒判失败。两个极性都错，根因同为「畸形 ⇒ 无条件」。
+  // C146 把 C126 当年对 text_present 做过的同一加固补到其姊妹 text_absent 上（L6 同后果面）。
+  // 改锚到**不变量**：缺 expect = 畸形子句 ⇒ 不可评估 ⇒ 不成立（与其余判定器同向）。
+  ['expect 为空串 → text_absent 不成立（fail-closed，与 text_present 同口径）', () => verification.verify({ type: 'text_absent', expect: '' }, shortPage, null).success === false],
+  ['expect 为 undefined → text_absent 不成立（fail-closed）', () => verification.verify({ type: 'text_absent' }, shortPage, null).success === false],
   ['expect 为 undefined → text_present 不成立', () => verification.verify({ type: 'text_present' }, shortPage, null).success === false],
   ['after 文本字段全缺失 → 不抛异常', () => verification.verify({ type: 'text_present', expect: 'x' }, { url: 'u' }, null).success === false],
   ['after 为 null → 不抛异常', () => verification.verify({ type: 'text_present', expect: 'x' }, null, null).success === false],
