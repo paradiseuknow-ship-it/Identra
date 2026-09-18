@@ -19,6 +19,10 @@ const botChallenge = require('./botChallenge');
 // PHASE 17-A P0-B：Diagnosis → Runtime Decision（诊断真正进入动作策略层）
 const diagnosisDecision = require('./diagnosisDecision');
 const credentialAuthorization = require('./credentialAuthorization');
+// C143：「凭据动作 ⇒ 阻断自动重做」族的唯一实现。本模块原先自带 `isCredentialishStep`，
+// 与 repair/strategies/verifyFailed.js 内旧实现**逐字同形**（同一判据两份副本、异名同义）
+// ⇒ 两处口径会各自漂移，且 C142 的按名扫描抓不到。现两处共用同一实现。
+const credentialRetryGuard = require('./credentialRetryGuard');
 const verificationIntelligence = require('./verification/verificationIntelligence');
 // PHASE 17-E：SkillExecutor（受监督接管）。本模块**不含任何执行入口** —— 它只回答
 // 「这一步用 Skill 的动作还是 Generic 的动作」与「何时交还控制权」，物理执行仍走 runStep。
@@ -1278,15 +1282,20 @@ function maxReplansFor(task) {
   return (typeof p.maxReplans === 'number' && p.maxReplans >= 0) ? p.maxReplans : DEFAULT_POLICY.maxReplans;
 }
 
-// 凭证/支付/登录等需人工的动作：即便真实失败也不自动 REPLAN（交 HUMAN_ESCALATE）
+// 凭证/支付/登录等需人工的动作：即便真实失败也不自动 REPLAN（交 HUMAN_ESCALATE）。
+//
+// C143：**纯委托 / 保留声明外壳**（同 C141 处置）。本函数原先是 repair/strategies/
+// verifyFailed.js 内旧实现的**逐字副本** —— 同一判据在仓库里存在**两份副本**，且
+// **异名同义**（`isCredentialishStep` ↔ `isCredentialAction`）。C142 的全仓横扫按
+// **函数名**分组找「同名多实现」，对异名同义**结构性漏检** ⇒ 只收口了 verifyFailed
+// 那一份，本处仍漏判同一批 15 项凭据动作（email / credentialRef / username / user_id /
+// passwd / pwd / cvc / securitycode / expiry / ssn / token / code / Password / CVV / 验证码）
+// ⇒ 凭据动作失败仍会进自动 REPLAN（= 把凭据重填进可能已漂移的页面），
+//   违反本文件与 C104 声明的「凭证/支付/登录类不自动重规划」红线。
+// 现由 server/agent/credentialRetryGuard.js 承载该族唯一实现，两处共用。
+// ⚠️ 本文件内**不得再出现任何凭据词表正则**（test_c143 以字面形状计数钉住；回退必红）。
 function isCredentialishStep(step) {
-  const a = step && step.action;
-  if (!a) return false;
-  if (a.risk === 'CRITICAL') return true;
-  if (['purchase', 'payment', 'password_change', 'delete', 'login'].includes(a.type)) return true;
-  const f = String((a.target && (a.target.field || a.target.semantic)) || '');
-  if (/password|card|cvv|otp|支付|付款|登录|密码|卡号/.test(f)) return true;
-  return false;
+  return credentialRetryGuard.isCredentialActionBlockingRetry(step && step.action);
 }
 
 // 是否为「Plan 过期」信号（触发 REPLAN 的候选）：

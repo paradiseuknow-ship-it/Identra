@@ -22,8 +22,12 @@
 const verification = require('../../verification');
 const { verifyWithAlternatives } = require('../../verification/verificationWindow');
 const elementChanged = require('./elementChanged');
-// C142-B：凭据判据唯一事实源（该模块零 require，无环依赖）。
-const credentialAuthorization = require('../../credentialAuthorization');
+// C142-B：凭据判据唯一事实源（credentialAuthorization 零 require，无环依赖）。
+// C143：本文件**不再承载登记项逻辑** —— 「凭据动作 ⇒ 阻断自动重做」整族判据
+//   （主判据 ∨ 三项登记项）已上移到 server/agent/credentialRetryGuard.js 作为该族
+//   唯一实现（runtime.js 的 isCredentialishStep 是同族第二份副本，同步收口）。
+//   此处只保留声明外壳做**纯委托**，本文件内再无任何凭据词表正则。
+const credentialRetryGuard = require('../../credentialRetryGuard');
 
 // 同一 step 进入 verifyFailed 的次数（判断 plan 是否已过期：常规重定位/重试已连续失败）。
 const _verifyFailCount = new Map();
@@ -54,30 +58,21 @@ function looksLikeErrorPage(obs) {
 //       正是 17-A 原始事故形态），违反本文件「不可自动重规划」红线。
 //   过判：此处的中文正则对**动作类型不敏感**，真实数据里「登录按钮」等 click 语义
 //     （CJK 凭据词 × click 共 232 例）同样命中 ⇒ 无谓升级人工。
-// 现改为**委托唯一事实源**，并把原有三项条件**逐字保留**为显式登记项。
+// C143：**登记项整体上移，本函数变为纯委托**（保留声明外壳，同 C141 处置）。
+//   实测 `runtime.js` 的 `isCredentialishStep` 与本文件旧实现**逐字同形** ⇒ 同一判据
+//   在仓库里存在**两份副本**，且**异名同义**。C142 的全仓横扫按**函数名**分组找
+//   「同名多实现」，对异名同义**结构性漏检** ⇒ 只收口了本文件那一份，
+//   runtime 侧仍漏判同一批 15 项凭据动作。
+//   现由 server/agent/credentialRetryGuard.js 承载该族**唯一实现**
+//   （主判据 ∨ 三项登记项，逐字搬入），两个消费方共用。
 //
-// ★ 为什么登记项必须保留（删除任一 = 放宽，须显式授权）：
-//   事实源是「归一后全等」判定，而此处原正则是**子串**判定 —— 直接委托会让
-//   password_confirm / cardholder / otp_code 这类真实子串形态由 true 变 false。
-//   保留后本函数是旧行为的**严格超集** ⇒ 零放宽，只收紧。
-//
-// ⚠️ 已登记的过判（C142 实测，本批不修）：登记项 c 对动作类型不敏感，
-//    click 类语义仍会命中。修正需先设计「按动作类型分层的本地化词表」，另批立项。
-const CREDENTIAL_FIELD_LEGACY_RE = /password|card|cvv|otp|支付|付款|登录|密码|卡号/;
-
+// ⚠️ 本文件内**不得再出现任何凭据词表正则**
+//   （test_c143_credential_family_singleton 以字面形状计数钉住；回退必红）。
+// ⚠️ 已登记的过判（C142/C143 实测，本批不修）：登记项 c 对动作类型不敏感，
+//    click 类语义仍会命中（真实数据 232 例）。修正需先设计「按动作类型分层的
+//    本地化词表」，另批立项。
 function isCredentialAction(step) {
-  const a = step && step.action;
-  if (!a) return false;
-  // ① 唯一事实源（英文词表 + credentialRef + 凭据类动作类型）
-  if (credentialAuthorization.isCredentialAction(a)) return true;
-  // ② 登记项 a：风险等级（事实源不读 risk）
-  if (a.risk === 'CRITICAL') return true;
-  // ③ 登记项 b：delete（事实源的 CREDENTIAL_ACTION_TYPES 不含 delete）
-  if (a.type === 'delete') return true;
-  // ④ 登记项 c：本地化词 + 子串判定（事实源是纯英文词表 + 归一后全等）
-  const f = String((a.target && (a.target.field || a.target.semantic)) || '');
-  if (CREDENTIAL_FIELD_LEGACY_RE.test(f)) return true;
-  return false;
+  return credentialRetryGuard.isCredentialActionBlockingRetry(step && step.action);
 }
 
 // Plan 是否已过期（需 REPLAN）：连续 DOM_CHANGED / ACTION_REAL_FAILURE 且常规重定位/重试已失败。

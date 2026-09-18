@@ -79,44 +79,66 @@ const OLD_IMPL_FIXTURE = [
 
 const VF_SRC = fs.readFileSync(VF_PATH, 'utf8');
 const CA_SRC = fs.readFileSync(CA_PATH, 'utf8');
+const GUARD_PATH = path.join(ROOT, 'server', 'agent', 'credentialRetryGuard.js');
+const GUARD_SRC = fs.readFileSync(GUARD_PATH, 'utf8');
 
-// ── A 单一实现：静态委托关系 + 无第二份词表判据 + 事实源零 require ──────
+// ── A 单一实现：静态委托关系 + 消费方零凭据词表判据 + 事实源零 require ──────
 // 判据函数化：同一组断言要能同时作用于「生产源码」与「旧实现负样本」。
+//
+// ★ C143 锚点上移（判据随实现上移，且**更严**）：
+//   登记项整体搬到 server/agent/credentialRetryGuard.js 后，verifyFailed **不再**
+//   持有任何凭据词表正则 ⇒ A3 由「恰 1 处」收紧为「**0 处**」；新增 A3b（纯委托）、
+//   A6/A8（登记项唯一副本在共享模块内且被真实引用）。
+//   回退到 C142 状态（verifyFailed 自带常量）会让 A3/A3b/A6 至少两条红。
 const CRED_TOKEN_RE = /(password|card|cvv|otp|密码|登录|支付|付款|卡号)/;
 function countCredRegexLiterals(src) {
   const body = stripComments(src);
   return (body.match(/\/[^\n/]*(?:password|card|cvv|otp|密码|登录|支付|付款|卡号)[^\n/]*\/[gimsuy]*/g) || [])
     .filter((t) => CRED_TOKEN_RE.test(t));
 }
-function staticDelegationVerdict(src) {
+
+/** 对「消费方文件」的静态判据：只允许**纯委托**该族唯一实现，不得自带词表正则。 */
+function consumerDelegationVerdict(src) {
   const body = stripComments(src);
   return {
-    hasRequire: /require\(\s*['"][^'"]*credentialAuthorization['"]\s*\)/.test(body),
-    callsSource: /credentialAuthorization\s*\.\s*isCredentialAction\s*\(/.test(body),
+    hasRequire: /require\(\s*['"][^'"]*credentialRetryGuard['"]\s*\)/.test(body),
+    callsGuard: /credentialRetryGuard\s*\.\s*isCredentialActionBlockingRetry\s*\(/.test(body),
     credRegexCount: countCredRegexLiterals(src).length,
   };
 }
 
-const prod = staticDelegationVerdict(VF_SRC);
-check('A1 verifyFailed 引入凭据判据唯一事实源', prod.hasRequire === true);
-check('A2 verifyFailed 调用事实源判据（不是只 require 不用）', prod.callsSource === true);
-check('A3 verifyFailed 内只剩 1 处凭据词表正则（登记项常量）', prod.credRegexCount === 1,
+const prod = consumerDelegationVerdict(VF_SRC);
+check('A1 verifyFailed 引入该族唯一实现（credentialRetryGuard）', prod.hasRequire === true);
+check('A2 verifyFailed 调用唯一实现（不是只 require 不用）', prod.callsGuard === true);
+check('A3 verifyFailed 内**0 处**凭据词表正则（C143 后登记项已上移）', prod.credRegexCount === 0,
   'count=' + prod.credRegexCount);
-check('A3b 该唯一正则确实挂在登记项常量上', /CREDENTIAL_FIELD_LEGACY_RE\s*=\s*\/[^\n]*\//.test(stripComments(VF_SRC)));
+check('A3b verifyFailed 的判据函数是纯委托（无本地分支残留）',
+  /function isCredentialAction\(step\)\s*\{\s*return credentialRetryGuard\.isCredentialActionBlockingRetry\(step && step\.action\);\s*\}/.test(stripComments(VF_SRC)));
 check('A4 事实源零 require（无环依赖风险）', !/require\s*\(/.test(CA_SRC),
   'requires=' + (CA_SRC.match(/require\s*\(/g) || []).length);
 check('A5 事实源导出面含判据（委托目标真实存在）',
   /module\.exports\s*=[\s\S]*isCredentialAction/.test(CA_SRC));
-// 登记项常量必须在文件中被**使用**（防「只声明不使用」的假在场）
-check('A6 登记项常量被真实引用（非死代码）',
-  /CREDENTIAL_FIELD_LEGACY_RE\s*\.\s*test\s*\(/.test(VF_SRC));
+// 登记项 c 必须是**全仓唯一副本**，且被真实引用（防「只声明不使用」的假在场）
+check('A6 共享模块内恰 1 处凭据词表正则（登记项唯一副本）',
+  countCredRegexLiterals(GUARD_SRC).length === 1,
+  'count=' + countCredRegexLiterals(GUARD_SRC).length);
+check('A7 共享模块的登记项常量被真实引用（非死代码）',
+  /CREDENTIAL_SUBSTRING_COMPAT_RE\s*\.\s*test\s*\(/.test(GUARD_SRC));
+check('A8 共享模块导出该族唯一实现与登记项常量',
+  /module\.exports\s*=[\s\S]*isCredentialActionBlockingRetry[\s\S]*CREDENTIAL_SUBSTRING_COMPAT_RE/.test(GUARD_SRC));
+// ⚠️ 判据必须先剥注释：本模块的**设计文档就写在文件头注释里**，
+//    注释中包含 `require('./credentialAuthorization')` 原文 ⇒ 不剥会虚高计数（L20 同族）。
+check('A9 共享模块只依赖事实源（无环）',
+  (stripComments(GUARD_SRC).match(/require\s*\(/g) || []).length === 1
+  && /require\(\s*['"]\.\/credentialAuthorization['"]\s*\)/.test(stripComments(GUARD_SRC)),
+  'count=' + (stripComments(GUARD_SRC).match(/require\s*\(/g) || []).length);
 
 // ── B revert 对照：旧实现必须让 A1–A3 至少两条红 ───────────────────────
 {
-  const old = staticDelegationVerdict(OLD_IMPL_FIXTURE);
-  const reds = [!old.hasRequire, !old.callsSource, old.credRegexCount !== 1].filter(Boolean).length;
+  const old = consumerDelegationVerdict(OLD_IMPL_FIXTURE);
+  const reds = [!old.hasRequire, !old.callsGuard, old.credRegexCount !== 0].filter(Boolean).length;
   check('B1 同一组静态断言作用于旧实现必须红（断言有分辨力）', reds >= 2,
-    '旧实现命中数=' + reds + ' require=' + old.hasRequire + ' call=' + old.callsSource);
+    '旧实现命中数=' + reds + ' require=' + old.hasRequire + ' call=' + old.callsGuard);
 }
 
 // ── 夹具构造（防空：构造失败必须转成 FAIL，不得静默零信号）────────────
@@ -266,9 +288,9 @@ const NON_CRED_CASES = [
     && REGISTERED_TERMS.length === 5 && NON_CRED_CASES.length === 7,
     [LEAK_CASES.length, LOCALIZED_GAPS.length, REGISTERED_TERMS.length, NON_CRED_CASES.length].join('/'));
   {
-    const fake = staticDelegationVerdict('const x = 1;');
+    const fake = consumerDelegationVerdict('const x = 1;');
     check('F3 静态判据不是恒真（对空源码会红）',
-      fake.hasRequire === false && fake.callsSource === false && fake.credRegexCount === 0,
+      fake.hasRequire === false && fake.callsGuard === false && fake.credRegexCount === 0,
       JSON.stringify(fake));
   }
   {
