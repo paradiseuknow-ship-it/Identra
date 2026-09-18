@@ -23,9 +23,18 @@ function chk(name, cond, detail) {
 }
 
 // ── A 组：isReplanCandidate 认得「只有 code」的动作工具失败（D1 修复面）──
+// ⚠️ C144 更新夹具（**不变量不变**）：C144 起「邮箱 / 用户名 / 验证码」等本地化**写值**语义
+//    已正确判为凭据动作（见 server/agent/credentialRetryGuard.js 登记项 d）
+//    ⇒ 原夹具「注册邮箱输入框」不再是「普通语义字段」，继续用它会让 A1 的名称与事实脱节。
+//    A1 的不变量仍是「**非凭据**普通控件失败后仍可自动 REPLAN」⇒ 换成真中性语义；
+//    同一形状转为 A1b 的**收紧面**断言（凭据动作不得自动重规划）。
 chk('A1 ELEMENT_NOT_FOUND + 普通语义字段 → replan 候选',
   isReplanCandidate({ code: 'ELEMENT_NOT_FOUND', message: '未找到元素' },
-    { action: { type: 'fill', target: { semantic: '注册邮箱输入框' } } }) === true);
+    { action: { type: 'fill', target: { semantic: '产品搜索框' } } }) === true);
+
+chk('A1b ELEMENT_NOT_FOUND + 本地化凭据语义（注册邮箱输入框）→ 不自动重规划（C144 收紧面）',
+  isReplanCandidate({ code: 'ELEMENT_NOT_FOUND', message: '未找到元素' },
+    { action: { type: 'fill', target: { semantic: '注册邮箱输入框' } } }) === false);
 
 chk('A2 ELEMENT_NOT_INTERACTABLE → 候选',
   isReplanCandidate({ code: 'ELEMENT_NOT_INTERACTABLE' },

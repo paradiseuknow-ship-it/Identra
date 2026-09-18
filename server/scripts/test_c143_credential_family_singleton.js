@@ -208,8 +208,34 @@ const NON_CRED = [
   { label: 'field=search', action: { type: 'fill', target: { field: 'search' } } },
   { label: 'field=q', action: { type: 'fill', target: { field: 'q' } } },
   { label: 'click + field=submitBtn', action: { type: 'click', target: { field: 'submitBtn' } } },
-  { label: 'click + semantic=注册邮箱输入框（C104 A1 契约，必须仍可 REPLAN）',
+  // ⚠️ C144 更新夹具（**不变量不变**）：原为 semantic=注册邮箱输入框，C144 起该语义
+  //    已正确判为凭据动作 ⇒ 不再是「普通控件」。换成真中性语义以保住 C104 A1 的不变量。
+  { label: 'fill + semantic=产品搜索框（普通控件；C104 A1 契约，必须仍可 REPLAN）',
+    action: { type: 'fill', target: { semantic: '产品搜索框' } } },
+];
+
+// C144 收紧面（登记项 d：本地化**写值**语义）—— 旧行为放行、新行为必须挡住。
+// 这批形状在 C144 前是 C104 A1 的夹具，故其「被挡住」正是 C144 的行为证据。
+const C144_TIGHTENED = [
+  { label: 'C144 fill + semantic=注册邮箱输入框（原 C104 A1 夹具）',
     action: { type: 'fill', target: { semantic: '注册邮箱输入框' } } },
+  { label: 'C144 fill + semantic=用户名输入框（真实数据 42 例）',
+    action: { type: 'fill', target: { semantic: '用户名输入框' } } },
+  { label: 'C144 fill + field=邮箱（真实数据 7 例）',
+    action: { type: 'fill', target: { field: '邮箱' } } },
+  { label: 'C144 fill + semantic=验证码', action: { type: 'fill', target: { semantic: '验证码' } } },
+];
+
+// C144 有意**不**动的面（分层边界，动了就是错）：
+//   · 非写值动作 × 本地化词 —— click 承载「动作/区域」而非字段
+//   · 未锚定概念（手机号）—— 扩概念，登记缺口
+const C144_UNTOUCHED = [
+  { label: 'click + semantic=邮箱注册按钮（同一词、非写值动作 ⇒ 本层不生效）',
+    action: { type: 'click', target: { semantic: '邮箱注册按钮' } } },
+  { label: 'wait + semantic=等待邮箱验证码加载（非写值动作）',
+    action: { type: 'wait', target: { semantic: '等待邮箱验证码加载' } } },
+  { label: 'fill + semantic=手机号输入框（未锚定概念，登记缺口）',
+    action: { type: 'fill', target: { semantic: '手机号输入框' } } },
 ];
 
 // 旧 runtime 实现原文（**负样本夹具**，逐字取自 C143 改动前的 runtime.js；
@@ -257,13 +283,35 @@ check('F1 旧实现夹具构造成功（完整声明，非裸块）', typeof old
   check('C3 [runtime] 三项登记项全部在场（删除任一 = 放宽）', missReg.length === 0,
     missReg.length ? '缺失 → ' + missReg.map((x) => x.label).join(' / ') : '');
 
-  // ── C4 不得误伤（含 C104 A1 契约）──
+  // ── C4 不得误伤（C104 A1 契约：非凭据普通控件仍可 REPLAN）──
   const hurt = NON_CRED.filter((c) => !replannable(c.action));
-  check('C4 [runtime] 普通控件仍可自动 REPLAN（含 C104 A1「注册邮箱输入框」契约）',
+  check('C4 [runtime] 普通控件仍可自动 REPLAN（含 C104 A1「普通语义字段」契约）',
     hurt.length === 0, hurt.length ? '误伤 → ' + hurt.map((x) => x.label).join(' / ') : '');
 
+  // ── C5 C144 收紧面：本地化**写值**语义必须被挡住（登记项 d）──
+  const notTightened = C144_TIGHTENED.filter((c) => replannable(c.action));
+  check('C5 [runtime] C144 本地化写值语义全部不可自动 REPLAN（收紧面到位）',
+    notTightened.length === 0,
+    notTightened.length ? '未收紧 → ' + notTightened.map((x) => x.label).join(' / ') : '');
+
+  // ── C5b revert 对照：旧实现必须在同一批形状上全部漏判（证明 C5 有分辨力）──
+  if (typeof oldFn === 'function') {
+    const oldMiss = C144_TIGHTENED.filter((c) => !oldFn({ action: c.action })).length;
+    check('C5b [revert] 旧实现对本批形状全部漏判（C5 断言咬得住）',
+      oldMiss === C144_TIGHTENED.length,
+      '旧实现漏判=' + oldMiss + '/' + C144_TIGHTENED.length);
+  } else {
+    check('C5b [revert] 旧实现对本批形状全部漏判（C5 断言咬得住）', false, '夹具不可用');
+  }
+
+  // ── C6 C144 分层边界：非写值动作 / 未锚定概念必须**原样不动**（仍可 REPLAN）──
+  const movedBoundary = C144_UNTOUCHED.filter((c) => !replannable(c.action));
+  check('C6 [runtime] C144 边界面未被误扩（非写值动作 + 未锚定概念仍可 REPLAN）',
+    movedBoundary.length === 0,
+    movedBoundary.length ? '边界被误扩 → ' + movedBoundary.map((x) => x.label).join(' / ') : '');
+
   // ── E 两消费方同答（本次收口的直接目的）──
-  const BATTERY = [].concat(LEAK_CASES, REGISTERED, NON_CRED);
+  const BATTERY = [].concat(LEAK_CASES, REGISTERED, NON_CRED, C144_TIGHTENED, C144_UNTOUCHED);
   const mismatch = [];
   for (const c of BATTERY) {
     const vf = await needsApproval(c.action);   // true = 需人工

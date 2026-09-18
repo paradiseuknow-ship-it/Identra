@@ -24,7 +24,8 @@ const { verifyWithAlternatives } = require('../../verification/verificationWindo
 const elementChanged = require('./elementChanged');
 // C142-B：凭据判据唯一事实源（credentialAuthorization 零 require，无环依赖）。
 // C143：本文件**不再承载登记项逻辑** —— 「凭据动作 ⇒ 阻断自动重做」整族判据
-//   （主判据 ∨ 三项登记项）已上移到 server/agent/credentialRetryGuard.js 作为该族
+//   （主判据 ∨ 四项登记项：risk / delete / 子串兼容面 / 本地化写值语义面）已上移到
+//   server/agent/credentialRetryGuard.js 作为该族
 //   唯一实现（runtime.js 的 isCredentialishStep 是同族第二份副本，同步收口）。
 //   此处只保留声明外壳做**纯委托**，本文件内再无任何凭据词表正则。
 const credentialRetryGuard = require('../../credentialRetryGuard');

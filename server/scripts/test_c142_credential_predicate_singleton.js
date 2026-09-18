@@ -25,7 +25,8 @@
  *   D 不得误伤  —— 普通控件（search / q / submitBtn / searchBtn）不得升级人工
  *   E 登记项    —— risk=CRITICAL / delete / 本地化子串必须仍然在场（删 = 放宽）
  *   F 防空断言  —— 证明判据不恒真、负样本非恒红、夹具真的构造出来了
- *   G 登记缺口  —— 已知仍缺口（本地化语义词）必须在册，且当前行为须与登记声明一致
+ *   G 本地化面    —— 登记表按**当前行为**分组：已修面（C144 登记项 d 收紧，正向断言 + 归属断言
+ *                    必须仍由本模块承担、事实源不得被越层修改）＋ 未锚定概念的登记缺口（仍缺口）
  *
  * ★ 自扫描纪律（C141 L29 同族）：本套件用**字面形状计数**判「是否还有第二份词表判据」，
  *   因此先剥注释再计数 —— 否则注释里的斜杠列表（如「a / b / c」）会被当成正则字面量边界，
@@ -206,16 +207,24 @@ const LEAK_CASES = [
   { label: 'field=CVV（大小写）', action: { type: 'fill', target: { field: 'CVV' } } },
 ];
 
-// ── G 登记缺口：**本地化语义词**。事实源是纯英文词表，登记项 c 只含 5 个中文词
-//     （支付/付款/登录/密码/卡号）⇒ 其余中文凭据语义仍不判为凭据动作。
-//     登记口径 = 当前行为（NOT_CREDENTIAL）。若哪天被修好，本组断言变红，
-//     强制更新登记表 —— 与「登记表过期也红」的既有约定一致。修它属 C143（本地化词表 + 动作类型分层）。
-const LOCALIZED_GAPS = [
+// ── G 本地化语义面：C144 修好了「写值动作」那一半，登记表随之**分类**（不是缩水）──
+//    事实源是纯英文词表；登记项 c 的中文面只有 5 个词（支付/付款/登录/密码/卡号）；
+//    C144 新增登记项 d「本地化写值语义面」补齐了**写值动作**上的邮箱 / 用户名 / 验证码。
+//    ⇒ 原登记的 5 项本地化缺口按**当前行为**一分为二：
+//       · LOCALIZED_FIXED（4 项）：C144 后已判为凭据动作 ⇒ 断言**正向**（必须 true），
+//         并配「事实源侧仍为 false」的**归属断言**：证明收紧来自本模块的登记项 d，
+//         而不是有人把中文词塞进了授权闸的事实源（那会违反闸门红线第 1 条，不得误伤普通控件）。
+//       · LOCALIZED_GAPS（1 项：手机号）：**未锚定任何英文概念** = 扩概念，
+//         属产品决策，C144 有意不纳入，登记口径仍是 NOT_CREDENTIAL。
+//    ⇒ 两组合计仍为 5 项，登记表规模不缩水（G3 按合计口径守，防「悄悄删登记」）。
+const LOCALIZED_FIXED = [
   { label: '语义=邮箱（email 的中文形态）', action: { type: 'fill', target: { semantic: '邮箱' } } },
   { label: '语义=验证码（otp/code 的中文形态）', action: { type: 'fill', target: { semantic: '验证码' } } },
-  { label: '语义=用户名输入框（真实数据可达，实测 fail-open）', action: { type: 'fill', target: { semantic: '用户名输入框' } } },
-  { label: '语义=邮箱输入框（真实数据可达，实测 fail-open）', action: { type: 'fill', target: { semantic: '邮箱输入框' } } },
-  { label: '语义=手机号输入框（真实数据可达，实测 fail-open）', action: { type: 'fill', target: { semantic: '手机号输入框' } } },
+  { label: '语义=用户名输入框（真实数据 42 例）', action: { type: 'fill', target: { semantic: '用户名输入框' } } },
+  { label: '语义=邮箱输入框（真实数据 35 例）', action: { type: 'fill', target: { semantic: '邮箱输入框' } } },
+];
+const LOCALIZED_GAPS = [
+  { label: '语义=手机号输入框（未锚定英文概念 = 扩概念，待产品决策）', action: { type: 'fill', target: { semantic: '手机号输入框' } } },
 ];
 
 // ── E 登记项（删除任一 = 放宽，必须仍在场）────────────────────────────
@@ -247,15 +256,29 @@ const NON_CRED_CASES = [
   check('C1 漏判面归零（14 项英文/归一形态全部判为凭据动作）', stillLeaking.length === 0,
     '仍漏判=' + stillLeaking.length + (stillLeaking.length ? ' → ' + stillLeaking.join(' / ') : ''));
 
-  // ── G 登记缺口行为须与登记声明一致（当前=不判为凭据动作）────────────
+  // ── G 已修面：4 项本地化写值语义必须为 true，且**归属本模块**（不污染事实源）──
+  const stillOpen = [];
+  const misAttributed = [];
+  for (const g of LOCALIZED_FIXED) {
+    if (!(await isCredentialViaExecute(g.action))) stillOpen.push(g.label);
+    if (credentialAuthorization.isCredentialAction(g.action)) misAttributed.push(g.label);
+  }
+  check('G1 已修面：4 项本地化写值语义判为凭据动作（C144 登记项 d 收紧面）',
+    stillOpen.length === 0, stillOpen.length ? '仍未修 → ' + stillOpen.join(' / ') : '');
+  check('G1b 归属断言：收紧必须来自本模块登记项 d —— 事实源侧仍为 false（不得越层改授权闸口径）',
+    misAttributed.length === 0,
+    misAttributed.length ? '事实源已被改（越层）→ ' + misAttributed.join(' / ') : '');
+
+  // ── G 登记缺口：未锚定概念（手机号）仍为 NOT_CREDENTIAL ─────────────
   const gapDrift = [];
   for (const g of LOCALIZED_GAPS) {
     if (await isCredentialViaExecute(g.action)) gapDrift.push(g.label);
   }
-  check('G1 登记缺口行为与登记声明一致（本地化语义词仍不判为凭据动作）', gapDrift.length === 0,
-    gapDrift.length ? '登记表已过期（以下已被修好，请更新登记并转 C143）→ ' + gapDrift.join(' / ') : '');
-  check('G2 登记缺口非空且逐项已声明（防「空登记表」真空绿）', LOCALIZED_GAPS.length >= 3,
-    'n=' + LOCALIZED_GAPS.length);
+  check('G2 登记缺口行为与登记声明一致（未锚定概念仍不判为凭据动作）', gapDrift.length === 0,
+    gapDrift.length ? '登记表已过期（以下已被修好，请更新登记）→ ' + gapDrift.join(' / ') : '');
+  check('G3 登记表规模不缩水（归组合计 ≥ 原登记 5 项，防「悄悄删登记」）',
+    LOCALIZED_FIXED.length + LOCALIZED_GAPS.length >= 5 && LOCALIZED_FIXED.length === 4,
+    'fixed=' + LOCALIZED_FIXED.length + ' gap=' + LOCALIZED_GAPS.length);
 
   // ── E 登记项在场 ────────────────────────────────────────────────────
   const missingTerms = [];
@@ -283,10 +306,11 @@ const NON_CRED_CASES = [
   }
 
   // ── F 防空断言 ──────────────────────────────────────────────────────
-  check('F2 电池非空且互斥（漏判 14 / 缺口 5 / 登记项 5 / 反面 7）',
-    LEAK_CASES.length === 14 && LOCALIZED_GAPS.length === 5
+  check('F2 电池非空且互斥（漏判 14 / 已修面 4 / 缺口 1 / 登记项 5 / 反面 7）',
+    LEAK_CASES.length === 14 && LOCALIZED_FIXED.length === 4 && LOCALIZED_GAPS.length === 1
     && REGISTERED_TERMS.length === 5 && NON_CRED_CASES.length === 7,
-    [LEAK_CASES.length, LOCALIZED_GAPS.length, REGISTERED_TERMS.length, NON_CRED_CASES.length].join('/'));
+    [LEAK_CASES.length, LOCALIZED_FIXED.length, LOCALIZED_GAPS.length,
+      REGISTERED_TERMS.length, NON_CRED_CASES.length].join('/'));
   {
     const fake = consumerDelegationVerdict('const x = 1;');
     check('F3 静态判据不是恒真（对空源码会红）',
