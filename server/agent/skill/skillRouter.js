@@ -219,9 +219,31 @@ function clauseVerdict(clause, obs) {
     if (!Array.isArray(els) || !els.length) return CLAUSE_VERDICT.INDETERMINATE;
     const hit = els.find((e) => elementMatchesField(e, field));
     if (!hit) return CLAUSE_VERDICT.INDETERMINATE;
-    const val = hit.state && hit.state.value;
+    const st = hit.state || {};
+    const val = st.value;
     if (val == null) return CLAUSE_VERDICT.INDETERMINATE;
-    return String(val) === String(clause.expect) ? CLAUSE_VERDICT.TRUE : CLAUSE_VERDICT.FALSE;
+    // C145：`expect` 是**可选**的 —— builder 产出的真实形态是
+    // `{ type:'field_value', target:{ field:'email' } }`（源 verification 无 expect，
+    // 值由凭据/运行时注入）。改前本分支把 `clause.expect` 直接串进比较，而此时它是
+    // undefined ⇒ `String(val) === 'undefined'` **永假** ⇒ 对 builder 实际产出的形状
+    // **永不 TRUE**（值在场时恒 FALSE，值缺失时才 INDETERMINATE）⇒ 注册在
+    // OBSERVABLE_TYPES 里的 field_value 在 skill 层是死条件，且 AND 契约下
+    // **主动判成 MISMATCH**（比 INDETERMINATE 更糟：既不可判定，又误判为确定不匹配）。
+    // 改前/改后实测（真实 3951 例形状；改前原件由 git show HEAD 复跑，非手写模拟）：
+    //   已填写 FALSE→TRUE ／ 空值 FALSE→FALSE ／ 敏感已填 FALSE→TRUE ／
+    //   敏感未填 FALSE→FALSE ／ 字段不在池、空元素池 INDETERMINATE→INDETERMINATE。
+    const want = clause.expect == null ? '' : String(clause.expect);
+    if (!want) {
+      // 期望值未知 ⇒ 观测「写入真的发生」（语义与 verification.js / VIL 的 field_value 一致，
+      // 见 contract.js:legacyToContract 旁 C73 D3：「空期望 = 期望值未知 ⇒ 退化为『已填写』」）。
+      // ★ 敏感字段明文不出浏览器（observation.js：s.value='' 且 s.sensitive=true）⇒ 用 valueLength。
+      // ★ 防空：值在场但为空串 ⇒ FALSE，绝不因「元素存在」就判 TRUE。
+      if (st.sensitive) {
+        return Number(st.valueLength || 0) > 0 ? CLAUSE_VERDICT.TRUE : CLAUSE_VERDICT.FALSE;
+      }
+      return String(val).length > 0 ? CLAUSE_VERDICT.TRUE : CLAUSE_VERDICT.FALSE;
+    }
+    return String(val) === want ? CLAUSE_VERDICT.TRUE : CLAUSE_VERDICT.FALSE;
   }
 
   return CLAUSE_VERDICT.INDETERMINATE;

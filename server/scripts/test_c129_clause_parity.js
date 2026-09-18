@@ -273,8 +273,33 @@ function pair(expect, text) {
 console.log('=== C 组：有意分离面登记（三层必须继续不同）===');
 
 // C1 field_value：skill 精确全等 vs verification 大小写不敏感子串包含
-ok(/String\(val\) === String\(clause\.expect\)/.test(ROUTER_SRC),
-  'C1a 登记：skill 层 field_value 用精确全等（回放快照值，确定性优先）');
+// ★ C145 修订：原 C1a 锚在 `String(val) === String(clause.expect)` —— 那是**取值字形**
+//   （把 clause.expect 显式串进比较），而本登记真正要守的**不变量**是「skill 层用**精确全等**
+//   比较，与 verification 层的子串包含**有意不同**」。C145 把取值抽成局部变量
+//   （`want = clause.expect == null ? '' : String(clause.expect)`），全等语义逐字未变
+//   （值在场形态的改前/改后对拍 6/6 未动）⇒ 属「锚字面形状过时」，改锚到不变量：
+//   ① 用**真实调用**判定（不手写模拟）② 反向咬住「不得放宽成子串包含 / 大小写折叠」。
+{
+  const fvObs = {
+    url: 'https://example.test/form', loadingState: 'complete',
+    elements: [{
+      name: 'email', id: 'email', placeholder: '', label: '', ariaLabel: '', autocomplete: null,
+      testId: null, text: '', roleText: '', innerText: '', visible: true, state: { value: 'alice@example.com' },
+    }],
+  };
+  const fvSub = router.clauseVerdict(
+    { type: 'field_value', target: { field: 'email' }, expect: 'alice', weight: 'REQUIRED' }, fvObs);
+  const fvExact = router.clauseVerdict(
+    { type: 'field_value', target: { field: 'email' }, expect: 'alice@example.com', weight: 'REQUIRED' }, fvObs);
+  ok(fvSub === 'FALSE' && fvExact === 'TRUE',
+    'C1a 登记（真实调用）：skill 层 field_value 用精确全等 —— 子串命中不算命中，全等才命中',
+    JSON.stringify({ substring: fvSub, exact: fvExact }));
+  const fvBody = (ROUTER_SRC.match(/if \(type === 'field_value'\) \{[\s\S]*?\n  \}/) || [''])[0];
+  ok(fvBody.length > 0 && !/includes\(/.test(fvBody) && !/toLowerCase\(/.test(fvBody),
+    'C1a2 反向咬：field_value 分支不得出现子串包含或大小写折叠'
+    + '（一旦出现即被放宽成 verification 层口径 —— 有意分离被抹平）',
+    JSON.stringify({ len: fvBody.length }));
+}
 ok(/actual\.trim\(\)\.toLowerCase\(\)\.includes\(want\.trim\(\)\.toLowerCase\(\)\)/.test(VERIF_SRC),
   'C1b 登记：verification 层 field_value 用大小写不敏感子串（结果容差校验）');
 {

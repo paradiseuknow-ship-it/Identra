@@ -217,14 +217,30 @@ function verificationContractOf(action) {
 
 // ⑦ stateContract 合成：把验证契约翻译为**不持久化定位器**的可观察子句
 //   element_present/absent → { target: { field } }（**丢弃 expect 里的 CSS 值**，靠运行时 fresh grounding）
+//   field_value            → { target: { field }, expect? }（C145：**同一份语义接地来源**，`expect` 可选）
 //   text/url 类              → 保留 expect（真实页面文本/URL 片段）
 function clauseFromContract(v, action) {
   const type = v && v.type;
   if (!schema.OBSERVABLE_TYPES.includes(type)) return null;
   const field = (action && action.target && action.target.field) || null;
-  if (type === 'element_present' || type === 'element_absent') {
-    if (!field) return null; // 无 field 时无法在不持久化 selector 的前提下表达存在性
-    return { type, target: { field }, weight: 'REQUIRED' };
+  // C145：field_value 与 element_present/absent **同属「需要语义定位键」的子句族** ——
+  // 走同一份接地来源（action.target.field），并同样丢弃源 verification 里的定位符
+  // （真实形状是 {type:'field_value', target:'#email'}，CSS 值不得进 Skill，SEC7）。
+  // 改前为何整步入不了 Skill：本函数对非元素类型只认 expect，而真实 fill 步
+  // **100% 无 expect**（值由凭据/运行时注入）⇒ 恒返回 null ⇒ normalizeStep 判
+  // CONTRACT_NOT_IDENTIFYING ⇒ fill 步结构性永不入 Skill ⇒ 产出流程缺填表步
+  // （改前实测：176 个真实 Skill 的 action.type **全部只有 submit**，fill=0）。
+  // 与 contract.js:legacyToContract 的 C73 D4 同源（「只透传 type/expect 会丢定位键」）——
+  // 那一处已修、这一处漏修（L6：同后果面不对称）。
+  // 方向 = **放宽入集面**，有界：缺 action.target.field 仍拒绝（不得退化成持久化 selector）。
+  if (type === 'element_present' || type === 'element_absent' || type === 'field_value') {
+    if (!field) return null; // 无 field 时无法在不持久化 selector 的前提下表达该状态
+    const cl = { type, target: { field }, weight: 'REQUIRED' };
+    // 值**可选**：planner 给了就保留（丢了会把值判定降级成「已填写」）；没给即
+    // 「期望值未知」（凭据/运行时注入）—— 判定层按 C73 D3 同语义退化，不在此臆造值。
+    const expect = typeof v.expect === 'string' && v.expect.trim() ? v.expect.trim() : null;
+    if (expect) cl.expect = expect;
+    return cl;
   }
   const expect = typeof v.expect === 'string' && v.expect.trim() ? v.expect.trim() : null;
   if (!expect) return null;
