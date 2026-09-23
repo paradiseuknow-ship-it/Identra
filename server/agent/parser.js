@@ -58,6 +58,7 @@ function parseSchema() {
 }
 
 async function parse(text, provider, ctx = {}) {
+  let out = null;
   if (provider && provider.kind && provider.kind !== 'mock') {
     try {
       const parsed = await provider.structured(ctx, {
@@ -72,13 +73,20 @@ async function parse(text, provider, ctx = {}) {
         // 保证用户给的网址永不因 LLM 输出缺陷而丢失（实录：example.com 自拟事故）。
         const h = heuristicParse(text);
         if (!parsed.target && h.target) parsed.target = h.target;
-        return parsed;
+        out = parsed;
       }
     } catch (e) {
       // LLM 解析失败回退启发式
     }
   }
-  return heuristicParse(text);
+  if (!out) out = heuristicParse(text);
+  // C147：target 归一化 —— 本函数是 targetUrl 的唯一来源（LLM 与启发式两条路径的共同出口）。
+  // 裸域名在此补默认 https，否则下游整条站点识别链（Profile 推荐 / 五层记忆 / 凭据闸锚点 /
+  // 入口归因保新）会静默失效：实测该形态下任务 100% 硬失败于 "任务未绑定 Profile"。
+  if (out && typeof out.target === 'string' && out.target) {
+    out.target = require('./urlIdentity').normalizeUrl(out.target);
+  }
+  return out;
 }
 
 module.exports = { parse, heuristicParse };

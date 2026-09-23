@@ -19,7 +19,11 @@
  *   实际归零 14/15；余下 1 项为**本地化语义词**（事实源是纯英文词表），登记待 C143。
  *
  * 守护策略（每条判据都配 revert 对照，防真空绿）：
- *   A 单一实现  —— 委托关系存在、本文件内不再有第二份词表判据、事实源零 require（防环）
+ *   A 单一实现  —— 委托关系存在、本文件内不再有第二份词表判据、
+ *                  事实源**只依赖白名单叶子模块**（防环）。C147 改锚：旧锚「事实源零 require」
+ *                  只是「不引入环依赖」的**字面近似** —— URL 身份解析收口为唯一实现后，
+ *                  事实源新增 3 处 `require('./urlIdentity')`（零依赖叶子）⇒ 近似失效、
+ *                  不变量仍成立。新锚 = 白名单 + 叶子自校验（A4b）+ 双向对照（A4c）+ 反真空（A4d）。
  *   B revert    —— 把**改动前的旧实现原文**当负样本跑同一组静态断言，必须红
  *   C 真实行为  —— 经 verifyFailed.execute 真实调用面（不是复制逻辑）验证漏判面归零
  *   D 不得误伤  —— 普通控件（search / q / submitBtn / searchBtn）不得升级人工
@@ -115,8 +119,32 @@ check('A3 verifyFailed 内**0 处**凭据词表正则（C143 后登记项已上�
   'count=' + prod.credRegexCount);
 check('A3b verifyFailed 的判据函数是纯委托（无本地分支残留）',
   /function isCredentialAction\(step\)\s*\{\s*return credentialRetryGuard\.isCredentialActionBlockingRetry\(step && step\.action\);\s*\}/.test(stripComments(VF_SRC)));
-check('A4 事实源零 require（无环依赖风险）', !/require\s*\(/.test(CA_SRC),
-  'requires=' + (CA_SRC.match(/require\s*\(/g) || []).length);
+// ── C147 改锚：A4 由「零 require」→「只依赖白名单叶子模块」────────────────────
+// 旧锚锚的是**字面近似**；被锚定的**真实不变量**是「不引入环依赖 / 不依赖产品逻辑」。
+// C147 把本文件自带的 hostOf / originOf / isOriginlessLocalContext 三份同义实现收口为
+// `require('./urlIdentity')` 委托（URL 身份解析**唯一实现**，见 server/agent/urlIdentity.js）
+// —— 该目标是**零依赖叶子模块**（自身零 require），环风险为 0，**不变量仍成立**，旧近似失效。
+// 新锚比旧锚**更本质**：旧锚无法区分「安全叶子依赖」与「环依赖」，新锚可以。
+// 归属取证（禁手写模拟）：`git show HEAD:server/agent/credentialAuthorization.js` 原件
+//   requireCount=0（A4 绿）；C147 后 requireCount=3（全部 `./urlIdentity`）；叶子自身 0。
+//   ① A4  每个 require 目标必须 ∈ 白名单（白名单 = 经校验零依赖的叶子模块）
+//   ② A4b 白名单成员**自身零 require**（动态校验 ⇒ 叶子论证成立；叶子被加依赖即红）
+//   ③ A4c 判据逻辑**双向对照**（叶子放行 / 非叶子拒绝）—— 防单向恒真
+//   ④ A4d 反真空：事实源确有被校验的依赖（防 `[].every()` 恒真的空集真空绿）
+const CA_BODY = stripComments(CA_SRC);
+const LEAF_WHITELIST = ['./urlIdentity'];
+const caRequireTargets = [...CA_BODY.matchAll(/require\s*\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]);
+const leafVerdict = (targets) => targets.every((t) => LEAF_WHITELIST.includes(t));
+check('A4 事实源只依赖白名单叶子模块（不引入环依赖）', leafVerdict(caRequireTargets),
+  'targets=' + JSON.stringify(caRequireTargets));
+check('A4b 白名单成员自身零 require（叶子论证成立）',
+  LEAF_WHITELIST.every((t) => !/require\s*\(/.test(stripComments(
+    fs.readFileSync(path.join(ROOT, 'server', 'agent', t.replace(/^\.\//, '') + '.js'), 'utf8')))),
+  'leafs=' + JSON.stringify(LEAF_WHITELIST));
+check('A4c 判据逻辑双向对照（叶子放行 / 非叶子拒绝）',
+  leafVerdict(['./urlIdentity']) === true && leafVerdict(['./runtime']) === false);
+check('A4d 反真空：事实源确有被校验的依赖（非空集恒真）', caRequireTargets.length > 0,
+  'count=' + caRequireTargets.length);
 check('A5 事实源导出面含判据（委托目标真实存在）',
   /module\.exports\s*=[\s\S]*isCredentialAction/.test(CA_SRC));
 // 登记项 c 必须是**全仓唯一副本**，且被真实引用（防「只声明不使用」的假在场）

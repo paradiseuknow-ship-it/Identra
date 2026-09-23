@@ -16,9 +16,9 @@ const failureMatcher = require('./failureMatcher');
 const failureScoring = require('./failureScoring');
 const { normalizeUrlPattern } = require('./schema');
 
+// C147：委托唯一实现（此前是库内 8 份同义副本之一 —— 裸域名会让它静默返回 null）
 function siteOf(url) {
-  if (!url) return null;
-  try { return new URL(url).hostname || null; } catch (e) { return null; }
+  return require('../../urlIdentity').hostOf(url);
 }
 
 // 构造标准化失败上下文

@@ -569,13 +569,10 @@ const VERIFICATION_HOST_KEYWORDS = [
   'perimeterx', 'incapsula', 'kasada', 'fingerprintjs',
 ];
 function isVerificationHost(url) {
-  if (!url) return false;
-  try {
-    const h = new URL(url).hostname.toLowerCase();
-    return VERIFICATION_HOST_KEYWORDS.some((k) => h.includes(k));
-  } catch (e) {
-    return false;
-  }
+  // C147：hostname 提取委托唯一实现（此前是库内同义副本之一）
+  const h = require('./agent/urlIdentity').hostOf(url);
+  if (!h) return false;
+  return VERIFICATION_HOST_KEYWORDS.some((k) => h.includes(k));
 }
 
 async function setupRoutes(page, behavior) {

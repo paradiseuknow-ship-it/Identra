@@ -54,26 +54,17 @@ const CREDENTIAL_ACTION_TYPES = ['login', 'password_change', 'payment', 'purchas
 const OAUTH_PATH_RE = /\/(?:oauth2?|openid|authorize|consent)(?:\/|$|\?)/i;
 const OAUTH_QUERY_KEYS = ['client_id', 'redirect_uri', 'response_type', 'scope', 'code_challenge'];
 
+// C147：hostname / origin 提取委托唯一实现（此前本模块自带同义副本）。
+// 注意归一化带来的**语义修复**：`originOf(task.targetUrl)` 在 targetUrl 为裸域名时，
+// 旧实现抛错→null→anchorOrigin 为 null ⇒ 凭据动作**一律** AUTHORIZATION_CONTEXT_MISSING；
+// 归一化后锚点被正确解析，闸门才真正作用于「用户声明的那个 origin」（跨域仍严格拒绝）。
 function hostOf(url) {
-  if (!url || typeof url !== 'string') return null;
-  try {
-    const h = new URL(url).hostname;
-    return h ? String(h).toLowerCase() : null;
-  } catch (e) {
-    return null; // 相对路径等非法绝对 URL：无 host 可判定
-  }
+  return require('./urlIdentity').hostOf(url);
 }
 
 /** origin（scheme://host[:port]）；端口为协议默认端口时省略，保证语义一致。 */
 function originOf(url) {
-  if (!url || typeof url !== 'string') return null;
-  try {
-    const u = new URL(url);
-    if (!u.hostname) return null;
-    return u.origin && u.origin !== 'null' ? String(u.origin).toLowerCase() : null;
-  } catch (e) {
-    return null;
-  }
+  return require('./urlIdentity').originOf(url);
 }
 
 /**
@@ -94,14 +85,8 @@ function originOf(url) {
  *   `NO_ORIGIN_CONTEXT` 拒绝 + 留痕（fail closed，但归因正确、可恢复）。
  */
 function isOriginlessLocalContext(url) {
-  const s = String(url || '').trim();
-  if (!s) return true; // 空 URL 视为尚未进入任何文档
-  if (s === 'about:blank') return true;
-  if (/^about:/i.test(s)) return true;
-  if (/^data:/i.test(s)) return true;
-  if (/^blob:/i.test(s)) return true;
-  if (/^file:/i.test(s)) return true;
-  return false;
+  // C147：委托唯一实现（此前是本模块自带的同义副本）
+  return require('./urlIdentity').isOriginlessLocalContext(url);
 }
 
 /**

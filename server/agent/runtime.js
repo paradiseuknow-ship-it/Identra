@@ -77,18 +77,20 @@ function getTask(taskId) {
 // 续跑）首次导航前，清除目标注册域的 cookies，让归因链接以干净会话落地。
 // 安全边界：只清 targetUrl 的注册域，不碰其他域；续跑/恢复绝不触发；FPB_KEEP_ENTRY_COOKIES=1 可关。
 function entryDomainOf(u) {
-  try {
-    const h = new URL(u).hostname.split('.');
-    return h.length > 2 ? h.slice(-2).join('.') : h.join('.');
-  } catch (e) { return null; }
+  // C147：hostname 提取委托唯一实现。裸域名此前在此抛错 → null → 归因保新**静默跳过**
+  // （同一根因的下游表现）；归一化后该分支才真正对裸域目标生效。
+  const host = require('./urlIdentity').hostOf(u);
+  if (!host) return null;
+  const h = host.split('.');
+  return h.length > 2 ? h.slice(-2).join('.') : h.join('.');
 }
 function isTrackedEntry(u) {
-  try {
-    const x = new URL(u);
-    if (/[?&](utm_|gclid|fbclid)/i.test(x.search || '')) return true;
-    if (/[?&](ref|affiliate|aff)=/i.test(x.search || '')) return true;
-    return !!(x.pathname && x.pathname !== '/' && x.pathname.length > 1);
-  } catch (e) { return false; }
+  // C147：URL 解析委托唯一实现（同上：裸域名此前解析失败 → 恒 false）
+  const x = require('./urlIdentity').parseUrl(u);
+  if (!x) return false;
+  if (/[?&](utm_|gclid|fbclid)/i.test(x.search || '')) return true;
+  if (/[?&](ref|affiliate|aff)=/i.test(x.search || '')) return true;
+  return !!(x.pathname && x.pathname !== '/' && x.pathname.length > 1);
 }
 async function refreshAttributionCookies(task) {
   try {

@@ -8,9 +8,9 @@ const siteMemory = require('../siteMemory');
 const flowMemory = require('../flowMemory');
 const failureAdvisor = require('../failure/failureAdvisor');
 
+// C147：委托唯一实现（此前是库内 8 份同义副本之一 —— 裸域名会让它静默返回 null）
 function siteOfUrl(url) {
-  if (!url) return null;
-  try { return new URL(url).hostname || null; } catch (e) { return null; }
+  return require('../../urlIdentity').hostOf(url);
 }
 
 // 把 chat 的 parser 输出 + 当前 profileId 统一成 Router 上下文。

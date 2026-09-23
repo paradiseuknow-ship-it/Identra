@@ -51,7 +51,9 @@ function createTask(input = {}) {
     id: uid('task_'),
     name: input.name || '未命名任务',
     objective: input.objective || '',
-    targetUrl: input.targetUrl || '',
+    // C147：入口归一化 —— 裸域名（用户写 "example.com" 而非 "https://example.com"）补默认 https。
+    // 不归一化则下游整条站点识别链静默失效（实测：profileId 恒 null ⇒ runtime 硬失败）。
+    targetUrl: require('./urlIdentity').normalizeUrl(input.targetUrl || ''),
     profileId: input.profileId || null,
     executionMode: EXECUTION_MODES.includes(input.executionMode) ? input.executionMode : 'ASSIST',
     policy: { ...DEFAULT_POLICY, ...(input.policy || {}) },
@@ -516,10 +518,10 @@ function complete(id, result) {
   return task;
 }
 
-// 从 URL 提取 site（hostname），用于经验落库
+// 从 URL 提取 site（hostname），用于经验落库。
+// C147：委托唯一实现（此前是库内 8 份同义副本之一）
 function siteOfUrl(url) {
-  if (!url) return null;
-  try { return new URL(url).hostname || null; } catch (e) { return null; }
+  return require('./urlIdentity').hostOf(url);
 }
 
 // PHASE 17-D：路由影子记录的结果回填（`aiSkillRouting.actual`）。

@@ -722,10 +722,10 @@ function handleSse(req, res, filters) {
   }
 }
 
-// 从 URL 提取 site（hostname）
+// 从 URL 提取 site（hostname）。
+// C147：委托唯一实现（此前是库内 8 份同义副本之一）
 function siteOfUrl(url) {
-  if (!url) return null;
-  try { return new URL(url).hostname || null; } catch (e) { return null; }
+  return require('./urlIdentity').hostOf(url);
 }
 
 router.get('/events', (req, res) => {

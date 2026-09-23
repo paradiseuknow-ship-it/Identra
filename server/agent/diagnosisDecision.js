@@ -82,8 +82,8 @@ function blockKeyOf(action) {
 }
 
 function hostOf(url) {
-  if (!url || typeof url !== 'string') return null;
-  try { return new URL(url).hostname.toLowerCase(); } catch (e) { return null; }
+  // C147：委托唯一实现（此前是库内同义副本之一）
+  return require('./urlIdentity').hostOf(url);
 }
 
 // ⚠️ 字段口径必须对齐真实 observation（COLLECT_JS 输出的元素结构）：

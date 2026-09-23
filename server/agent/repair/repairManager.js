@@ -21,9 +21,9 @@ const repairPolicy = require('./repairPolicy');
 const executor = require('./executor');
 const repairAttempts = require('./repairAttempts');
 
+// C147：委托唯一实现（此前是库内 8 份同义副本之一 —— 裸域名会让它静默返回 null）
 function siteOf(url) {
-  if (!url) return null;
-  try { return new URL(url).hostname || null; } catch (e) { return null; }
+  return require('../urlIdentity').hostOf(url);
 }
 
 async function handleStepFailure({ task, step, error, observation, execution, provider, repairAttemptId, priorDiagnosis }) {

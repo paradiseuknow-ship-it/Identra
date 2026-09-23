@@ -17,10 +17,13 @@
 const analyzer = require('./profileAnalyzer');
 const matcher = require('./profileMatcher');
 
-// 从 URL 取 site（hostname）
+// 从 URL 取 site（hostname）。
+// C147：委托唯一实现（此前是库内 8 份同义副本之一 —— 裸域名会让它静默返回 null，
+// 进而使 Router 推荐不到环境、任务在 runtime 硬失败于 "任务未绑定 Profile"）。
+// 口径变化：此前返回**未小写**的 hostname，现随唯一实现统一为小写（RFC 3986 §3.2.2
+// host 大小写不敏感），与 Profile 评分库、Site/Flow 记忆键的口径一致。
 function siteOf(url) {
-  if (!url) return null;
-  try { return new URL(url).hostname || null; } catch (e) { return null; }
+  return require('../../urlIdentity').hostOf(url);
 }
 
 // 建议：返回 { recommendation: { profileId, confidence, reason, specificity, ranking } }

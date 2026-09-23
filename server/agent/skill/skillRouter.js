@@ -87,12 +87,8 @@ function norm(s) {
 }
 
 function originOf(url) {
-  if (typeof url !== 'string' || !url.trim()) return null;
-  try {
-    const u = new URL(url);
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
-    return u.origin;
-  } catch (e) { return null; }
+  // C147：委托唯一实现（`httpOnly` 即本层原有的「仅认 http/https」收窄口径，语义不变）。
+  return require('../urlIdentity').originOf(url, { httpOnly: true });
 }
 
 function pathOf(url) {

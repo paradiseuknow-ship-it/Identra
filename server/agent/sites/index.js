@@ -43,11 +43,8 @@ function getAdapter(url) {
 }
 
 function safeHost(url) {
-  try {
-    return new URL(url).hostname.toLowerCase();
-  } catch (e) {
-    return String(url || '').toLowerCase();
-  }
+  // C147：委托唯一实现；保留原有的「不可解析时退回小写原串」兜底语义（适配器匹配用）。
+  return require('../urlIdentity').hostOf(url) || String(url || '').toLowerCase();
 }
 
 // 注册新适配器（可被 sites/*.js 文件加载）

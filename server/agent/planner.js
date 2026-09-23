@@ -328,8 +328,11 @@ function enforceEntryUrl(plan, target) {
 // 确定性修正：入口为深链接（路径型）且入口步验证是「入口 URL 字符串类」→ 置 none 并落标记。
 function relaxEntryUrlVerification(plan, target) {
   if (!target || !plan || !Array.isArray(plan.steps)) return plan;
-  let deepLink = false;
-  try { deepLink = new URL(target).pathname !== '/' && new URL(target).pathname.length > 1; } catch (e) { return plan; }
+  // C147：URL 解析委托唯一实现。裸域名此前在此抛错 → 直接 return plan，
+  // 使「302 入口的 URL 字符串类验证放宽」对裸域入口整段失效（同一根因的下游表现）。
+  const u = require('./urlIdentity').parseUrl(target);
+  if (!u) return plan;
+  const deepLink = u.pathname !== '/' && u.pathname.length > 1;
   if (!deepLink) return plan;
   const idx = plan.steps.findIndex((s) => s && s.type === 'NAVIGATE');
   if (idx < 0) return plan;
@@ -337,8 +340,8 @@ function relaxEntryUrlVerification(plan, target) {
   const v = step.action && step.action.verification;
   if (!v || (v.type !== 'url_contains' && v.type !== 'url_pattern')) return plan;
   const expect = String(v.expect || v.pattern || '');
-  let host = '', path = '';
-  try { host = new URL(target).hostname; path = new URL(target).pathname; } catch (e) { return plan; }
+  const host = u.hostname || '';
+  const path = u.pathname;
   // 仅当验证期望指向「入口 URL 本身」（host 或深路径片段）才放宽；指向落地业务特征的不动
   if (expect.includes(host) || (path && expect.includes(path))) {
     step.action.verification = { type: 'none' };

@@ -42,7 +42,9 @@ function suggest(site, errorType) {
 }
 
 function safeHost(url) {
-  try { return new URL(url).hostname.toLowerCase(); } catch (e) { return String(url || '').toLowerCase(); }
+  // C147：委托唯一实现；保留本模块原有的「不可解析时退回小写原串」兜底语义
+  // （记忆键不允许为 null —— 该 fallback 是刻意的，不随收口改变）。
+  return require('./urlIdentity').hostOf(url) || String(url || '').toLowerCase();
 }
 
 module.exports = { record, suggest };

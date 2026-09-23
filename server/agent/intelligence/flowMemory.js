@@ -27,9 +27,9 @@ function flowConfidence(rec) {
 const COLLECTION = 'aiFlowMemory';
 const PACK_FORMAT = 'ai-browser-operator@3.2';
 
+// C147：委托唯一实现（此前是库内 8 份同义副本之一 —— 裸域名会让它静默返回 null）
 function siteOf(url) {
-  if (!url) return null;
-  try { return new URL(url).hostname || null; } catch (e) { return null; }
+  return require('../urlIdentity').hostOf(url);
 }
 
 function flowKey(site, goal) {
