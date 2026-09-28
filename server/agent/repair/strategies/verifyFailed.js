@@ -29,6 +29,9 @@ const elementChanged = require('./elementChanged');
 //   唯一实现（runtime.js 的 isCredentialishStep 是同族第二份副本，同步收口）。
 //   此处只保留声明外壳做**纯委托**，本文件内再无任何凭据词表正则。
 const credentialRetryGuard = require('../../credentialRetryGuard');
+// C152：URL 判据**必须委托唯一实现**（`clause.evalUrlContains`，含 P2 无效证据守卫），
+// 本文件内**不得**出现第二份 URL 比较（大小写/RFC 3986 折叠等口径都在那里）。
+const clause = require('../../verification/clause');
 
 // 同一 step 进入 verifyFailed 的次数（判断 plan 是否已过期：常规重定位/重试已连续失败）。
 const _verifyFailCount = new Map();
@@ -47,6 +50,59 @@ function looksLikeErrorPage(obs) {
   const t = String(obs.visibleText || obs.textSummary || '').toLowerCase();
   if (/\b(403|404|429|500|502|503)\b/.test(t)) return true;
   return /(access denied|forbidden|请求被拒绝|已被注册|already exists|已存在|操作失败|提交失败)/i.test(t);
+}
+
+// ── C152：导航落点正向证据（同一 step 内**跨尝试**的因果口径）──────────────────────
+//
+// A 类真缺陷（实测 C152-ATTRIB）：`NAVIGATE` 首访在 load 等待窗内超时，但**导航已提交**
+//   （URL 已变成目标页）⇒ 本步失败进入确定性恢复 → step 级 `page_change` 的 before 取的是
+//   「超时之后」的观测（runtime 用 post-action 观测覆盖了 beforeObs）⇒ 重试时
+//   before/after 都是目标页 ⇒ `url 变化=false 内容变化=false` ⇒ 3 次重试 + 3 次 VERIFY_RETRY
+//   全部同因失败 ⇒ HUMAN_ESCALATION。
+//   业务事实：页面**已经到达目标 URL**，任务目标其实已达成；旧行为（before=null）之所以「绿」
+//   是靠 `page_change` 的 fail-open 假成功通道，那不是证据。
+//
+// 判据方向（**收紧前先给正向证据，绝不 fail-open**）：
+//   · 只在**修复再验证**路径生效，且只对 `navigate` 且 action 自带 target.url 的步；
+//   · 证据 = 当前观测 URL **已达成该步自己的导航目标**（委托 `clause.evalUrlContains`
+//     唯一实现；`expect` 恒取自 step 自身，**绝不接受外部/LLM 注入的 URL**）；
+//   · 落点在错误页（`looksLikeErrorPage`）⇒ 不算达成；
+//   · 证据不足（无 url / 目标空 / 不包含）⇒ 一律回落到契约验证，**不产生成功**。
+//   因果口径：p2 守卫问的是「该条件在**本动作**之前是否已成立」；此处问的是「**本步**的动作链
+//   是否已把页面带到目标」—— 证据的因果起点是本步的**首次尝试**，而首次尝试的动作前观测
+//   在本链路中未被保留（runtime 只保留 post-action 观测）。故此处显式不做 P2 折叠，
+//   并把这一点写进守护断言（`test_c152_nav_landing_evidence`），避免它静默漂成通用放宽。
+function navigateLandingTarget(step) {
+  const a = (step && step.action) || null;
+  if (!a || a.type !== 'navigate') return null;
+  const t = a.target || {};
+  const want = t.url || t.value || null;
+  return want ? String(want) : null;
+}
+
+function landingEvidence(step, obs) {
+  const want = navigateLandingTarget(step);
+  if (!want || !obs || !obs.url) return null;
+  if (looksLikeErrorPage(obs)) return null;
+  const r = clause.evalUrlContains({ expect: want }, obs, null);
+  if (!r || r.ok !== true) return null;
+  return {
+    ok: true, used: 'landing_target', confidence: 0.95,
+    reason: 'C152 导航落点正向证据: 当前 URL=' + String(obs.url) + ' 已达成本步导航目标 ' + want,
+  };
+}
+
+// 本策略内**所有**重验证的唯一入口：先取正向落点证据，再退回契约验证。
+// 为什么必须收口：三处调用点（recheckAndVerify / ACTION_REAL_FAILURE / SUBMIT_RESULT_UNKNOWN）
+// 若只改一处，同一缺陷会在另一分支复现（L33：同一语义概念可能由多条分支承载）。
+function reverify(verificationContract, obs, beforeObs, step) {
+  const v = verifyWithAlternatives(verificationContract, obs, beforeObs);
+  if (v && v.success) return v;
+  const land = landingEvidence(step, obs);
+  if (land) {
+    return { success: true, used: 'landing_target', confidence: land.confidence, evidence: [land.reason] };
+  }
+  return v;
 }
 
 // 凭证/支付/登录类动作（需人工，不可自动重规划）。
@@ -108,7 +164,7 @@ function meta() {
 
 // 真实「重观察 + 重验证」：等待 → 重新 capture observation → 用 contract（含替代态）验证。
 // 返回 { verified, observation, actions }；绝不 silent-pass。
-async function recheckAndVerify({ ctx, verificationContract, beforeObs }) {
+async function recheckAndVerify({ ctx, verificationContract, beforeObs, step }) {
   const actions = [];
   // 1) WAIT_STABLE（给异步/渲染一点时间）
   try {
@@ -127,8 +183,8 @@ async function recheckAndVerify({ ctx, verificationContract, beforeObs }) {
   if (!obs) return { verified: false, observation: null, actions };
 
   // 3) 真实重验证（主验证 + 任务预定义替代态）
-  const vres = verifyWithAlternatives(verificationContract, obs, beforeObs);
-  actions.push({ tool: 'retry_verify', ok: vres.success, used: vres.used || 'primary', reason: '重验证' + (vres.used === 'alternative' ? '（替代态）' : '') });
+  const vres = reverify(verificationContract, obs, beforeObs, step);
+  actions.push({ tool: 'retry_verify', ok: vres.success, used: vres.used || 'primary', reason: '重验证' + (vres.used === 'alternative' ? '（替代态）' : (vres.used === 'landing_target' ? '（导航落点达成）' : '')) });
   return { verified: vres.success, observation: obs, actions };
 }
 
@@ -172,7 +228,7 @@ async function execute({ task, step, ctx }) {
       targetObject: !!(retryAction.target && (retryAction.target.field || retryAction.target.semantic)),
     });
     if (res.success && res.observation) {
-      const v = verifyWithAlternatives(verificationContract, res.observation, beforeObs);
+      const v = reverify(verificationContract, res.observation, beforeObs, step);
       actions.push({ tool: 'retry_verify_verify', ok: v.success, used: v.used || 'primary' });
       if (v.success) return { ok: true, actions };
     }
@@ -187,7 +243,7 @@ async function execute({ task, step, ctx }) {
     const ec = await elementChanged.execute({ task, step, ctx });
     ec.actions.forEach((a) => actions.push({ tool: 'semantic_relocate:' + (a.tool || ''), ok: a.ok, target: a.target, reason: a.reason }));
     // 重定位后重观察 + 真实重验证（不 silent-pass）
-    const rk = await recheckAndVerify({ ctx, verificationContract, beforeObs });
+    const rk = await recheckAndVerify({ ctx, verificationContract, beforeObs, step });
     rk.actions.forEach((a) => actions.push(a));
     return { ok: rk.verified, actions };
   }
@@ -196,7 +252,7 @@ async function execute({ task, step, ctx }) {
   // 明确错误页 → 非敏感动作可重执行（保留完整 target），敏感动作升级人工；
   // 仍不确定 → 升级人工（绝不 silent-pass，绝不明目重提交导致重复提交）。
   if (failureType === 'SUBMIT_RESULT_UNKNOWN') {
-    const rk = await recheckAndVerify({ ctx, verificationContract, beforeObs });
+    const rk = await recheckAndVerify({ ctx, verificationContract, beforeObs, step });
     rk.actions.forEach((a) => actions.push(a));
     if (rk.verified) return { ok: true, actions };
     const aft = rk.observation;
@@ -207,7 +263,7 @@ async function execute({ task, step, ctx }) {
       const retryAction = { ...originalAction, verification: { type: 'none' } };
       const res = await ctx.runAction(retryAction);
       if (res && res.success && res.observation) {
-        const v = verifyWithAlternatives(verificationContract, res.observation, beforeObs);
+        const v = reverify(verificationContract, res.observation, beforeObs, step);
         if (v.success) return { ok: true, actions: [{ tool: 'retry_verify', ok: true, reason: '错误页后重执行并验证通过' }] };
       }
       return { ok: false, actions: [{ tool: 'retry_failed', ok: false }], reason: 'submit 结果落点为错误页，重执行仍失败' };
@@ -218,9 +274,11 @@ async function execute({ task, step, ctx }) {
 
   // EVENTUAL_CONSISTENCY / OBSERVATION_DELAY / VERIFICATION_TOO_STRICT / STATE_UNKNOWN
   // → 重观察 + 真实重验证（含替代态）。窗口内仍不通过 → 返回 ok:false，由上层正确升级。
-  const rk = await recheckAndVerify({ ctx, verificationContract, beforeObs });
+  const rk = await recheckAndVerify({ ctx, verificationContract, beforeObs, step });
   rk.actions.forEach((a) => actions.push(a));
   return { ok: rk.verified, actions };
 }
 
-module.exports = { meta, execute };
+// C152：`reverify` / `landingEvidence` 一并导出 —— 守护测试必须能对**唯一入口**做
+// 双向分辨力对照（`test_c152_nav_landing_evidence`），而不是只读源码字面。
+module.exports = { meta, execute, reverify, landingEvidence, navigateLandingTarget };

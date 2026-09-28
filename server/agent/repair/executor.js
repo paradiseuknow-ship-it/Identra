@@ -20,7 +20,7 @@ const STRATEGY_MODS = {
   generic: require('./strategies/generic'),
 };
 
-async function executePlan({ task, step, plan, ctx, repairAttemptId }) {
+async function executePlan({ task, step, plan, ctx, repairAttemptId, observation }) {
   const _diagId = repairAttemptId || (process.env.E3_1_DIAG === '1' ? 'RA_orphan_' + Date.now().toString(36) : null);
   if (_diagId) console.warn('[E3.1-DIAG] EXECUTOR_ENTER', JSON.stringify({ repairAttemptId: _diagId, taskId: task.id, stepId: step.id, strategyType: plan.strategyType }));
   // 1) RepairAttempt 生命周期（PENDING → RUNNING → SUCCESS/FAILED）
@@ -55,7 +55,11 @@ async function executePlan({ task, step, plan, ctx, repairAttemptId }) {
   const strat = STRATEGY_MODS[plan.strategyType] || STRATEGY_MODS.generic;
   let out = { ok: false, actions: [], needsApproval: false };
   try {
-    out = await strat.execute({ task, step, ctx: { runAction, taskId: task.id, executionId: task.currentExecutionId, error: (ctx && ctx.error) || null } });
+    // C150：把「失败时的现场观察」透传给策略 —— 与 recoveryManager 的 strategyCtx 同一口径
+    // （{ diagnosis, observation }）。语义重定位策略据此把变体探测词**先接地再排序**，
+    // 探测预算只花在页面真实存在的文案上（用户主诉「连注册按钮都找不到」的修复点之一）。
+    // 注意：不走 ctx.observation —— 那是 repairManager 里给诊断用的键，本参数独立传入以免改诊断行为。
+    out = await strat.execute({ task, step, ctx: { runAction, taskId: task.id, executionId: task.currentExecutionId, error: (ctx && ctx.error) || null, observation: observation || null } });
   } catch (e) {
     out = { ok: false, actions: [{ tool: 'error', ok: false, error: String(e.message || e).slice(0, 200) }] };
   }

@@ -1,0 +1,260 @@
+{
+ "note": "C150 守护夹具：真实站点首页元素快照（离线回放，运行时不联网）。来源=用户实例的联盟项目站点，仅作测试数据，不进任何生产代码。",
+ "capturedFrom": "https://sonymaxweb.com",
+ "url": "https://sonymaxweb.com/",
+ "title": "SonyMaxWeb — E-Commerce Tools Directory",
+ "textSummary": "sonymaxweb\nDirectory\nCategories\nCompare\nSubmit Tool\nTry Spocket → sonymaxweb max web Directory\nCategories\nCompare\nSubmit Tool Directory Categories Compare Submit Tool Try Spocket → // e-commerce tools directory\nFind the Right Tool\nfor Your Store\n\nCurated directory of 50+ e-commerce tools. Reviewed, rated, and compared.\n\nSearch\nPopular:\nDropshipping\nShopify Apps\nEmail Marketing\nProduct Research // e-commerce tools directory Find the Right Tool\nfor Your Store Curated directory of 50+ e-commerce tools. Reviewed, rated, and compared. Search Popular:\nDropshipping\nShopify Apps\nEmail Marketing\nProduct Research Popular: Dropshipping Shopify Apps Email Marketing Product Research 50+ tools listed\n12 categories\n2,400+ monthly users\nUpdated weekly 50+ tools listed 50+ 12 categories 12 2,400+ monthly users 2,400+ Updated weekly Updated FEATURED\nTool of the Month\nSpocket\nDropshipping Platform\nNEW FEATURES\n\nThe leading dropshipping platform for US & EU products. 80% of suppliers are based in the US and EU, enabling 2-5 day shipping. Features AI product discovery, automated fulfillment, and branded invoicing.\n\n80%\nUS/EU Suppliers\n2-5d\nAvg Shipping\n20M+\nProducts\n500K+\nUsers\nSonyMax Score\n9.4\nout of 10\nEase of Use\n9/10\nShipping Speed\n10/10\nValue\n8/10\nStart Free Trial\n14 days free · No credit card FEATURED\nTool of the Month FEATURED Tool of the Month Spocket\nDropshipping Platform\nNEW FEATURES\n\nThe leading dropshipping platform for US & EU products. 80% of suppliers are based in the US and EU, enabling 2-5 day shipping. Features AI product discovery, automated fulfillment, and branded invoicing.\n\n80%\nUS/EU Suppliers\n2-5d\nAvg Shipping\n20M+\nProducts\n500K+\nUsers\nSonyMax Score\n9.4\nout of 10\nEase of Use\n9/10\nShipping Speed\n10/10\nValue\n8/10\nStart Free Trial\n14 days free · No credit card Spocket\nDropshipping Platform\nNEW FEATURES\n\nThe leading dropshipping platform for US & EU products. 80% of suppliers are based in the US and EU, enabling 2-5 day shipping. Features AI product discovery, automated fulfillment, and branded invoicing.\n\n80%\nUS/EU Suppliers\n2-5d\nAvg Shipping\n20M+\nProducts\n500K+\nUsers Spocket\nDropshipping Platform\nNEW FEATURES Spocket Dropshipping Platform\nNEW FEATURES Dropshipping Platform NEW FEATURES The leading dropshipping platform for US & EU products. 80% of suppliers are based in the US and EU, enabling 2-5 day shipping. Features AI product discovery, automated fulfillment, and branded invoicing. 80%\nUS/EU Suppliers\n2-5d\nAvg Shipping\n20M+\nProducts\n500K+\nUsers 80%\nUS/EU Suppliers 80% US/EU Suppliers 2-5d\nAvg Shipping 2-5d Avg Shipping 20M+\nProducts 20M+ Products 500K+\nUsers 500K+ Users SonyMax Score\n9.4\nout of 10\nEase of Use\n9/10\nShipping Speed\n10/10\nValue\n8/10\nStart Free Trial\n14 days free · No credit card SonyMax Score\n9.4\nout of 10\nEase of Use\n9/10\nShipping Speed\n10/10\nValue\n8/10 SonyMax Score 9.4 out of 10 Ease of Use\n9/10\nShipping Speed\n10/10\nValue\n8/10 Ease of Use\n9/10 Ease of Use 9/10 Shipping Speed\n10/10 Shipping Speed 10/10 Value\n8/10 Value 8/10 ",
+ "elements": [
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Directory",
+   "innerText": "Directory",
+   "cls": "hover:text-white transition",
+   "href": "/"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Categories",
+   "innerText": "Categories",
+   "cls": "hover:text-white transition",
+   "href": "/"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Compare",
+   "innerText": "Compare",
+   "cls": "hover:text-white transition",
+   "href": "/"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Submit Tool",
+   "innerText": "Submit Tool",
+   "cls": "hover:text-white transition",
+   "href": "/"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Try Spocket →",
+   "innerText": "Try Spocket →",
+   "cls": "bg-sky-500 text-white px-4 py-2 text-sm font-medium hover:bg",
+   "href": "/ze4vlgfdl7cr"
+  },
+  {
+   "tag": "h1",
+   "type": "h1",
+   "text": "Find the Right Tool\nfor Your Store",
+   "innerText": "Find the Right Tool\nfor Your Store",
+   "cls": "text-4xl md:text-5xl font-bold mb-4"
+  },
+  {
+   "tag": "input",
+   "role": "input",
+   "type": "text",
+   "text": "Search tools... (e.g. dropshipping, email, SEO)",
+   "placeholder": "Search tools... (e.g. dropshipping, email, SEO)",
+   "cls": "flex-1 px-4 py-3 bg-slate-800 border border-slate-700 text-w"
+  },
+  {
+   "tag": "button",
+   "role": "button",
+   "type": "button",
+   "text": "Search",
+   "innerText": "Search",
+   "cls": "bg-sky-500 text-white px-6 py-3 font-medium hover:bg-sky-400"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Dropshipping",
+   "innerText": "Dropshipping",
+   "cls": "text-sky-400 hover:underline",
+   "href": "/"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Shopify Apps",
+   "innerText": "Shopify Apps",
+   "cls": "text-sky-400 hover:underline",
+   "href": "/"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Email Marketing",
+   "innerText": "Email Marketing",
+   "cls": "text-sky-400 hover:underline",
+   "href": "/"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Product Research",
+   "innerText": "Product Research",
+   "cls": "text-sky-400 hover:underline",
+   "href": "/"
+  },
+  {
+   "tag": "h2",
+   "type": "h2",
+   "text": "Tool of the Month",
+   "innerText": "Tool of the Month",
+   "cls": "font-bold text-lg"
+  },
+  {
+   "tag": "h3",
+   "type": "h3",
+   "text": "Spocket",
+   "innerText": "Spocket",
+   "cls": "text-xl font-bold"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Start Free Trial",
+   "innerText": "Start Free Trial",
+   "cls": "block w-full bg-sky-500 text-white text-center py-3 font-sem",
+   "href": "/ze4vlgfdl7cr"
+  },
+  {
+   "tag": "h2",
+   "type": "h2",
+   "text": "Tool Directory",
+   "innerText": "Tool Directory",
+   "cls": "font-bold text-xl"
+  },
+  {
+   "tag": "select",
+   "role": "select",
+   "type": "select",
+   "innerText": "All Categories\nDropshipping\nMarketing\nDesign",
+   "cls": "border border-slate-200 px-3 py-2 text-sm rounded bg-white"
+  },
+  {
+   "tag": "select",
+   "role": "select",
+   "type": "select",
+   "innerText": "Sort: Top Rated\nSort: Newest\nSort: Price",
+   "cls": "border border-slate-200 px-3 py-2 text-sm rounded bg-white"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Try Free",
+   "innerText": "Try Free",
+   "cls": "bg-sky-500 text-white px-5 py-2 text-sm font-medium hover:bg",
+   "href": "/ze4vlgfdl7cr"
+  },
+  {
+   "tag": "h2",
+   "type": "h2",
+   "text": "Browse by Category",
+   "innerText": "Browse by Category",
+   "cls": "font-bold text-xl mb-6"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Dropshipping\n12 tools",
+   "innerText": "Dropshipping\n12 tools",
+   "cls": "border border-slate-200 rounded-xl p-4 text-center hover:bor",
+   "href": "/"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Email\n9 tools",
+   "innerText": "Email\n9 tools",
+   "cls": "border border-slate-200 rounded-xl p-4 text-center hover:bor",
+   "href": "/"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "SEO\n7 tools",
+   "innerText": "SEO\n7 tools",
+   "cls": "border border-slate-200 rounded-xl p-4 text-center hover:bor",
+   "href": "/"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Design\n8 tools",
+   "innerText": "Design\n8 tools",
+   "cls": "border border-slate-200 rounded-xl p-4 text-center hover:bor",
+   "href": "/"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Analytics\n6 tools",
+   "innerText": "Analytics\n6 tools",
+   "cls": "border border-slate-200 rounded-xl p-4 text-center hover:bor",
+   "href": "/"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Ads\n5 tools",
+   "innerText": "Ads\n5 tools",
+   "cls": "border border-slate-200 rounded-xl p-4 text-center hover:bor",
+   "href": "/"
+  },
+  {
+   "tag": "h2",
+   "type": "h2",
+   "text": "Submit Your Tool",
+   "innerText": "Submit Your Tool",
+   "cls": "text-2xl font-bold mb-3"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Submit for Review",
+   "innerText": "Submit for Review",
+   "cls": "border border-sky-500 text-sky-400 px-8 py-3 font-medium hov"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Privacy",
+   "innerText": "Privacy",
+   "cls": "hover:text-white",
+   "href": "/"
+  },
+  {
+   "tag": "a",
+   "role": "link",
+   "type": "a",
+   "text": "Terms",
+   "innerText": "Terms",
+   "cls": "hover:text-white",
+   "href": "/"
+  }
+ ]
+}

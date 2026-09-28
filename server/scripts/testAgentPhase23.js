@@ -136,14 +136,23 @@ async function main() {
   ]);
   ok(c1.r.status === 'SUCCESS', 'Cookie 弹窗修复成功', c1.r.error || '');
   const repairs1 = repairAttempts.listForTask(c1.t.id);
-  // C140 归因：本用例的失败是**验证失败**（点击被遮罩挡住 → 未跳转 → page_change 不成立），
-  // 而 repairManager.js:99-101 对 classifier.type === 'VERIFICATION_FAILED' **强制**把诊断类别
-  // 改写为 VERIFICATION_FAILED（Phase 7 Step 5 的有意规则：禁止被重分类成 ELEMENT_CHANGED 后
-  // 误用 SEMANTIC_RELOCATE）⇒ repairPlanner 必然产出 VERIFY_RETRY，
-  // DISMISS_OVERLAY 在该场景**原理上不可达**（旧断言写在「验证失败强制路由」之前）。
-  // 遮挡修复能力本身的覆盖由 [repair-planner] 段的 OBSTRUCTION → DISMISS_OVERLAY 断言承担。
-  ok(repairs1.length >= 1 && repairs1.some((x) => x.strategy === 'VERIFY_RETRY'),
-    '遮挡导致的验证失败 → VERIFY_FAILED 强制路由产出 VERIFY_RETRY RepairAttempt', JSON.stringify(repairs1.map((x) => x.strategy)));
+  // C151 重锚（旧断言 = 「必然产出 VERIFY_RETRY」，已随行为一起变，且它锚的是**被丢弃的诊断**）：
+  // 本用例的真实失败原因是**遮挡** —— 全屏 #consent 盖住目标按钮。诊断层本已判 OBSTRUCTION
+  // （置信度 0.9，建议按站点规则处理 accept/reject 弹窗后重试），但修复入口原有的**无条件覆盖**
+  // 会把它改写成 VERIFICATION_FAILED ⇒ 只产出 VERIFY_RETRY（重观察 + 重验证，对遮挡**原理上无效**）
+  // ⇒ 修复 3 次全败、任务升级；而更早的基线之所以显示成功，是因为修复重验证当时恒以「无 before」
+  // 运行，而 page_change 在无 before 时会**无条件判成功**（假成功通道）。
+  // C150 把真实 before 接回修复链后，这条假成功通道被堵死；C151 让诊断层的 OBSTRUCTION 真正生效。
+  // 因此本处改锚**更强**的不变量：修复必须真的把遮罩关掉，而不是靠重验证放行。
+  ok(repairs1.some((x) => x.strategy === 'DISMISS_OVERLAY'),
+    '遮挡 → 诊断层的 OBSTRUCTION 被采纳并产出 DISMISS_OVERLAY RepairAttempt（遮罩被真实关闭）',
+    JSON.stringify(repairs1.map((x) => x.strategy)));
+  ok(!repairs1.some((x) => x.strategy === 'VERIFY_RETRY'),
+    '遮挡场景不再退化为对遮挡原理上无效的重验证策略',
+    JSON.stringify(repairs1.map((x) => x.strategy)));
+  ok(repairs1.some((x) => x.status === 'SUCCESS'),
+    '遮挡修复的 RepairAttempt 以 SUCCESS 收口（不是靠升级人工兜住）',
+    JSON.stringify(repairs1.map((x) => x.status)));
   const attempts1 = store.read('aiAttempts', []).filter((a) => { const st = store.find('aiSteps', a.stepId); return st && st.taskId === c1.t.id; });
   ok(attempts1.length >= 1 && repairs1.length >= 1, '原始 Attempt 与 RepairAttempt 均保留', 'attempts=' + attempts1.length + ' repairs=' + repairs1.length);
 

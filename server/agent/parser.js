@@ -15,7 +15,14 @@ function heuristicParse(text) {
   const t = String(text || '').trim();
   // C102：剥掉 URL 尾部的中英文标点 —— 中文分词无空格，「https://xxx.com。」会把句号吃进 URL，
   // 导致导航到不存在的地址且联盟归因参数被截断。
-  const target = ((t.match(URL_RE) || [null])[0] || '').replace(/[。，、；！？）」』】》.,;!?)\]]+$/, '') || null;
+  let target = ((t.match(URL_RE) || [null])[0] || '').replace(/[。，、；！？）」』】》.,;!?)\]]+$/, '') || null;
+  // C149：网址**也可能只出现在自然语言里**（无 scheme 的裸域，实测用户原文
+  // 「注册并购买最便宜的月度会员（目标站点 sonymaxweb.com）」，targetUrl 字段留空）。
+  // 实测该形态下 target 恒为 null ⇒ 落库 targetUrl 为空 ⇒ Profile 推荐拿不到 site
+  // ⇒ runtime 硬失败「任务未绑定 Profile」（519ms，不重试不升级）。
+  // 带 scheme 的 URL 仍由上面 URL_RE 优先（C102 入口保真语义不变）；此处只兜「无 scheme」这一形态，
+  // 且提取器是 urlIdentity 的**唯一实现**（URL 身份问题不在 parser 里再写第二份）。
+  if (!target) target = require('./urlIdentity').extractBareUrl(t);
   const credentialRefs = (t.match(REF_RE) || []).map((x) => x.trim());
   const constraints = t.split(/[。\n；;]+/).filter((s) => CONSTRAINT_RE.test(s)).map((s) => s.trim()).slice(0, 5);
   let objective = t.replace(URL_RE, '').replace(REF_RE, '').replace(/\s+/g, ' ').trim();

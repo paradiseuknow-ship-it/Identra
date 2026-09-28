@@ -185,10 +185,18 @@ async function main() {
     assert(seq.every((s) => s !== 'continue'), 'continue 在英语页同样出局（页面无该词）');
     assert(seq.includes('submit') || seq.includes('next'), '页面真实存在的 submit/next 应保留，实际 ' + JSON.stringify(seq));
   });
-  await ok('F6.3 无观察时行为不变（test_repair_variant_cap 契约兼容）', () => {
+  await ok('F6.3 无观察时不做接地过滤（= 原动作 + 完整词表，顺序即词表顺序）', () => {
     const a = { type: 'click', target: { semantic: '数据列表区域' }, verification: { type: 'none' } };
     const v = elementMissing.buildElementVariants(a);
-    assert(v.length === 12, '无 observation 时应保持 12 变体旧行为，实际 ' + v.length);
+    // C150：从词表导出不变量（不再写死 12）。
+    const vocab = new Set(
+      elementMissing.CLICK_FALLBACK.map((s) => String(s).toLowerCase()).filter((s) => s !== '数据列表区域')
+    );
+    assert(v.length === 1 + vocab.size,
+      '无 observation 时应为该动作 + 完整词表（' + (1 + vocab.size) + ' 个），实际 ' + v.length);
+    assert(v[0].target.semantic === '数据列表区域', '原动作必须恒在第 0 位');
+    assert(v[1].target.semantic === elementMissing.CLICK_FALLBACK[0],
+      '无观察时变体顺序 = 词表顺序，实际首项 ' + v[1].target.semantic);
   });
 
   // ── F4：replan 接地净化 ──

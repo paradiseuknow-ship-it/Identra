@@ -691,7 +691,8 @@ async function runTool(action, resolved, meta) {
       // （实证：target {semantic:'email', field:'password'} 静默填进了 email 框并判 SUCCESS）。
       if (obs && obs.ok === false) return RESULT.error('OBSERVATION_FAILED', '页面不可观察，跳过 fill: ' + String(obs.error || '').slice(0, 160));
       const beforeObs = obs.ok ? obs.observation : null;
-      const sel = await resolveSelector(action, obs.observation, meta, page);
+      // C150：改为 let —— 字段不稳定时需要用「重新观察 + 重新接地」的第二次解析结果替换它。
+      let sel = await resolveSelector(action, obs.observation, meta, page);
       if (!sel) return RESULT.error('ELEMENT_NOT_FOUND', '未找到输入目标: ' + (action.target.field || action.target.semantic || '?'));
       // PHASE 17-A P0-A 第二道：元素所在文档 origin（跨 origin iframe → 默认拒绝）。
       // 只有定位到元素之后才能问到「这个值会落在哪个文档里」。
@@ -715,11 +716,29 @@ async function runTool(action, resolved, meta) {
       const value = filled.value;
       // C106 F20-b：输入前先等字段在 DOM 上稳定，避开页面 re-render / 步骤切换窗口。
       //（真实站点实证：注册第一步输入过快 → 界面刷新 → 只进去前几个字符。）
-      await humanInput.waitFieldStable(page, sel.selector, { timeoutMs: 1500 });
+      //
+      // C150 修复：此处的**返回值此前被直接丢弃** —— 字段不稳定时仍按（可能已过期的）观察
+      // 解析出的 selector 继续输入，这道守卫事实上从未生效（用户主诉「输入邮箱密码的时候，
+      // 网页还在加载，你输入那么快」）。现在返回值必须被消费：
+      //   不稳定 ⇒ 重新观察 + 重新接地 selector + 二次稳定性等待；
+      //   二次仍不稳定才放行 —— 不无限循环，也不把「等不到稳定」直接变成「动作失败」
+      //   （真正的值丢失由下面的 settle 后回读 fail-loud 收口）。
+      let _stable = await humanInput.waitFieldStable(page, sel.selector, { timeoutMs: 1500 });
+      if (!_stable || _stable.stable !== true) {
+        try {
+          const _re = await withBrowserOp('fill.reobserve', page, meta.taskId,
+            () => observation.inspect(page, { taskId: meta.taskId, skipCache: true }));
+          if (_re && _re.ok && _re.observation) {
+            const _sel2 = await resolveSelector(action, _re.observation, meta, page);
+            if (_sel2) sel = _sel2; // 旧 selector 在重渲染后可能已失配，用新鲜接地结果替换
+          }
+        } catch (e) { /* 重观察失败不构成动作失败：仍按原 selector 走二次稳定等待 */ }
+        _stable = await humanInput.waitFieldStable(page, sel.selector, { timeoutMs: 2500 });
+      }
       // C106 F20-a：人类打字节奏（原 60ms/字符 ≈17 字符/秒，人类是 150–250ms/字符）。
       const _profile = humanInput.typingProfile(value, { field: (action.target || {}).field });
       const _field = (action.target || {}).field || (action.target || {}).semantic;
-      const typed = await withBrowserOp('fill.type', page, meta.taskId, () => {
+      const _typeOnce = () => withBrowserOp('fill.type', page, meta.taskId, () => {
         // 超长值（>120 字符）降级为整体赋值：人类打长文本靠粘贴，且逐字符会击穿超时上限。
         if (_profile.mode === 'fill' || sel.selector.indexOf(' >> ') >= 0) {
           return makeLocator(page, sel.selector).fill(value);
@@ -730,6 +749,7 @@ async function runTool(action, resolved, meta) {
           equals: (a, e) => humanInput.valuesMatch(a, e, { field: _field }).equal,
         });
       });
+      const typed = await _typeOnce();
       // C106 F20-c：回读校验。填进去的值必须真的在字段里，否则 fail-loud。
       // 此前从不校验 → 只填进几个字符也判 SUCCESS → 错误静默传给验证层，
       // 表现为「明明填过了却莫名其妙失败」。
@@ -742,15 +762,41 @@ async function runTool(action, resolved, meta) {
       }
       // F20-a 收尾：让受控组件的 onChange / 实时校验跑完，再进入下一步。
       await humanInput.sleep(humanInput.settleDelay());
-      // 凭据使用记录（不存值）—— 追溯"哪个账号用了哪个凭据"
-      if (action.credentialRef) {
+      // 凭据使用记录（不存值）—— 追溯"哪个账号用了哪个凭据"。
+      // C150：改为「先判定真实结果再记录」，不再无条件记 SUCCESS（假成功会污染凭据审计）。
+      const _recordUsage = (result, error) => {
+        if (!action.credentialRef) return;
         try {
           secretManager.recordUsage({
             taskId: meta.taskId, credentialId: action.credentialRef,
-            site: page.url(), fields: [action.target.field || 'unknown'], result: 'SUCCESS',
+            site: page.url(), fields: [action.target.field || 'unknown'], result, error,
           });
         } catch (e) {}
+      };
+      // C150 F20-d：settle 之后必须**再回读一次**。
+      // 实测（真 chromium，节点重建竞态）：逐字符输入完成、末尾回读也通过之后，站点在
+      // settleDelay（220–460ms）窗口内重建了 input 节点 ⇒ 值被清空，而 fill 分支此后
+      // 再无回读 ⇒ 上报 ok:true 但页面值为空。这就是用户主诉
+      // 「网页刷新后你继续输入，出现邮箱都输入不完整」的机制。
+      // 处置：回读 → 不一致则重填一次 → 再回读 → 仍不一致则 fail-loud。
+      // 边界：`readBackValue` 返回 null 表示「读不到」（非空字符串也可能是元素的
+      // value 不可读，例如受控组件抛错）—— 读不到**不等于**值丢了，不据此判失败，
+      // 避免把新的误报引入到本来正常的站点上。
+      let _persisted = await humanInput.readBackValue(page, sel.selector);
+      if (_persisted != null && !humanInput.valuesMatch(_persisted, value, { field: _field }).equal) {
+        try { await _typeOnce(); } catch (e) { /* 重填失败仍以回读结果为准 */ }
+        await humanInput.sleep(humanInput.settleDelay());
+        _persisted = await humanInput.readBackValue(page, sel.selector);
+        if (_persisted != null && !humanInput.valuesMatch(_persisted, value, { field: _field }).equal) {
+          const _d2 = humanInput.describeValue(value, _field);
+          _recordUsage('FAILED', 'FILL_VALUE_LOST_AFTER_SETTLE');
+          return RESULT.error('FILL_VALUE_LOST_AFTER_SETTLE',
+            '输入后字段值在页面稳定期间丢失或被改写（期望长度 ' + _d2.length + '，实际长度 ' +
+            String(_persisted == null ? '' : _persisted).length +
+            '，已重填一次），页面很可能重建了该输入节点');
+        }
       }
+      _recordUsage('SUCCESS');
       const after = await withBrowserOp('fill.inspect2', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId, skipCache: true }));
       return RESULT.ok({ filled: sel.selector, element: sel.pattern }, after.observation, beforeObs);
     }

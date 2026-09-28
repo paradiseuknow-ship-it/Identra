@@ -26,6 +26,24 @@ function siteOf(url) {
   return require('../urlIdentity').hostOf(url);
 }
 
+// C151：诊断类别 → 修复路由类别的**唯一判定点**（纯函数，无副作用，供守护双向锚定）。
+//
+// 背景：Phase 7 Step 5 以 errorClassifier.type 为权威，把 VERIFY_FAILED 的诊断类别一律覆盖为
+// VERIFICATION_FAILED（防止 Diagnosis LLM 重分类成 ELEMENT_CHANGED 后误用 SEMANTIC_RELOCATE）。
+// 但**遮挡不是验证策略过严** —— cookie/consent 横幅、模态弹窗是可执行的真实原因，诊断层已经
+// 给出可执行建议（accept/reject 弹窗后重试）。无条件覆盖把它丢掉 ⇒ 只能重观察重验证
+// （对遮挡原理上无效）⇒ 真实站点上「按钮被横幅盖住」时会永远点不到目标。
+//
+// 方向：**收紧为条件豁免**（只放行 OBSTRUCTION），不是放宽 ——
+//   · OBSTRUCTION 保持原类别 → repairPlanner 既定映射 DISMISS_OVERLAY/MEDIUM（风险由
+//     repairPolicy 的 MEDIUM+conf≥0.85 门把守，实测诊断置信度 0.9）；
+//   · 其它一切类别照旧被覆盖为 VERIFICATION_FAILED（C140 原意 100% 保留）。
+function resolveDiagnosisCategory({ classifierType, diagnosisCategory }) {
+  if (classifierType !== 'VERIFICATION_FAILED') return diagnosisCategory || classifierType || 'UNKNOWN';
+  if (diagnosisCategory === 'OBSTRUCTION') return 'OBSTRUCTION';
+  return 'VERIFICATION_FAILED';
+}
+
 async function handleStepFailure({ task, step, error, observation, execution, provider, repairAttemptId, priorDiagnosis }) {
   const ctx = { taskId: task.id, executionId: task.currentExecutionId };
   const _diagId = repairAttemptId || (process.env.E3_1_DIAG === '1' ? 'RA_orphan_' + Date.now().toString(36) : null);
@@ -96,8 +114,26 @@ async function handleStepFailure({ task, step, error, observation, execution, pr
   // Phase 7 Step 5：VERIFY_FAILED 的修复必须走「等待稳定→重观察→重试验证」序列，
   // 而非被 Diagnosis LLM 重分类为 ELEMENT_CHANGED 后误用 SEMANTIC_RELOCATE（对验证期望未满足无效）。
   // 以原始分类（errorClassifier.type）为权威，强制路由到 VERIFY_RETRY 策略。
-  if (classifier.type === 'VERIFICATION_FAILED' && diag && diag.diagnosis) {
-    diag.diagnosis.category = 'VERIFICATION_FAILED';
+  //
+  // C151：本节原本是**无条件覆盖**，把诊断层给出的 category 一律改写为 VERIFICATION_FAILED。
+  // 它顺手丢掉了 OBSTRUCTION —— 而遮挡（cookie/consent 遮罩、模态弹窗）不是「验证策略过严」，
+  // 它是**可执行的真实原因**，且诊断层已经给出可执行建议。实测（localhost 夹具 /cookie，
+  // 全屏遮罩盖住目标按钮）：
+  //   agent.diagnosing { category:'OBSTRUCTION', confidence:0.9,
+  //                      recommendation:'按站点规则处理弹窗（accept/reject）后重试' }
+  //   → 覆盖发生 → repairPlanner 产出 VERIFY_RETRY（只重观察重验证，**对遮挡原理上无效**）
+  //   → 3 次修复全 ok:false → HUMAN_ESCALATION。
+  // 真实站点同形：落地页的 cookie 横幅盖住注册/试用按钮 ⇒ 智能体永远点不到用户要点的那个按钮
+  // （用户实测主诉「连注册按钮都找不到」的同族形态）。
+  // 处置：**只对 OBSTRUCTION 豁免**，其余重分类一律照旧被覆盖 —— C140 的原意（禁止重分类为
+  // ELEMENT_CHANGED 后误用 SEMANTIC_RELOCATE）完全保留，且 OBSTRUCTION → DISMISS_OVERLAY
+  // 本就是 repairPlanner 的既定映射，风险由 repairPolicy 的 MEDIUM+conf≥0.85 门把守。
+  const _resolvedCat = resolveDiagnosisCategory({
+    classifierType: classifier.type,
+    diagnosisCategory: diag && diag.diagnosis ? diag.diagnosis.category : null,
+  });
+  if (diag && diag.diagnosis && _resolvedCat && diag.diagnosis.category !== _resolvedCat) {
+    diag.diagnosis.category = _resolvedCat;
   }
   if (_diagId) console.warn('[E3.1-DIAG] DIAGNOSIS_RESULT', JSON.stringify({ repairAttemptId: _diagId, taskId: task.id, category, fromFailureMemory: !!(diag && diag.fromFailureMemory), fromLLM: !!(diag && diag.fromLLM) }));
   const t = taskManager.getTask(task.id);
@@ -105,7 +141,11 @@ async function handleStepFailure({ task, step, error, observation, execution, pr
     t.lastDiagnosis = { ...diag.diagnosis, fromLLM: diag.fromLLM, fromFailureMemory: diag.fromFailureMemory, failureSnapshotId: diag.failureSnapshot && diag.failureSnapshot.id };
     store.upsert('aiTasks', t);
   }
-  events.emit({ ...ctx, stepId: step.id, type: 'agent.diagnosing', payload: { category, confidence: diag ? diag.diagnosis.confidence : null, fromFailureMemory: diag ? !!diag.fromFailureMemory : false, recommendation: diag ? diag.diagnosis.recommendation : null } });
+  // C151：`category` 是**覆盖前**的诊断类别；`resolvedCategory` 是**实际用于选修复策略**的类别。
+  // 二者此前可能不同（覆盖发生时）且只有前者被上报 ⇒ 遥测显示 OBSTRUCTION、实际却按
+  // VERIFICATION_FAILED 路由，归因时会产生「看事件以为走了遮挡修复」的误读。
+  // 新增字段是**加性**的：不改任何判定，只让路由类别可审计（既有消费方零影响）。
+  events.emit({ ...ctx, stepId: step.id, type: 'agent.diagnosing', payload: { category, resolvedCategory: _resolvedCat, confidence: diag ? diag.diagnosis.confidence : null, fromFailureMemory: diag ? !!diag.fromFailureMemory : false, recommendation: diag ? diag.diagnosis.recommendation : null } });
 
   // 2) Repair Plan
   const pr = repairPlanner.planFromDiagnosis({
@@ -135,7 +175,7 @@ async function handleStepFailure({ task, step, error, observation, execution, pr
     if (_diagId) console.warn('[E3.1-DIAG] AUTO_REPAIR_ITER', JSON.stringify({ repairAttemptId: _diagId, taskId: task.id, stepId: step.id, iter: i }));
     // v0.2.1：将原始错误（含 failureType）透传给 executor → 策略，供 verifyFailed 按 taxonomy 分流
     ctx.error = error;
-    lastOut = await executor.executePlan({ task, step, plan: pr.plan, ctx, repairAttemptId: _diagId });
+    lastOut = await executor.executePlan({ task, step, plan: pr.plan, ctx, repairAttemptId: _diagId, observation });
     if (lastOut.ok) break;
     if (lastOut.needsApproval) {
       taskManager.pauseForHuman(task.id, '修复策略需要人工处理（' + pr.plan.strategy + '）', { stepId: step.id, action: step.action });
@@ -175,4 +215,4 @@ async function handleStepFailure({ task, step, error, observation, execution, pr
   return { paused: true, reason: errMsg, category, usedMemory, decision, repairStats: repairAttempts.statsByStrategy() };
 }
 
-module.exports = { handleStepFailure };
+module.exports = { handleStepFailure, resolveDiagnosisCategory };

@@ -45,6 +45,38 @@ const IPV4_RE = /^(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?(?:[/?#]\S*)?$/;
 const DEFAULT_SCHEME = 'https://';
 const IPV4_SCHEME = 'http://';
 
+// ---------- C149：自然语言 → 裸域 URL 的形状常量 ----------
+
+// 候选扫描：host（≥2 段，末段全字母 2–24）[:port][/path]，要求左侧是「非域名字符」边界，
+// 避免从 `xfoo.com.cn` 里抠出 `foo.com.cn`（吞掉前一个标签）。
+const BARE_CANDIDATE_RE = /(?:^|[^\w.%+-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}(?::\d{1,5})?(?:\/\S{0,200})?)/gi;
+
+// IPv4 字面量候选（裸域之外的另一类合法入口：本地/自托管服务）。与 IPV4_RE 同口径。
+const IPV4_CANDIDATE_RE = /(?:^|[^\w.])((?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?(?:\/\S{0,200})?)/g;
+
+// TLD **白名单**（与 normalizeUrl 的「绝不猜」边界同一哲学：不放宽 = 不臆造入口）。
+// 覆盖 2 字母 ccTLD 与常见 gTLD；`.test` 为保留域，产品夹具在用。
+const TLD_WHITELIST = new Set(
+  ('com org net edu gov mil int info biz name pro aero coop museum jobs travel mobi tel asia cat'
+    + ' app dev page site online shop store tech cloud xyz top vip club live life world today news blog'
+    + ' media art design studio agency digital network systems solutions services group team works tools'
+    + ' zone space host website press review run fit fun icu link click one you io ai co me tv cc gg so test'
+    + ' cn uk de fr jp kr ru br in au ca us nl it es se no dk fi pl ch at be cz gr pt tr il za mx ar cl sg'
+    + ' my th vn ph id hk tw mo nz ie hu ro sk si hr bg lt lv ee ua by kz sa ae eg ng ke ma pe ec uy bo ve'
+    + ' gt cr pa do jm tt').split(' '),
+);
+
+// 文件扩展名黑名单（**优先于白名单**）。与白名单有交集的项在此显式覆盖：
+// `md`(摩尔多瓦/ Markdown)、`py`(巴拉圭/ Python)、`rs`(塞尔维亚/ Rust)、`sh`(圣赫勒拿/ Shell)。
+// 语境判定：在这类「任务目标文本」里，`.md` 更可能是文件名而不是摩尔多瓦站点 ⇒ 保守按文件处理。
+const TLD_DENY_FILE_EXT = new Set(
+  ('md sh py rs js ts jsx tsx json html htm css scss less pdf doc docx xls xlsx ppt pptx'
+    + ' png jpg jpeg gif svg webp avif ico bmp tif tiff mp3 mp4 avi mkv mov wav flac ogg'
+    + ' zip rar 7z tar gz bz2 xz whl egg jar class exe dll msi dmg apk ipa iso img bin'
+    + ' log bak tmp ini cfg conf toml env lock map min sqlite db dat csv tsv xml yaml yml txt rtf tex'
+    + ' php rb go c cpp h hpp java kt swift lua').split(' '),
+);
+
 /**
  * 归一化：裸域名补默认 scheme；其余一律原样返回。
  * @param {*} raw
@@ -129,12 +161,88 @@ function isOriginlessLocalContext(url) {
   return false;
 }
 
+/**
+ * 从自然语言文本中提取**无 scheme 的裸域 URL**（C149）。
+ *
+ * 缺陷背景（A 类真缺陷，2026-09-28 端到端实测，非推理）：
+ *   用户把网址写在目标文字里 —— 实测原文「注册并购买最便宜的月度会员（目标站点 sonymaxweb.com）」，
+ *   `targetUrl` 字段留空（`task_mue92wqu9fp3g` / `task_mue95y79eylwj`）。
+ *   而启发式 `URL_RE` 只认带 scheme 的完整 URL ⇒ `target` 恒为 null ⇒ 落库 `targetUrl` 为空
+ *   ⇒ Profile 推荐拿不到 site ⇒ `runtime.ensureBrowser` 硬失败「任务未绑定 Profile」
+ *   （519ms，不重试不升级，横跨 10 天未被立项）。
+ *
+ * 为什么不能"把正则放宽一点"（本批最大的风险面，C147 曾据此**有意**不改）：
+ *   `report.pdf` / `index.html` / `1.5` / `v2.0` / `3.14` **全都命中「裸域形状」**。
+ *   一律当 URL 提取 ⇒ 凭空造出 `https://report.pdf` 这种不存在的入口 —— 正是新缺陷类。
+ *   故沿用本文件既有哲学（**白名单，绝不猜**），按形状三重门控：
+ *     (1) 末段必须**全字母**且长度 2–24 ⇒ 直接杀掉 `1.5` / `v2.0` / `3.14`（末段是数字）
+ *     (2) 末段必须在本文件 TLD **白名单**内（2 字母 ccTLD ∪ 常见 gTLD）
+ *     (3) 末段不得是已知**文件扩展名**（与白名单有交集时本条优先，见 TLD_DENY_FILE_EXT）
+ *   正反例双向可验证（见 `server/scripts/test_c149_url_from_text.js`）。
+ *
+ * 边界（诚实声明）：
+ *   · 本函数**只处理无 scheme 的裸域**。带 scheme 的完整 URL 由调用方既有的 `URL_RE` 路径处理
+ *     （C102 的「入口 URL 保真 + 中文标点边界」语义俱在，不在此重复实现第二份正则）。
+ *   · 取**按出现顺序第一个**通过门控的候选（与 C102「多 URL 取第一个为入口」同口径）。
+ *   · 提取不到返回 null —— 绝不臆造。
+ *
+ * @param {*} text
+ * @returns {string|null} 补齐 scheme 后的绝对 URL；无匹配 → null
+ */
+function extractBareUrl(text) {
+  const s = typeof text === 'string' ? text : '';
+  if (!s || !s.trim()) return null;
+  // 两类候选合并后**按出现顺序**取第一个通过门控的（与 C102「多 URL 取第一个为入口」同口径）。
+  const cands = [];
+  BARE_CANDIDATE_RE.lastIndex = 0;
+  IPV4_CANDIDATE_RE.lastIndex = 0;
+  let m;
+  while ((m = BARE_CANDIDATE_RE.exec(s)) !== null) cands.push({ i: m.index, t: m[1] });
+  while ((m = IPV4_CANDIDATE_RE.exec(s)) !== null) cands.push({ i: m.index, t: m[1] });
+  cands.sort((a, b) => a.i - b.i);
+  for (const c of cands) {
+    const cand = stripTrailingUrlPunct(c.t);
+    if (isPlausibleEntryHost(cand)) return normalizeUrl(cand);
+  }
+  return null;
+}
+
+/** 剥掉 URL 尾部的中英文标点（C102 同口径：中文无空格分词，句号/右括号会被吃进 URL）。 */
+function stripTrailingUrlPunct(s) {
+  return String(s || '').replace(/[。，、；！？）」』】》.,;!?)\]}>]+$/, '');
+}
+
+/** 取末段（TLD 候选）。`a.b.com:8443/x` → `com`。 */
+function tldOfToken(token) {
+  const host = String(token || '').split('/')[0].split('?')[0].split('#')[0].split(':')[0].toLowerCase();
+  const parts = host.split('.');
+  return parts.length >= 2 ? parts[parts.length - 1] : '';
+}
+
+/**
+ * 形状门控：token 是否**可判定为**入口主机（裸域或 IPv4 字面量）。
+ * IPv4 走 IPV4_RE（四段数字，`1.5` / `3.14` 都不是 ⇒ 天然挡掉版本号）。
+ * 裸域要求三重条件（末段全字母 → 在白名单 → 不在文件扩展名黑名单）全部满足。
+ */
+function isPlausibleEntryHost(token) {
+  const t = String(token || '');
+  if (!t) return false;
+  if (IPV4_RE.test(t)) return true; // IPv4 字面量：http（与 normalizeUrl 同口径）
+  if (!BARE_HOST_RE.test(t)) return false;
+  const tld = tldOfToken(t);
+  if (!/^[a-z]{2,24}$/.test(tld)) return false; // (1) 末段全字母 ⇒ 杀掉 1.5 / v2.0 / 3.14
+  if (TLD_DENY_FILE_EXT.has(tld)) return false; // (3) 文件扩展名优先于白名单
+  return TLD_WHITELIST.has(tld); // (2) 白名单
+}
+
 module.exports = {
   normalizeUrl,
   parseUrl,
   hostOf,
   originOf,
   isOriginlessLocalContext,
+  extractBareUrl,
+  stripTrailingUrlPunct,
   DEFAULT_SCHEME,
   SCHEME_RE,
   BARE_HOST_RE,

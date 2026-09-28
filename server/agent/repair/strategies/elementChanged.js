@@ -43,7 +43,12 @@ async function probe(ctx, probeList, actions, tag) {
 
 async function execute({ task, step, ctx }) {
   const actions = [];
-  const variants = elementMissing.buildElementVariants(step.action);
+  // C150：探测词必须在**失败现场**接地后才排序 —— 探测预算（live ≤3）只花在页面真实存在的
+  // 文案上，而不是花在词典里前几个（可能页面上根本没有的）词上。
+  // 实证：sonymaxweb.com 上旧词表 11 个词一个都不在页面上 ⇒ live 4 次 + reload 后 2 次全部空转。
+  // 无 observation 时 buildElementVariants 退回旧行为（不接地、不排序），既有契约不变。
+  const obs = (ctx && ctx.observation) || null;
+  const variants = elementMissing.buildElementVariants(step.action, obs);
 
   // 修复编排契约「至多 3 次浏览器修复动作」封顶（rw.026/dl240 实证继承）：
   // 阶段 1 = 原 action + ≤3 语义变体；阶段 2 = reload + 前 2 变体收窄复探。
