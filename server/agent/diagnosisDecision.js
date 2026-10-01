@@ -25,6 +25,48 @@
 const semanticResolver = require('./semanticResolver');
 const credentialAuthorization = require('./credentialAuthorization');
 
+// ── C155：CROSS_ORIGIN_DRIFT 的 credentialOnly 闸门必须按「是否会向第三方域写出凭据」判定 ──
+//
+// 缺陷（真实站点实测，非推断）：`credentialAuthorization.isCredentialAction()` 第 128 行按
+//   `target.field ∈ CREDENTIAL_FIELDS` 判定，**完全不看动作类型**。而 `email` 在词表里，
+//   于是 Planner 产出的只读观察步
+//     { type:'inspect', target:{ semantic:'邮箱输入框', field:'email' } }
+//   被判为「凭据类动作」⇒ CROSS_ORIGIN_DRIFT 的 credentialOnly 守卫失效 ⇒ 该只读步被
+//   BLOCK ⇒ policy.escalate=true ⇒ 任务 25s 直接 HUMAN_ESCALATION。
+//
+// 实测证据（C155 联盟漏斗走查，profile=p_phase23_mu3amqhd，targetUrl=sonymaxweb.com）：
+//   步1 click「Try Spocket →」→ SUCCESS，落点
+//     https://www.spocket.co/?...&ps_partner_key=Y29ydG5leXBlcnJ5NjQ0Nw&gsxid=…
+//   （联盟归因参数完整保留）
+//   步2 inspect「邮箱输入框」→ host 漂移 www.spocket.co ≠ sonymaxweb.com → 升级人工
+//     error="诊断决策 CROSS_ORIGIN_DRIFT 阻止了当前动作（要求 REAUTH_CONTEXT）"
+//
+// 为什么这是误伤而非安全边界（与本文件 derive() 自述意图一致：
+//   「联盟/跳转链路里 host 漂移是常态，普通动作照常执行 —— 把普通动作一起挡住会让合法流程
+//     直接死掉（这不是安全边界，是误伤）」）：
+//   ① 只读观察不向任何域写出凭据，也不提交任何东西；
+//   ② 触发本诊断的观察**本身已经发生** —— 拦这个 inspect 并不能撤回已获取的观察；
+//   ③ 真正需要 fail-closed 的是「把凭据填进已漂移的第三方页」。
+//
+// fail-closed 边界（关键，不得放宽）：只豁免**显式列出的观察类动作**；任何未列出的类型
+//   （含未来新增类型）一律仍按凭据类处理 ⇒ 漏判方向永远偏保守。
+const OBSERVE_ACTION_TYPES = ['inspect', 'extract', 'screenshot', 'getUrl', 'getTitle', 'wait'];
+// ⚠️ 匹配用小写集合：ACTION_TYPES 里存在 camelCase（getUrl/getTitle/openTab），
+// 直接拿小写化后的 type 去 indexOf 原表会静默漏配（本批守护 A3 实测咬出）。
+const OBSERVE_ACTION_SET = new Set(OBSERVE_ACTION_TYPES.map((x) => x.toLowerCase()));
+
+/** 该动作是否可能把凭据「写出」到当前域（跨域闸门的判定口径，唯一实现）。 */
+function isCredentialTransmit(action) {
+  const a = action || {};
+  const t = a.target || {};
+  // fail-closed 优先：显式携带凭据引用者一律按凭据类处理，与类型无关
+  // （观察类动作携带 credentialRef 属异常形状，不得豁免）。
+  if (t.credentialRef) return true;
+  const type = String(a.type || '').toLowerCase();
+  if (OBSERVE_ACTION_SET.has(type)) return false;
+  return credentialAuthorization.isCredentialAction(action);
+}
+
 // ── 决策状态（最小集合）──
 const STATES = {
   TARGET_NOT_PRESENT_YET: 'TARGET_NOT_PRESENT_YET',
@@ -186,7 +228,9 @@ function derive(opts) {
   const ph = hostOf(o.pageUrl || (observation && observation.url));
   const th = hostOf(o.targetUrl);
   if (ph && th && ph !== th) {
-    const cred = credentialAuthorization.isCredentialAction(action);
+    // C155：口径与 isActionBlocked 同源（此前直接调 isCredentialAction，
+    // 使 derive 与 isActionBlocked 对「只读观察步」给出相反结论）。
+    const cred = isCredentialTransmit(action);
     return {
       state: STATES.CROSS_ORIGIN_DRIFT,
       blockedActions: cred && action ? [blockKeyOf(action)] : [],
@@ -265,8 +309,11 @@ function isActionBlocked(decision, action) {
   if (!decision || !action) return false;
   const pol = policyOf(decision.state);
   if (!pol || !pol.block) return false;
-  // 只对凭据类动作生效的决策（跨域漂移）：非凭据动作不拦
-  if (decision.credentialOnly && !credentialAuthorization.isCredentialAction(action)) return false;
+  // 只对「会写出凭据」的动作生效的决策（跨域漂移）：其余动作不拦。
+  // C155：① 口径改委托 isCredentialTransmit（观察类动作不算写出凭据，修误杀）；
+  //       ② credentialOnly 同时读 decision 与 POLICY —— LLM 路径（fromLLM）不带该字段，
+  //          只读 decision 会让 LLM 诊断与确定性诊断对同一动作裁决不一致。
+  if ((decision.credentialOnly || pol.credentialOnly) && !isCredentialTransmit(action)) return false;
   const blocked = Array.isArray(decision.blockedActions) ? decision.blockedActions : [];
   if (!blocked.length) return true; // 未列具体目标 = 阻塞当前全部动作
   const key = blockKeyOf(action);
@@ -337,12 +384,14 @@ function repeatsExhausted(count, policy) {
 module.exports = {
   STATES,
   POLICY,
+  OBSERVE_ACTION_TYPES,
   normalizeState,
   policyOf,
   blockKeyOf,
   fromLLM,
   derive,
   isActionBlocked,
+  isCredentialTransmit,
   targetResolvable,
   evaluate,
   repeatsExhausted,
