@@ -204,6 +204,18 @@ function diagnose(input = {}) {
   let pick = pickFromFindings(detection);
   if (pick) evidence.push('检测到 ' + pick.code + '（来源 ' + pick.source + '）：' + pick.hint);
 
+  // ── C156 证据归属留痕（2026-10-01，真实联盟漏斗走查暴露）──
+  // 背景：www.spocket.co 主文档 200、页面完整渲染，却因两条**同源分析/转化上报**
+  // 请求的 403（测量协议 tid=G-… / 转化上报 tid=AW-…）被判 HTTP_403_FORBIDDEN
+  // （severity=blocking ⇒ retryPolicy=escalate）⇒ 整任务升级人工。
+  // 归属判定已下沉到 businessErrorDetector.telemetrySignal（唯一实现），本处只做留痕：
+  // 被排除的证据必须仍可复查 —— 不许让证据凭空消失（那会变成另一种「假装不知道」）。
+  if (detection && Array.isArray(detection.suppressed) && detection.suppressed.length) {
+    const names = detection.suppressed.slice(0, 3).map((s) => (s.status || 'FAIL') + ' ' + String(s.url || '').slice(0, 70)).join(' ; ');
+    evidence.push('证据归属: 已排除 ' + detection.suppressed.length + ' 条页面遥测信标失败（'
+      + names + (detection.suppressed.length > 3 ? ' …' : '') + '）—— 与当前操作无关，不作为失败依据');
+  }
+
   // ── stateResetByRepair 证据降级（2026-08-31，分类纯度修复）──
   // 背景（run9 rw.001 实证）：replan 恢复链的 reload 会清空未提交的表单（浏览器标准行为），
   // 重试的提交动作实际是「空表单重提交」，站点随后显示的错误文案（如「邮箱或密码错误」）

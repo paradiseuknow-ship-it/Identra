@@ -131,8 +131,62 @@ function haystackOf(network) {
   return parts.join('\n');
 }
 
+// ── C156 证据归属：区分「当前操作的失败」与「页面遥测信标的失败」───────────────
+//
+// 实证（真实联盟漏斗走查，profile=p_phase23_mu3amqhd）：主文档 HTTP 200、页面完整
+// 渲染，却因两条**同源分析/转化上报**请求的 403 被判 HTTP_403_FORBIDDEN
+// （severity=blocking ⇒ retryPolicy=escalate，confidence 0.97）⇒ HUMAN_ESCALATION。
+// 那两条 403 的实际形状：
+//   rt=fetch  /…/ag/g/c?v=2&tid=G-T5CPMQK441…       ← 测量协议上报
+//   rt=image  /…/gs/ccm/collect?…tid=AW-862529334   ← 转化上报
+// 这类请求被广告拦截器 / 隐私设置 / 区域策略拒绝时返回 4xx 是**常态**，
+// 与「当前操作无访问权限」无关。误判代价：把一个完整可用的页面判成不可访问并交给人。
+//
+// 方向是 fail-closed —— **必须正向识别出「这是遥测信标」才降级**；识别不出的
+// 一律保持原判（真实 API 403、主文档 403 的判定逐字不变）。这与产品既有的同类
+// 正确范式一致：observation.computeChallenge 也只在 resourceType==='document'
+// 时才把 403/429/503 当作硬阻断。
+//
+// 统一闸门：**主文档（document）永不降级**。
+// 三条充分条件（满足任一即认定为遥测信标；全部是通用 Web 语义，无站点/品牌词）：
+//   A. 资源类型 ∈ {ping, beacon} —— 平台语义上只承载遥测，不承载业务响应；
+//   B. URL 携带测量协议追踪 ID（tid=<前缀>-<ID>，协议规定的 ID 形状）；
+//   C. URL 命中埋点上报端点 **且** 携带埋点事件参数（双命中，避免误伤业务接口）。
+const TELEMETRY_RESOURCE_TYPES = new Set(['ping', 'beacon']);
+
+// 测量协议追踪 ID：tid=<1~3 位字母命名空间>-<ID>。命名空间是协议规定值，不是站点品牌名。
+const MEASUREMENT_TID_RE = /[?&]tid=[a-z]{1,3}-[a-z0-9]{3,}/i;
+
+// 埋点上报端点（路径段级匹配）
+const TELEMETRY_PATH_RE = /(^|\/)(collect|beacon|telemetry|pixel|track|analytics|metrics|gtag|gtm)(\/|$|\?)/i;
+
+// 埋点事件参数（测量协议族专有的参数名）。刻意收得很窄 ——
+// `event`/`ev`/`dl`/`dt` 这类在业务接口里太常见（/api/orders?event=paid），
+// 收进来会产生「把真实授权失败降级」的漏判。取舍原则：宁可漏降级，不可误降级。
+const TELEMETRY_PARAM_RE = /[?&](en|ep\.|epn\.|_p|_gaz|tid|rcb|frm|apvc)=/i;
+
+/**
+ * 该网络条目是否为「页面遥测信标」——即其失败不代表当前操作失败。
+ * 纯函数，只读入参（不判定成功、不修改任何状态）。
+ *
+ * @param {object} rec networkObserver 记录条目（含 url / resourceType / status / failed）
+ * @returns {string|null} 命中原因（供证据留痕），未命中返回 null（= 保持原判）
+ */
+function telemetrySignal(rec) {
+  if (!rec) return null;
+  const rt = String(rec.resourceType || '').toLowerCase();
+  if (rt === 'document') return null; // 统一闸门：主文档永不降级
+  if (TELEMETRY_RESOURCE_TYPES.has(rt)) return 'resourceType=' + rt;
+  const url = String(rec.url || '');
+  if (!url) return null;
+  if (MEASUREMENT_TID_RE.test(url)) return 'measurement-tid';
+  if (TELEMETRY_PATH_RE.test(url) && TELEMETRY_PARAM_RE.test(url)) return 'telemetry-endpoint';
+  return null;
+}
+
 function statusFindings(network) {
   const out = [];
+  const suppressed = [];
   const seen = new Set();
   const scan = (list) => {
     for (const r of list || []) {
@@ -140,7 +194,17 @@ function statusFindings(network) {
       const spec = STATUS_FINDINGS[r.status] || (r.status >= 500
         ? { code: 'HTTP_5XX_SERVER_ERROR', severity: 'warning', hint: '服务端错误，可退避重试一次' }
         : null);
-      if (!spec || seen.has(spec.code)) continue;
+      if (!spec) continue;
+      // C156 归属闸门：遥测信标的 4xx 不是「当前操作」的失败证据。
+      // 不进入 findings（不参与 primary / hasBlockingError 判定），但完整留在
+      // suppressed 里供诊断留痕 —— 证据可见性与判定口径分离，不做隐瞒。
+      // 注意去重：只有**真正产出** finding 时才占用 code（被抑制的条目不得屏蔽后续真实证据）。
+      const sig = telemetrySignal(r);
+      if (sig) {
+        suppressed.push({ code: spec.code, status: r.status, url: r.url, resourceType: r.resourceType, reason: sig });
+        continue;
+      }
+      if (seen.has(spec.code)) continue;
       seen.add(spec.code);
       out.push({
         code: spec.code,
@@ -153,7 +217,7 @@ function statusFindings(network) {
   };
   scan(network && network.apiResponses);
   scan(network && network.failures);
-  return out;
+  return { findings: out, suppressed };
 }
 
 function businessFindings(network) {
@@ -205,14 +269,28 @@ function jsFindings(network, sinceTs) {
 
 function networkFailFindings(network) {
   const failed = ((network && network.failures) || []).filter((r) => r && r.failed);
-  if (!failed.length) return [];
-  return [{
-    code: 'NETWORK_REQUEST_FAILED',
-    severity: 'warning',
-    source: 'network.failed',
-    evidence: { count: failed.length, sample: failed.slice(0, 3).map((r) => ({ url: r.url, reason: r.failureText })) },
-    hint: '请求在传输层失败（超时/连接被拒/代理问题），应检查网络与代理',
-  }];
+  if (!failed.length) return { findings: [], suppressed: [] };
+  // C156 归属闸门：传输层失败同样要分归属 —— 广告/埋点 SDK 的连接失败与当前操作无关
+  // （实证：re.applovin.com/v1/s 的 rt=ping ERR_CONNECTION_CLOSED 被计入，抬高了
+  //  「网络有问题」的可信度，而页面主文档与业务请求全部正常）。
+  const relevant = [];
+  const suppressed = [];
+  for (const r of failed) {
+    const sig = telemetrySignal(r);
+    if (sig) suppressed.push({ code: 'NETWORK_REQUEST_FAILED', url: r.url, resourceType: r.resourceType, reason: sig });
+    else relevant.push(r);
+  }
+  if (!relevant.length) return { findings: [], suppressed };
+  return {
+    findings: [{
+      code: 'NETWORK_REQUEST_FAILED',
+      severity: 'warning',
+      source: 'network.failed',
+      evidence: { count: relevant.length, sample: relevant.slice(0, 3).map((r) => ({ url: r.url, reason: r.failureText })) },
+      hint: '请求在传输层失败（超时/连接被拒/代理问题），应检查网络与代理',
+    }],
+    suppressed,
+  };
 }
 
 const SEVERITY_RANK = { blocking: 0, warning: 1, info: 2 };
@@ -226,7 +304,7 @@ const SEVERITY_RANK = { blocking: 0, warning: 1, info: 2 };
  *   attempted    是否刚执行过一个动作（页面文本扫描的前置条件，避免误把静态文案当错误）
  *   sinceTs      只看该时间戳之后的证据（默认 0 = 全部）
  *   diff         previousObservationDiff（用于判断"动作是否真的产生了任何影响"）
- * @returns {{ findings: Array, primary: object|null, hasBlockingError: boolean, silentFailure: boolean, summary: string }}
+ * @returns {{ findings: Array, primary: object|null, hasBlockingError: boolean, silentFailure: boolean, suppressed: Array, summary: string }}
  */
 function detect(input = {}) {
   const network = input.network || null;
@@ -236,10 +314,15 @@ function detect(input = {}) {
   const diff = input.diff || null;
 
   const findings = [];
+  const suppressed = [];
   if (network) {
-    findings.push(...statusFindings(network));
+    const st = statusFindings(network);
+    findings.push(...st.findings);
+    suppressed.push(...st.suppressed);
     findings.push(...businessFindings(network));
-    findings.push(...networkFailFindings(network));
+    const nf = networkFailFindings(network);
+    findings.push(...nf.findings);
+    suppressed.push(...nf.suppressed);
     findings.push(...jsFindings(network, sinceTs));
   }
   if (attempted && pageText) findings.push(...pageTextFindings(pageText));
@@ -269,17 +352,26 @@ function detect(input = {}) {
   const primary = findings.length ? findings[0] : null;
   const hasBlockingError = findings.some((f) => f.severity === 'blocking');
 
+  let summary = primary ? `${primary.code}（${primary.severity}）：${primary.hint}` : '未检测到明确失败信号';
+  if (suppressed.length) {
+    summary += `｜按证据归属排除 ${suppressed.length} 条页面遥测信标失败（不影响当前操作判定）`;
+  }
+
   return {
     findings,
     primary,
     hasBlockingError,
     silentFailure,
-    summary: primary ? `${primary.code}（${primary.severity}）：${primary.hint}` : '未检测到明确失败信号',
+    // C156：被归属闸门排除的遥测信标失败。**不参与判定**，仅供诊断留痕 ——
+    // 让「为什么没有网络失败证据」可被复查，而不是让证据凭空消失。
+    suppressed,
+    summary,
   };
 }
 
 module.exports = {
   detect,
+  telemetrySignal,
   BUSINESS_ERROR_PATTERNS,
   PAGE_TEXT_STRONG_PATTERNS,
   PAGE_TEXT_OTP_PATTERNS,
