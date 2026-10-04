@@ -43,9 +43,9 @@ async function inspect(html) {
   return { insp, obs, byId };
 }
 
-async function resolveTop(html, target) {
+async function resolveTop(html, target, opts) {
   const { obs } = await inspect(html);
-  return { cands: resolver.resolve(target, obs), obs };
+  return { cands: resolver.resolve(target, obs, opts), obs };
 }
 
 (async () => {
@@ -98,12 +98,20 @@ async function resolveTop(html, target) {
     ok('3.2 第一名是可操作控件', cands[0] && cands[0].elementClass === 'control', cands[0] && cands[0].elementClass);
     ok('3.3 命中来自邻近文本信号', cands[0] && /nearby_text|dom_relationship/.test(cands[0].reason || ''),
       cands[0] && cands[0].reason);
-    ok('3.4 h3 仍在候选池（未被剔除，只是封顶让位）',
-      cands.some((x) => x.el && x.el.tag === 'h3'),
+    // ★ C164（2026-10-04）**有意收紧**，原 3.4/3.5 的规则被撤销（不是为了让测试变绿而放宽）：
+    //   原规则：「描述性元素（如 <h3>）必须留在**动作候选池**，只是封顶让位」。
+    //   撤销理由：动作目标解析时保留高分的描述性元素会真的点上去 —— 实证
+    //   task_mutakb11ukxiq 点击了 Spocket 官网营销标题 <h2>（恰好 30 字符 ⇒ 命中
+    //   selectorFor 兜底 text="..."），零业务效果 ⇒ 30s 超时 ×3 ⇒ 90s REPAIR_TIMEOUT。
+    //   原始意图「未被剔除，只是封顶让位」在**存在性通道**（requireActionable:false）
+    //   依然完整成立 ⇒ 拆成两条通道分别钉住，覆盖度严格强于原断言。
+    const existsCands = (await resolveTop(html, { semantic: '用户名' }, { requireActionable: false })).cands;
+    ok('3.4 h3 不在动作候选池（C164 收紧：描述性元素不作动作目标）',
+      !cands.some((x) => x.el && x.el.tag === 'h3'),
       JSON.stringify(cands.map((x) => [(x.el && x.el.tag) || '?', x.score])));
-    ok('3.5 h3 分数已低于 input',
-      cands[0] && cands.some((x) => x.el && x.el.tag === 'h3' && x.score < cands[0].score),
-      JSON.stringify(cands.map((x) => [(x.el && x.el.tag) || '?', x.score])));
+    ok('3.5 存在性通道下 h3 仍在池且分数低于 input（原「只是封顶让位」意图保持）',
+      existsCands[0] && existsCands.some((x) => x.el && x.el.tag === 'h3' && x.score < existsCands[0].score),
+      JSON.stringify(existsCands.map((x) => [(x.el && x.el.tag) || '?', x.score])));
   }
 
   // ───────────────────────────────────────────────────────

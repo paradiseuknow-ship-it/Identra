@@ -124,6 +124,85 @@ async function withBrowserOp(label, page, taskId, taskFn) {
   }
 }
 
+// ── C163：整页导航后的观察降级（真成功不得被判失败）────────────────────────
+// 事实（task_mutakb11ukxiq 实证，2026-10-04）：点击联盟链 CTA 后页面**已经成功跳转**
+// 到 spocket.co（after_action 截图实证），但跨域导航期间 page.evaluate 长时间不可用 ⇒
+// observation.inspect 返回 {ok:false}，或 withBrowserOp 在 45s 后抛 BROWSER_TIMEOUT ⇒
+// after 观察为 undefined ⇒ 判据 url_contains 读不到 URL ⇒ 误判「点击失败」⇒
+// VIL 观察窗口 + reload 螺旋 + STEP_TIMEOUT 抢跑遗留 RUNNING 孤儿 ⇒ 90s REPAIR_TIMEOUT
+// 收口 FAILED。整条链的代价由一次「已被页面证明成功」的点击承担。
+//
+// 处置：导航中/超时**不再把观察降级为「无」**，改用实时 page.url() 构造最小观察载体。
+//   ★ 这不是伪造证据：url 取自当刻页面真值；elements/text 为空是事实（页面尚未加载完）。
+//   ⇒ url_contains / url_pattern 类判据可正确通过（跳转确实发生）；
+//   ⇒ text_present / element_present 类判据仍会失败（页面确实还没内容）；
+//   ⇒ Success Definition 未放宽，只把「观察载体缺失」与「页面未就绪」两件事分开。
+// 不适用：页面上下文已关闭（BROWSER_CONTEXT_LOST）与拿不到 URL 的情形 —— 原样 rethrow（fail-loud）。
+
+// 实时页面 URL（任何异常都返回 null，绝不因诊断逻辑吞掉真实错误）。
+function safePageUrl(page) {
+  try {
+    if (!page || typeof page.url !== 'function') return null;
+    const u = page.url();
+    return (typeof u === 'string' && u) ? u : null;
+  } catch (e) { return null; }
+}
+
+// 最小观察载体（字段形状与 observation.inspect 输出对齐，消费者无需分支）。
+function degradedObservationFor(url, meta, reason) {
+  const at = Date.now();
+  return {
+    observationId: 'obs_degraded_' + at,
+    url: String(url),
+    title: '',
+    textSummary: '',
+    visibleText: '',
+    roleText: '',
+    elements: [],
+    contentLeaves: [],
+    errors: [],
+    timestamp: at,
+    capturedAt: at,
+    loadingState: 'navigating',
+    domFingerprint: '',
+    storage: null,
+    networkState: 'unknown',
+    elementState: { total: 0, withValue: 0 },
+    source: 'inspect_degraded',
+    parentObservationId: null,
+    actionFinishedAt: null,
+    fresh: null,
+    taskId: (meta && meta.taskId) || null,
+    stepId: null,
+    attemptId: null,
+    previousObservationDiff: {
+      urlChanged: false, textChanged: false, domChanged: false,
+      keyTextChanged: false, elementStateChanged: false, pageStructureChanged: false,
+    },
+    degraded: true,
+    degradedReason: String(reason || 'navigation'),
+  };
+}
+
+// click 之后取观察：正常路径原样返回；导航中失败/超时 → 用真实 URL 降级。
+// opts.inspectFn 仅供守护测试注入桩（生产调用不传，走 observation.inspect）。
+async function observeAfterClick(page, meta, opts) {
+  const inspectFn = (opts && typeof opts.inspectFn === 'function') ? opts.inspectFn : observation.inspect;
+  try {
+    const r = await withBrowserOp('click.inspect2', page, meta.taskId, () => inspectFn(page, { taskId: meta.taskId, skipCache: true }));
+    if (r && r.ok && r.observation) return r.observation;
+    const u = safePageUrl(page);
+    if (u) return degradedObservationFor(u, meta, 'inspect_failed');
+    return null;
+  } catch (e) {
+    const code = (e && e.code) || '';
+    if (code !== 'BROWSER_TIMEOUT' && code !== 'TOOL_EXECUTION') throw e;
+    const u = safePageUrl(page);
+    if (!u) throw e; // 连 URL 都拿不到 ⇒ 保留原错误，不做任何掩盖
+    return degradedObservationFor(u, meta, 'nav_timeout:' + code);
+  }
+}
+
 
 // Phase 9 P2 — 可触发控件判定（最小 executable precondition：可触发 + 未禁用）。
 //
@@ -384,8 +463,16 @@ async function guardCredentialAction(action, page, meta, extra) {
     let challenge = { blocked: false };
     if (x.checkChallenge !== false) {
       try {
-        const html = await page.evaluate(() => (document.documentElement ? document.documentElement.outerHTML.slice(0, 20000) : ''));
-        const bc = botChallenge.detect(null, { url: pageUrl, html: String(html || '') });
+        // C160：一次 evaluate 同时取 HTML 与「可见挑战控件」几何结论。后者是判定
+        // 「页面【正在】要求人机验证」的唯一充分视觉证据 —— 被动防护的 badge/脚本引用
+        // 尺寸不足（~70x70），不会误判（真实站点实证：Spocket 注册页曾被误判为挑战页而拒绝填表）。
+        // PROBE_PAGE 必须整体作为 pageFunction 传入（不可作为 arg：Playwright 的 arg 不收函数）。
+        const probe = await page.evaluate(botChallenge.PROBE_PAGE);
+        const bc = botChallenge.detect(null, {
+          url: pageUrl,
+          html: String((probe && probe.html) || ''),
+          challengeVisible: probe ? probe.visible : null,
+        });
         if (bc && bc.blocked) challenge = { blocked: true, vendor: bc.vendor || null };
       } catch (e) { /* 观测能力缺失不得阻塞守卫：challenge 保持未命中 */ }
     }
@@ -569,8 +656,10 @@ async function runTool(action, resolved, meta) {
         return browserManager.humanClick(page, sel.selector, {});
       });
       await withBrowserOp('click.wait', page, meta.taskId, () => page.waitForTimeout(300));
-      const after = await withBrowserOp('click.inspect2', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId, skipCache: true }));
-      return RESULT.ok({ clicked: sel.selector, element: sel.pattern }, after.observation, beforeObs);
+      // C163：点击可能触发整页（跨域）导航，导航期间 evaluate 不可用 ⇒ 走降级观察
+      // （用实时 URL 承载「跳转已发生」这一真证据），避免把真成功判成失败。
+      const afterObs = await observeAfterClick(page, meta);
+      return RESULT.ok({ clicked: sel.selector, element: sel.pattern, degradedObservation: !!(afterObs && afterObs.degraded) }, afterObs, beforeObs);
     }
     // STEP 7 / CAP-F2：悬浮。真实网站大量导航在 mouseover 才展开（多级菜单、表格行操作、
     // 卡片 hover 按钮）。没有 hover 时，模型唯一的替代是去 click 一个尚未存在的元素，
@@ -949,6 +1038,16 @@ const SYNTHETIC_ID_RE = /^#el-\d+$/;
 function isSyntheticSelector(sel) {
   return !!sel && SYNTHETIC_ID_RE.test(String(sel).trim());
 }
+
+// C164 P3：field 权威校验适用的动作面 —— 只有「会把值写进某个输入字段」的动作，
+// 其 target.field 才具备「我要写的那个字段」这一权威语义。
+// 分层依据：field 在同语义不同字段时是**防误写**的硬约束（{semantic:'email',
+// field:'password'} 必须被拒），但对触发类动作（click/submit/login/hover/...）而言
+// 目标上没有字段概念，字段权威校验只会把「语义正确的按钮」判成「未找到」。
+// 与 credentialRetryGuard.LOCALIZED_WRITE_ACTION_TYPES（凭据面：哪些动作会把**凭据**
+// 写进页面）语义相近但集合与用途不同 —— 那份是凭据族的执行前闸门，本份是定位器的
+// field 权威面，各自登记，不构成同义副本。
+const FIELD_AUTHORITATIVE_ACTION_TYPES = ['fill', 'select'];
 async function resolveSelector(action, obs, meta, page, opts) {
   const r = await resolveSelectorInner(action, obs, meta, page, opts);
   if (r && isSyntheticSelector(r.selector)) {
@@ -1008,7 +1107,18 @@ async function resolveSelectorInner(action, obs, meta, page, opts) {
     // C106 F16：field 权威校验 —— target.field 与 semantic 表达不同目标时
     // （实证 {semantic:'email', field:'password'}），候选必须自带 field 证据，
     // 否则宁可判「未找到」也不能把值写进语义相近的另一个字段。
-    if (best && t.field && t.semantic && !semanticResolver.fieldSemanticEquivalent(t.field, t.semantic)
+    // C164 P3：**按动作类型分层** —— 该权威校验只在「写入字段」的动作上成立
+    // （fill/select，见 FIELD_AUTHORITATIVE_ACTION_TYPES）。触发类动作的 target.field
+    // 无字段语义，模型却习惯性给按钮也编一个 field：
+    // 实证（task_mutakb11ukxiq，C162 归因）{semantic:'Try Spocket', field:'trySpocket'} ——
+    // fieldSemanticEquivalent('trySpocket','Try Spocket') 因驼峰/空格差异恒 false，
+    // 而 <a> 上没有任何名为 trySpocket 的属性 ⇒ fieldMatchesElement 恒 false ⇒
+    // 必然 return null ⇒ ELEMENT_NOT_FOUND ⇒ repairCount 冲到 63 次仍无解；
+    // 同一目标**去掉 field 后 0.92 命中** ⇒ 误杀确证。分层后该场景不再被拒。
+    // 红线保持：fill/select 分支逐字节不变，防「填错字段」型假成功的能力零削弱。
+    if (best && t.field && t.semantic
+        && FIELD_AUTHORITATIVE_ACTION_TYPES.indexOf(String(action.type)) >= 0
+        && !semanticResolver.fieldSemanticEquivalent(t.field, t.semantic)
         && !semanticResolver.fieldMatchesElement(t.field, best.el)) {
       const alt = cands.find((c) => c && c.el && semanticResolver.fieldMatchesElement(t.field, c.el));
       if (alt) {
@@ -1144,6 +1254,9 @@ function credentialUnavailableError(action) {
 
 module.exports = {
   execute, runTool, resolveSelector, credentialUnavailableError, RESULT, isActionableControl,
+  // C163：整页导航后的观察降级（真成功不得被判失败）—— 导出供守护测试直接断言，
+  // 不经浏览器（inspectFn 可注入桩）。
+  observeAfterClick, degradedObservationFor, safePageUrl,
   // 导出 makeLocator：' >> ' 跨 frame 选择器只有它能正确解析
   // （实测 page.locator('iframe >> input') 在本版本不穿透 frame，恒为 0）。
   // 测试必须用它来验证 observation 产出的选择器，否则「看起来对」与「能用」无法区分。

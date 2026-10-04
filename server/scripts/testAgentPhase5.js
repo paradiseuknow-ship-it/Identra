@@ -170,9 +170,14 @@ async function main() {
   ok(r2.status === 'SUCCESS', 'timeout 恢复成功（重试后命中快速响应）', r2.error || '');
 
   // ---- 7) 任务恢复：模拟 Node 重启（RUNNING 任务 → recover → 继续到 SUCCESS）----
+  // C164（2026-10-04）：本用例只验证**恢复机制**（模拟进程重启后续跑到终态），
+  // 任务目标是任意占位（同文件 t1/t2 均用 'x'）。原先随手写的 objective='注册' 会让
+  // 它被新增的「终态业务实效守卫」拦下 —— 因为该 fixture 计划只有 navigate + inspect，
+  // 而 objective 声称是"注册"（守卫的判定是**正确**的：这样的计划不可能完成注册）。
+  // 改为占位 objective，使输入数据与用例意图一致；**断言一字未改**。
   console.log('[task-recovery] 模拟重启恢复');
   const ref2 = await makeProfile(true);
-  const t3 = taskManager.createTask({ name: 'p5 recovery', objective: '注册', targetUrl: 'http://localhost:9555/form', profileId: PROFILE, executionMode: 'AUTONOMOUS', policy: { riskFloor: 'HIGH' }, secretRefs: [ref2] });
+  const t3 = taskManager.createTask({ name: 'p5 recovery', objective: 'x', targetUrl: 'http://localhost:9555/form', profileId: PROFILE, executionMode: 'AUTONOMOUS', policy: { riskFloor: 'HIGH' }, secretRefs: [ref2] });
   taskManager.attachPlan(t3.id, { goal: 'recovery', steps: [
     { id: 'nav', type: 'NAVIGATE', description: '打开', expectedOutcome: 'o', risk: 'LOW', action: NAV_ACT('http://localhost:9555/form') },
     { id: 'obs', type: 'OBSERVE', description: '观察', expectedOutcome: 'o', risk: 'LOW', action: { type: 'inspect', target: { role: 'page' }, risk: 'LOW', verification: { type: 'none' } } },

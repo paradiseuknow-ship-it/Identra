@@ -450,6 +450,21 @@ function resolve(target, observation, opts = {}) {
   if (requireActionable) {
     const blockedEntries = [];
     const usable = out.filter((c) => {
+      // C164 P2：非交互元素（descriptive = form/label/h1~h3/img）不得作为**动作目标**。
+      // 实证（task_mutakb11ukxiq step_002，2026-10-04）：Spocket 官网营销标题
+      // "500K+ Sellers Trust Spocket To"（恰好 30 字符）靠自身文字直击 semantic 得 0.92，
+      // 而当时页面上 controlBest ≤ 0.75 ⇒ 上方「描述性封顶 0.75」**未生效**（那是**条件封顶**，
+      // 仅当存在评分更高的控件时才封顶 —— 页面上没有控件时形同虚设）⇒ h2 以 0.92 胜出
+      // ⇒ selectorFor 兜底生成 text="500K+ Sellers Trust Spocket To" ⇒ 点击一个 <h2>
+      // 不产生任何业务效果 ⇒ 30s boundingBox 超时 ×3 → 90s REPAIR_TIMEOUT。
+      // 此处改为**结构性出局**（与零面积/遮挡守卫同构，含全阻断回落）：动作解析时
+      // 描述性元素一律让位；池中只剩描述性元素时回落保留并打 blockedBy 标记，交上层
+      // 走「元素在但不可操作」路径（不谎报「元素不存在」，两者恢复策略不同）。
+      // 刻意保留的出口（非漏网）：存在性语义（element_present/element_absent/field_value）
+      // 走 requireActionable:false 通道，不受本支影响 —— 它们问「在不在」，不问「能不能点」。
+      // 边界（有意不收紧）：passive 元素（无 role 的 <div class="btn"> 等）**不**出局，
+      // 现代站点大量使用未标 role 的可点容器，排除会大面积误杀真实 CTA。
+      if (c.elementClass === 'descriptive') { blockedEntries.push({ c, why: 'non-interactive' }); return false; }
       const bb = (c.el && (c.el.bbox || c.el.boundingBox)) || null;
       if (bb && typeof bb.w === 'number' && typeof bb.h === 'number' && (bb.w <= 0 || bb.h <= 0)) {
         blockedEntries.push({ c, why: 'zero-area' }); return false;

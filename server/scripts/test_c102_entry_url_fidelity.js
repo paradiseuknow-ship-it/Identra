@@ -29,6 +29,12 @@ chk('A1 mock provider 计划首个 NAVIGATE 被强制改写为用户 target', as
       return [
         { action: 'navigate', target: { url: 'https://www.webflow.com' }, semantic: '打开 Webflow 首页', expectedResult: '页面加载', verification: { type: 'url_contains', expect: 'webflow' } },
         { action: 'inspect', target: { semantic: '页面主体' }, semantic: '观察页面', expectedResult: '快照', verification: { type: 'none' } },
+        // C164（2026-10-04）：本桩原先只有 navigate + inspect，而 objective 含业务阶段词
+        // ⇒ 被新增的「目标覆盖守卫」判为塌缩计划（正确的判定：这样的计划不可能达成"注册会员"）
+        // ⇒ planObjective 返回 ok:false ⇒ A1/A2/A3 级联红。此处补一个真正的业务动作，
+        // 使桩与**真实 LLM 计划的形状**一致（真实计划必然含业务动作）。
+        // 断言与 objective 一字未改 —— 本测试测的仍是"入口 URL 保真"，不是计划形状。
+        { action: 'click', target: { semantic: 'Sign Up' }, semantic: '点击注册入口', expectedResult: '进入注册页', verification: { type: 'url_contains', expect: 'signup' } },
       ];
     },
   };
@@ -88,6 +94,9 @@ chk('A1 mock provider 计划首个 NAVIGATE 被强制改写为用户 target', as
       return [
         { action: 'navigate', target: { url: 'https://www.webflow.com' }, semantic: '打开 Webflow 首页', expectedResult: '页面加载', verification: { type: 'url_contains', expect: 'try.webflow.com/t0wz830c5n4y' } },
         { action: 'inspect', target: { semantic: '页面主体' }, semantic: '观察页面', expectedResult: '快照', verification: { type: 'none' } },
+        // C164：同上 —— 补业务动作使计划形状与真实 LLM 产出一致（D2 断言的是入口
+        // NAVIGATE 的 url_contains 被置 none，与这个 click 步骤无关）。
+        { action: 'click', target: { semantic: 'Sign Up' }, semantic: '点击注册入口', expectedResult: '进入注册页', verification: { type: 'url_contains', expect: 'signup' } },
       ];
     },
   };

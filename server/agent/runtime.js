@@ -923,14 +923,20 @@ async function run(taskId) {
     if (r.error) {
       const _bcObs = r.observation || beforeObs || null;
       let _bcHtml = '';
+      let _bcVisible = null;
       try {
         const _pg = await browserManager.getPage(task.profileId);
         if (_pg && typeof _pg.evaluate === 'function') {
-          _bcHtml = await _pg.evaluate(() => (document.documentElement ? document.documentElement.outerHTML.slice(0, 20000) : ''));
+          // C160：与凭据闸同源（botChallenge.PROBE_PAGE 的唯一实现）——「可见挑战控件」
+          // 才算遭遇拦截；仅引用厂商脚本/页脚声明式文案只记被动信标，不升级。
+          // PROBE_PAGE 必须整体作为 pageFunction 传入（不可作为 arg：Playwright 的 arg 不收函数）。
+          const _probe = await _pg.evaluate(botChallenge.PROBE_PAGE);
+          _bcHtml = String((_probe && _probe.html) || '');
+          _bcVisible = _probe ? _probe.visible : null;
         }
-      } catch (e) { _bcHtml = ''; }
+      } catch (e) { _bcHtml = ''; _bcVisible = null; }
       let bc = { blocked: false, vendor: null, confidence: 0, evidence: [] };
-      try { bc = botChallenge.detect(_bcObs, { url: (_bcObs && _bcObs.url) || null, html: _bcHtml }); } catch (e) { bc = { blocked: false }; }
+      try { bc = botChallenge.detect(_bcObs, { url: (_bcObs && _bcObs.url) || null, html: _bcHtml, challengeVisible: _bcVisible }); } catch (e) { bc = { blocked: false }; }
       if (bc.blocked) {
         events.emit({
           taskId: task.id, executionId: task.currentExecutionId, stepId: step.id,
@@ -1256,6 +1262,27 @@ async function run(taskId) {
       // 降级为 FAILED，携带未完成任务清单，避免 silent-pass 掩盖失败。
       const detail = unfinished.map((s) => `${s.id}(${s.status})`).join(', ');
       return taskManager.fail(taskId, new Error(`任务完成但存在未成功步骤 [${detail}]（${okSteps}/${allSteps.length} 成功）`));
+    }
+    // C164 P1（纵深防御）：终态业务实效守卫 —— 成功判据不得只看「步骤全部通过」。
+    // 上方 B.4 守卫只挡「存在未完成步骤」；**全部 SUCCESS/SKIPPED 即放行**。若计划本身
+    // 塌缩成「导航 + 观察」，它会一路全绿并判 SUCCESS。实证（task_muslw2kpdc7of，
+    // 2026-10-04，真实用户任务）：objective「注册账号并购买最便宜的月付会员」，
+    // 计划仅 2 步（navigate sonymaxweb.com + inspect 观察首页），completedSteps 2/2
+    // ⇒ 任务 SUCCESS —— 没注册、没订阅、没支付。这类**假成功**比失败更危险：
+    // 它会让 Skill 提炼 / Flow Memory / Profile 评分全部吃到假的成功信号。
+    // planner.goalCoverageViolations 已在规划期拦这种计划；本处是**第二道**，覆盖
+    // replan / 恢复续跑 / 计划被外部注入等不经过 planObjective 的路径。
+    // 判据与规划期**同源**（复用 planner.isNonEffectAction / goalHasBusinessStage，
+    // 唯一实现，不在此处另立第二份动作清单）。
+    // 红线：只把不成立的 SUCCESS 降级为 FAILED，**绝不**放宽任何既有判据；
+    // 纯观察型目标（objective 不含业务阶段词）完全不受影响。
+    if (!allSteps.some((s) => s.status === 'SUCCESS' && s.action && !planner.isNonEffectAction(s.action.type))
+        && planner.goalHasBusinessStage(task.objective)) {
+      const kinds = allSteps.map((s) => String((s.action && s.action.type) || '?')).join(', ');
+      return taskManager.fail(taskId, new Error(
+        '任务未达成业务目标：全部步骤虽已通过，但没有任何一个产生业务效果的动作成功'
+        + '（现有动作类型: ' + kinds + '）—— 目标为业务动作（注册/订阅/购买/支付等），'
+        + '仅导航与观察不可能达成，拒判成功'));
     }
     finalizeOrphans(taskId);
     taskManager.complete(taskId, { completedSteps: okSteps, totalSteps: steps.length });

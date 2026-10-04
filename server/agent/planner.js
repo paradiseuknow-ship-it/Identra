@@ -17,6 +17,10 @@ const fs = require('fs');
 const { validatePlan, INSTRUCTIONS, normalizeStrictToCanonical } = require('./schema/plan');
 // C105 F4：replan 产出步骤的 selector 接地判定与 semanticResolver 同源
 const semanticResolver = require('./semanticResolver');
+// C164 P1：目标覆盖守卫需要「哪些动作不产生业务效果」。复用 diagnosisDecision 的
+// OBSERVE_ACTION_TYPES（诊断侧判定「纯观察动作」的既有唯一实现，非新清单），
+// 本处再补导航族 —— 负向登记方向安全：**漏登记只会让守卫更宽松，不会误杀**。
+const { OBSERVE_ACTION_TYPES } = require('./diagnosisDecision');
 // UPLOAD_ROOT：提示里要列出可上传文件，与 schema 的白名单必须同源（否则提示与校验会漂移）
 const { ACTION_TYPES, VERIFICATION_TYPES, UPLOAD_ROOT } = require('./schema/action');
 // 注意：plannerEvidence.js 导出名为 record（非 recordPlannerEvidence），此处用别名绑定，
@@ -294,6 +298,82 @@ function urlOnlyEvidenceViolations(steps) {
   return bad;
 }
 
+// ── C164 P1：目标覆盖守卫（防「计划塌缩 ⇒ 步骤全绿 ⇒ 假成功」）────────────────
+//
+// 实证（task_muslw2kpdc7of，2026-10-04，真实用户任务，非夹具）：
+//   objective = 「注册账号并购买最便宜的月付会员」
+//   实际计划只有 2 步：① navigate sonymaxweb.com
+//                     ② inspect「观察首页，定位注册/创建账号入口」
+//   两步 SUCCESS ⇒ taskManager.complete(completedSteps 2 / totalSteps 2) ⇒ **任务 SUCCESS**
+//   —— 没注册、没订阅、没支付（task.result 里只有 {completedSteps:2,totalSteps:2}）。
+//
+// 根因是**循环论证**：成功判据 = 「自己生成的步骤全部执行完」，而计划本身只覆盖了目标的
+// 开头。计划越塌缩，越容易"全绿"。这是所有假成功里最危险的一种 —— 它会让后续每一次
+// 验证都失真（Skill 提炼 / Flow Memory / Profile 评分全部吃到假的成功信号）。
+//
+// 判据（**逻辑必然**，不是启发式）：
+//   若 objective 把一个**业务动作**（注册/订阅/购买/支付…）作为目标，那么一个完全不含
+//   任何「能改变页面/站点状态的动作」的计划，**无论执行得多成功都不可能达成该目标**。
+//   ⇒ 违规回灌重试；重试耗尽返回 ok:false（明确失败 > 假成功，fail-closed）。
+//
+// ★ 已评估并**刻意撤掉**的判据（改前反证，避免误杀）：「最后一步不得是观察类动作」。
+//   反例（仓库内既存实现，**非假想**）：provider.mock.js 的合法计划以 extract 动作收尾，
+//   其语义写作中文「验证注册结果」、验证为 text_present（值 'success'）——
+//   「提交后提取/观察以验证结果」是**正当且常见**的模式，业务效果由前面的 submit 产生。
+//   该判据会把它整片误杀（mock 路径 + 全部同类真实计划）。
+//   ⚠️ 本注释**刻意不复写那段计划的代码字面**：test_c105 F11.4 以正则扫描 planner.js
+//   全文（含注释）禁止「semantic 键后接中文」的示范 —— 复写字面会把它扫红，而这是
+//   另一条守护关心的语义（prompt 示例的语言契约），与本判据无关。
+//
+// ★ 未做（已知边界，登记而非隐藏）：「阶段覆盖」（objective 的每个阶段都要在计划里有
+//   承载步骤）。实测其判据必须在**步骤文案**上做语义匹配，而合法计划的文案高度自由
+//   （Spocket 的订阅步写作 "Start Free Trial"、注册后设密码步写作 "Use your password"）
+//   ⇒ 误杀风险高，而收益已被本条覆盖大半（本次实证的塌缩计划同时命中本条）。
+//
+// 边界：objective 不含任何业务阶段关键词（如「打开首页看看标题」）⇒ **完全跳过**本守卫 ——
+// 纯观察型目标只用观察/导航是完全合法的，绝不能拦。关键词只收**通用业务动词**，
+// 不含任何站点名或 fixture 特征（禁 benchmark-specific 调优）。
+const GOAL_BUSINESS_STAGE_RE = /注册|创建账号|创建账户|开通|订阅|续订|购买|下单|结账|结算|支付|付款|充值|会员|sign\s?up|\bsignup\b|register|create\s+(?:an?\s+)?account|subscribe|subscription|purchase|checkout|place\s+order|add\s+to\s+cart|\bbuy\b|\bpay\b|payment|membership/i;
+
+// 「不产生业务效果」的动作 = 纯观察族（复用 diagnosisDecision 既有事实源）∪ 导航族。
+// 导航只改变「我在哪」，不改变站点的任何业务状态；纯观察连页面都不改。
+// ★ 大小写归一用**带 /i 的正则**，而不是对字符串做大小写折叠。原因：
+//   test_c130 A4 / test_c131 E5b 以「planner.js 全文不含大小写折叠调用」作为
+//   url_contains 的 expect 契约（原样字面片段）的事实源判据 —— 本守卫与该契约毫无关系，
+//   不得让那两条锚形状断言变红。（这正是「改共享实现会扫红锚字面形状旧守护」的实例：
+//   改的是**无关语义**，红的是脆弱的**代理指标**。正确处置是**改进本实现**，而不是去改
+//   那两条与本事无关的断言 —— 改断言等于按守护的写法反向塑造实现。）
+const NON_EFFECT_ACTION_RE = new RegExp(
+  '^(?:' + OBSERVE_ACTION_TYPES
+    .concat(['navigate', 'reload', 'back', 'forward', 'openTab', 'closeTab', 'switchTab', 'scroll'])
+    .join('|') + ')$',
+  'i'
+);
+
+function isNonEffectAction(type) {
+  return NON_EFFECT_ACTION_RE.test(String(type || ''));
+}
+
+function goalHasBusinessStage(objective) {
+  return GOAL_BUSINESS_STAGE_RE.test(String(objective || ''));
+}
+
+// 返回违规描述数组（空数组 = 通过）。steps 为 canonical plan 的 steps（元素形如
+// {id, type, description, expectedOutcome, action:{type,...}}）。
+// fail-closed：步骤缺 action 时同样判违规 —— 真实路径上 validatePlan 已保证 action 存在，
+// 真出现缺 action 说明输入来源异常，此时「宁可拒绝」比「放行一个形状可疑的计划」安全。
+function goalCoverageViolations(steps, objective) {
+  const arr = Array.isArray(steps) ? steps : [];
+  if (!arr.length) return [];
+  if (!goalHasBusinessStage(objective)) return []; // 纯观察型目标 ⇒ 本守卫不适用
+  const hasEffect = arr.some((s) => s && s.action && !isNonEffectAction(s.action.type));
+  if (hasEffect) return [];
+  const kinds = arr.map((s) => String((s && s.action && s.action.type) || '?')).join(', ');
+  return ['整个计划不含任何能改变页面/站点状态的动作（现有步骤动作类型: ' + kinds
+    + '），而任务目标是一个业务动作（注册/订阅/购买/支付等）—— 这样的计划无论执行得多'
+    + '成功都不可能达成目标。请生成真正的业务动作步骤（点击 CTA / 填写表单 / 提交 等）'];
+}
+
 // 敏感字段门错误标记（schema/action.js 敏感字段检查的唯一报错文案，勿改一处漏一处）。
 // C72：定义从文件尾部上移到 planObjective 之前 —— 原位置在使用点之后（const TDZ 仅因
 // 函数调用发生在模块初始化后才未爆雷），消除未来重构触发 ReferenceError 的隐患。
@@ -520,6 +600,31 @@ async function planObjective({ objective, target, constraints, credentialRefs, e
         if (attempt < MAX_PLANNER_ATTEMPTS) continue;
         return { ok: false, error: lastError };
       }
+      // C164 P1：目标覆盖守卫（防假成功）—— 与 ccv/uov 同款「回灌重试 → 耗尽即拒绝」模式。
+      // 与上面两条的唯一区别是**耗尽后的语义**：ccv/uov 允许继续走（它们是质量提示），
+      // 本条的违规计划是**必然无法达成目标**的，绝不能放行 —— 放行就是产出假成功。
+      const gcv = goalCoverageViolations(vr.plan.steps, goalText);
+      if (gcv.length) {
+        lastError = '计划未覆盖任务目标（会产生「步骤全绿但目标未达成」的假成功）：'
+          + gcv.join('; ')
+          + '。请重新输出完整计划，务必包含至少一个真正的业务动作步骤。';
+        try {
+          recordPlannerEvidence({
+            taskId: ctx && ctx.taskId,
+            executionId: ctx && ctx.executionId,
+            provider: provider && (provider.kind || provider.name),
+            model: provider && provider.model,
+            objective: goalText,
+            context: ctx && ctx.context ? JSON.stringify(ctx.context) : '',
+            stepCount: canonical.steps.length,
+            schemaOk: false,
+            schemaErrors: ['goal_coverage_violation: ' + gcv.join('; ')].slice(0, 5),
+            capability: usedCapability,
+          });
+        } catch (e) {}
+        if (attempt < MAX_PLANNER_ATTEMPTS) continue;
+        return { ok: false, error: lastError };
+      }
       try {
         recordPlannerEvidence({
           taskId: ctx && ctx.taskId,
@@ -676,4 +781,6 @@ module.exports = {
   credentialBlock,
   // LOGIN_SUCCESS 仅 URL 证据守卫：导出供针对性回归测试
   urlOnlyEvidenceViolations,
+  // C164 P1 目标覆盖守卫：导出供针对性回归测试 + runtime 终态守卫复用（唯一实现）
+  goalCoverageViolations, goalHasBusinessStage, isNonEffectAction,
 };

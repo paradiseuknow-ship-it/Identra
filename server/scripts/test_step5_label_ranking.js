@@ -30,12 +30,12 @@ function section(t) { console.log('\n== ' + t + ' =='); }
 (async () => {
   const browser = await chromium.launch({ headless: true });
 
-  async function resolveTop(html, target) {
+  async function resolveTop(html, target, opts) {
     const page = await browser.newPage();
     try {
       await page.setContent(html);
       const obs = (await observation.inspect(page, { taskId: 'test' })).observation;
-      return resolver.resolve(target, obs);
+      return resolver.resolve(target, obs, opts);
     } finally {
       await page.close();
     }
@@ -49,11 +49,22 @@ function section(t) { console.log('\n== ' + t + ' =='); }
     ok('1.1 semantic「用户名」→ input#uname', c[0] && c[0].elementId === 'uname',
       c[0] && (c[0].elementId || c[0].selector) + ' score=' + c[0].score);
     ok('1.2 命中元素是控件类别', c[0] && c[0].elementClass === 'control', c[0] && c[0].elementClass);
-    ok('1.3 关联 label 仍在候选池（供 element_present 使用，只是被降权）',
-      c.some((x) => x.el && x.el.tag === 'label'), JSON.stringify(c.map((x) => x.el && x.el.tag)));
-    ok('1.4 关联 label 的分数已低于控件',
-      c.some((x) => x.el && x.el.tag === 'label' && x.score < c[0].score),
-      JSON.stringify(c.map((x) => [(x.el && x.el.tag) || '?', x.score])));
+    // ★ C164（2026-10-04）**有意收紧**，原 1.3/1.4 的规则被撤销（不是为了让测试变绿而放宽）：
+    //   原规则：「描述性元素（form/label/h1~h3/img）必须留在**动作候选池**，只是降权」。
+    //   撤销理由：动作目标解析时保留高分的描述性元素会真的点上去 —— 实证
+    //   task_mutakb11ukxiq 点击了 Spocket 官网营销标题 <h2>"500K+ Sellers Trust Spocket To"
+    //   （恰好 30 字符 ⇒ 命中 selectorFor 兜底），零业务效果 ⇒ 30s boundingBox 超时 ×3
+    //   ⇒ 90s REPAIR_TIMEOUT。描述性元素在语义上不可能成为动作目标。
+    //   但原规则表达的**原始意图**——「供 element_present 等结构性验证使用」——依然有效，
+    //   只是**分流到 exist 通道**（requireActionable:false）。因此把原来的一条断言拆成
+    //   **两条通道分别钉住**：动作通道必须出局 + 存在性通道必须在池且仍被降权。
+    //   覆盖度**严格强于**原断言（原断言只钉住「留池」，现多钉住「动作通道出局」）。
+    const cExists = await resolveTop(html, { semantic: '用户名' }, { requireActionable: false });
+    ok('1.3 关联 label 不在动作候选池（C164 收紧：描述性元素不作动作目标）',
+      !c.some((x) => x.el && x.el.tag === 'label'), JSON.stringify(c.map((x) => x.el && x.el.tag)));
+    ok('1.4 存在性通道下 label 仍在池且分数低于控件（原「供 element_present 使用」意图保持）',
+      cExists.some((x) => x.el && x.el.tag === 'label' && x.score < cExists[0].score),
+      JSON.stringify(cExists.map((x) => [(x.el && x.el.tag) || '?', x.score])));
 
     c = await resolveTop(html, { field: 'username' });
     ok('1.5 field 路径不受影响', c[0] && c[0].elementId === 'uname', c[0] && c[0].elementId);
