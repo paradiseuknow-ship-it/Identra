@@ -43,6 +43,9 @@ const EVENT_TYPES = [
   // C106 F15：分步表单推进（目标字段尚未出现 → 点前进控件后重查；带 term/selector/advanced 取证）
   'agent.staged_form_advance',
   'agent.bot_challenge_detected',
+  // C171：恒真证据（P2 invalidEvidence=precondition_true）导致本步契约与当前页面结构性错配
+  // → 不烧重试预算、直达 replan 门。带 failureType/decision/action 取证（绝不落凭据值）。
+  'agent.invalid_evidence',
   // PHASE 17-A：凭据动作授权闸拒绝（reason/pageOrigin/anchorOrigin 取证，绝不落凭据值）
   'agent.credential_action_blocked',
   // PHASE 17-A：诊断进入 Runtime 决策层（state/blockedAction/required 取证）

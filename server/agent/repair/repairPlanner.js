@@ -21,6 +21,11 @@ const STRATEGY_FOR_CATEGORY = {
   // 验证失败：Phase 7 Step 5 改为 WAIT_STABLE→RECHECK_OBSERVATION→RETRY_VERIFY→SEMANTIC_RELOCATE 序列
   // （原 RELOAD_OR_BACK 对「验证期望未满足/异步渲染竞态」无效）。验证标准不变，仍由 executor 统一校验。
   VERIFICATION_FAILED: { strategy: 'VERIFY_RETRY', module: 'verifyFailed', risk: 'LOW' },
+  // C171：恒真证据（契约在当前页面恒成立）—— 与 VERIFICATION_FAILED 同模块，交由 verifyFailed
+  // 的「重观察 + 真实重验证」路径处理（该模块对本类落入 recheckAndVerify，**不重执行原动作**）。
+  // 注意：主循环对恒真证据已在 repair 之前短路到 replan 门；本登记是防御性的类别闭合
+  //（缺登记会被 planFromDiagnosis 兜底为 GENERIC_RETRY —— 那才是「重放动作」的风险路径）。
+  INVALID_EVIDENCE: { strategy: 'VERIFY_RETRY', module: 'verifyFailed', risk: 'LOW' },
   // 弹窗/遮挡
   OBSTRUCTION: { strategy: 'DISMISS_OVERLAY', module: 'obstruction', risk: 'MEDIUM' },
   // 会话/权限（保守：人工或既有登录流程，不自动输入密码）

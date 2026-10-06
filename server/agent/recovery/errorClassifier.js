@@ -16,6 +16,9 @@ const RECOVERY_CATEGORIES = [
   // 不经 errorClassifier → STRATEGY_FOR_CATEGORY，故不触发自动 retry 策略变更）。
   'ASYNC_PENDING', 'SUBMIT_RESULT_UNKNOWN', 'DOM_CHANGED', 'EVENTUAL_CONSISTENCY',
   'OBSERVATION_DELAY', 'VERIFICATION_TOO_STRICT', 'STATE_UNKNOWN', 'ACTION_REAL_FAILURE',
+  // C171：恒真证据（P2 invalidEvidence=precondition_true）。属 VIL 验证层类型，与上 8 项同族
+  // （recovery routing 由 verifyFailed 按 taxonomy 处理）；登记使类别字典保持闭合。
+  'INVALID_EVIDENCE',
 ];
 
 const HIGH = 0.95, MED = 0.85, LOW = 0.7;
@@ -85,6 +88,9 @@ const VIL_FAILURE_PROFILE = {
   VERIFICATION_TOO_STRICT: { confidence: 0.68, evidence: '期望业务结果实际存在但验证规则未匹配' },
   STATE_UNKNOWN:          { confidence: 0.5,  evidence: '页面稳定、动作成功、目标未观察到、结构未变，证据不足' },
   ACTION_REAL_FAILURE:    { confidence: 0.9,  evidence: '动作执行返回失败' },
+  // C171：契约在动作执行前已成立（与动作无因果）。**不是**「再等一会儿/再试一次」能收敛的类型 ——
+  // 重执行不改变 before 观察，故上层必须走 replan（或升级），绝不重放同一动作。
+  INVALID_EVIDENCE:       { confidence: 0.85, evidence: '验证契约在当前页面恒真，与本次动作无因果；重执行不可能使其成立' },
 };
 
 function classifyVerificationFailure(failureType, opts = {}) {

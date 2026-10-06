@@ -47,6 +47,10 @@ const FAILURE_TYPES = {
   DOM_CHANGED: 'DOM_CHANGED',                   // 原目标状态/结构变化
   SUBMIT_RESULT_UNKNOWN: 'SUBMIT_RESULT_UNKNOWN', // 提交动作成功但结果落点未确认（区别于泛化 STATE_UNKNOWN）
   ASYNC_PENDING: 'ASYNC_PENDING',               // 动作成功、页面稳定、验证未通过，但存在「异步处理中」证据（结果未定，非成功非失败）
+  // C171：验证契约在动作执行前已成立（clause.js 的 P2 无效证据守卫 invalidEvidence=precondition_true）。
+  // 与以上所有类型**结构不同**：上面每类都假设「多做一点（等待/重观察/重执行/换定位）可能收敛」，
+  // 而本类的谓词与本次动作的因果**恒不成立** —— before 观察就是当前页面，重执行不改变 before。
+  INVALID_EVIDENCE: 'INVALID_EVIDENCE',         // 契约恒真（与动作无因果），重观察/重执行结构性不可能使其成立
 };
 
 // decision 枚举
@@ -57,6 +61,10 @@ const DECISIONS = {
   RETRY_VERIFY: 'RETRY_VERIFY', // 重新观察 + 重新验证（不重执行）
   RE_EXECUTE: 'RE_EXECUTE', // 重新执行原动作
   HUMAN_ESCALATE: 'HUMAN_ESCALATE',
+  // C171：本步契约与当前页面结构性错配 —— 既不该重执行，也不该重观察（两者都不可能改变结论），
+  // 正确出口是让上层「基于当前实况重新规划剩余步骤」。刻意**不**列入 isReobservableDecision：
+  // 运行观察窗口只会白等一个完整窗口，且窗口内的重验证仍是同一对 before/after ⇒ 结论必然相同。
+  PLAN_STALE: 'PLAN_STALE',
 };
 
 // 哪些 decision 会进入「重观察 + 重验证」窗口（WAIT / RECHECK / RETRY_VERIFY 都不重执行原动作）。
@@ -189,8 +197,8 @@ function detectAsyncPending(beforeObservation, afterObservation) {
 }
 
 // 轻量：从观察结果判断「期望验证目标」是否真实存在（用于区分 TOO_STRICT vs UNKNOWN）
-// C132：本函数与 clausePresent 是 4b `targetPresent` **同一个变量的两支**（见 _analyze
-// :420-423 的三元式）⇒ 两者必须同口径；否则同一逻辑场景仅因「planner 是否给出
+// C132：本函数与 clausePresent 是 `targetPresent`（_analyze 步骤 5b 的三元式）**同一个变量的两支**
+// ⇒ 两者必须同口径；否则同一逻辑场景仅因「planner 是否给出
 // verification」这一个无关差异，就得到相反诊断。故 url_contains 分支改为委托
 // clause.evalUrlContains（唯一实现，含 P2），签名相应补 beforeObservation。
 function expectedActuallyPresent(expectedVerification, afterObservation, beforeObservation) {
@@ -234,7 +242,7 @@ function expectedActuallyPresent(expectedVerification, afterObservation, beforeO
   }
   // businessState 契约：委托 businessStatePresent 做精准判定（B2 真实归因）。
   // C132：传 beforeObservation 而非 null。★该分支在**当前唯一调用点**下**结构上不可达**
-  // （_analyze :428 的三元式已用 businessState 作判别，本函数只在 else 支被调用；且本函数
+  // （_analyze 步骤 5b 的三元式已用 businessState 作判别，本函数只在 else 支被调用；且本函数
   // 未导出）⇒ 本次改动**零行为变更**。保留并补齐口径，是为了不留下第二份「无 before」的
   // 形态：将来若新增调用方，口径与主路径天然一致（L16 的反面用法 —— 不留幽灵形态）。
   if (expectedVerification.businessState) {
@@ -251,7 +259,7 @@ function clausePresent(cl, after, before) {
   // 不再在本文件里各自拼串。roleText 是**元素级**证据（交互元素角色名 / aria-label），
   // 不参与文本通道 —— 否则「视觉上没有这段文字」的元素属性会命中 text_present（假阳性），
   // 且制造与验证引擎的口径分歧（它从来不读 roleText）。
-  // login_state 与验证引擎同源（textSummary）：该正则本就脆弱（_analyze 4c 有专属兜底），
+  // login_state 与验证引擎同源（textSummary）：该正则本就脆弱（_analyze 5c 有专属兜底），
   // 证据源越宽越容易把「未登录」判成「已登录」，故向验证引擎口径收敛而非反向放宽。
   const text = String((after && after.textSummary) || '').toLowerCase();
   // C130：url 恢复**原样**（不再整体 lowerCase）。该变量有两个消费点，方向一致：
@@ -393,7 +401,9 @@ function fieldExistsButEmpty(contract, after, action) {
 const SENSITIVE_TYPES = new Set(['purchase', 'payment', 'password_change', 'delete', 'update_account_settings', 'submit', 'login', 'logout']);
 
 // 主分析函数（内部实现，外部统一经 analyze 包装以附加 verificationEvidence）
-function _analyze({ beforeObservation, afterObservation, expectedVerification, actionResult, action } = {}) {
+// C171：新增 invalidEvidence —— 裁决面（verification.js）已产出该信号，但此前**从未传入本层**，
+// 导致「恒真证据」这一结构性问题在诊断层不可见，被 networkState=pending 抢先归 EVENTUAL_CONSISTENCY。
+function _analyze({ beforeObservation, afterObservation, expectedVerification, actionResult, action, invalidEvidence } = {}) {
   const after = afterObservation || {};
   const before = beforeObservation || {};
   const actionOk = !!(actionResult && actionResult.success);
@@ -416,7 +426,30 @@ function _analyze({ beforeObservation, afterObservation, expectedVerification, a
     };
   }
 
-  // 2) 网络仍在进行 → 最终一致性（等）
+  // 2) 恒真证据（P2 无效证据守卫）→ 契约与当前页面结构性错配，必须**优先于** networkState。
+  //
+  // C171（task_muwco0lhxixif 实证）：planner 给的判据是 url_contains "/signup"，动作是
+  // click「Get Started」。首次点击后页面异步跳转，第 3 次尝试时 before/after 均为
+  // app.spocket.co/signup ⇒ 谓词在动作**执行前**已成立 ⇒ 裁决面正确地以 P2 判「非本次动作的证据」
+  // （绝不放宽）。但本层当时看不到 invalidEvidence，被下方 net==='pending' 抢先归
+  // EVENTUAL_CONSISTENCY → WAIT → 窗口耗尽 → 主循环重试 → **在注册页上重放同一个 click**。
+  // 该 click 命中的是注册页的提交按钮 ⇒ 空表单连提 4 次，把站点逼出 hCaptcha 挑战（自伤）。
+  //
+  // 结构性判据：before.url 就是**当前页 URL**（不是历史快照），重执行/重观察都不改变 before，
+  // 故谓词与动作的因果恒不成立 ⇒ 重试必然重放同一个不可能成功的动作。唯一有意义的出口是
+  // 让上层基于实况重新规划剩余步骤（PLAN_STALE），故本分支置于所有「再试一次」类判定之前。
+  if (invalidEvidence === 'precondition_true') {
+    evidence.push('验证契约在动作执行前已成立（invalidEvidence=precondition_true）：'
+      + '条件与本次动作无因果，重观察/重执行结构性不可能使其成立 → 需基于当前实况重新规划');
+    return {
+      decision: DECISIONS.PLAN_STALE,
+      failureType: FAILURE_TYPES.INVALID_EVIDENCE,
+      confidence: 0.85,
+      evidence,
+    };
+  }
+
+  // 3) 网络仍在进行 → 最终一致性（等）
   if (net === 'pending') {
     evidence.push('观察时刻仍有未完成网络请求（networkState=pending），判定为异步一致性延迟');
     return {
@@ -427,7 +460,7 @@ function _analyze({ beforeObservation, afterObservation, expectedVerification, a
     };
   }
 
-  // 3) 页面仍在加载 → 观察过早
+  // 4) 页面仍在加载 → 观察过早
   if (loading && loading !== 'complete') {
     evidence.push('页面加载状态=' + loading + '（非 complete），观察可能过早，建议重观察');
     return {
@@ -438,8 +471,8 @@ function _analyze({ beforeObservation, afterObservation, expectedVerification, a
     };
   }
 
-  // 4) 页面已稳定，动作成功，但验证失败 → 进入「结构/验证」判别
-  // 4a) DOM 结构相比动作前发生显著变化 → 结构变化
+  // 5) 页面已稳定，动作成功，但验证失败 → 进入「结构/验证」判别
+  // 5a) DOM 结构相比动作前发生显著变化 → 结构变化
   // 专项 §四：DOM_CHANGED 绝不≡SUCCESS，只表示「页面已变化」。正确闭环是
   // ACTION → DOM_CHANGED → Fresh Observation → Verification Contract → Re-evaluate，
   // 而非「直接重执行原动作 / 直接判 VERIFY_FAILED」。故此处返回 RECHECK/RETRY 类决策，
@@ -455,7 +488,7 @@ function _analyze({ beforeObservation, afterObservation, expectedVerification, a
     };
   }
 
-  // 4b) 期望目标其实存在（只是验证规则未匹配）→ 验证过严
+  // 5b) 期望目标其实存在（只是验证规则未匹配）→ 验证过严
   // C132：★本三元式的两支是**同一个变量**，必须同口径 —— 左支业务态契约（C131 已含 P2），
   // 右支裸 verification。改前右支漏传 before ⇒ 同一逻辑场景仅因 planner 是否给出
   // verification 就得到相反诊断（实测：STATE_UNKNOWN vs VERIFICATION_TOO_STRICT）。
@@ -472,7 +505,7 @@ function _analyze({ beforeObservation, afterObservation, expectedVerification, a
     };
   }
 
-  // 4c) 稳定、动作成功、目标不存在、结构未变 → 证据不足，交由人工
+  // 5c) 稳定、动作成功、目标不存在、结构未变 → 证据不足，交由人工
   //     特殊：login_state 这类脆弱正则易误判，归为 TOO_STRICT 给 repair 一次替代机会，而非直接升级。
   if (expectedVerification && expectedVerification.type === 'login_state') {
     evidence.push('login_state 正则脆弱且未匹配，归为验证过严，交由 repair 替代态判定');

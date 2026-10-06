@@ -395,12 +395,15 @@ async function runStepInner(task, step, beforeObs, actionOverride, _runToken) {
     });
     if (!vres.success) {
       // Phase 10.7：Verification Intelligence 诊断 + 决策 + 观察窗口（完整闭环第一步）。
+      // C171：把裁决面的 invalidEvidence 一并传入。此前该信号只存在于 vres 里、从未进入诊断层，
+      // 于是「恒真证据」被 networkState=pending 抢先归 EVENTUAL_CONSISTENCY → WAIT → 重试重执行。
       const vil = verificationIntelligence.analyze({
         beforeObservation: beforeActionObs,
         afterObservation: toolRes.observation,
         expectedVerification: effV,
         actionResult: toolRes,
         action: step.action,
+        invalidEvidence: vres.invalidEvidence,
       });
 
       // 遥测 1：每一次 VIL decision 都记录（含 failureType / decision / confidence / evidence）
@@ -500,6 +503,10 @@ async function runStepInner(task, step, beforeObs, actionOverride, _runToken) {
         failureType: vil.failureType,
         confidence: vil.confidence,
         evidence: vil.evidence,
+        // C171：把诊断决策与恒真标记随错误对象带给主循环 —— 主循环此前只看 code/failureType，
+        // 无法区分「再试一次可能收敛」与「契约与当前页面结构性错配」，只能一律重试重执行。
+        vilDecision: vil.decision,
+        invalidEvidence: vres.invalidEvidence,
         observationBefore: beforeActionObs,
         observationAfter: toolRes.observation,
       };
@@ -883,7 +890,14 @@ async function run(taskId) {
     retries += 1;
     const attemptNo = retries;
     const retriesLeft = stepMax - retries;
-    const canRetry = !!step.retryable && retries <= stepMax && retriesLeft >= 0;
+    // C171：恒真证据（P2 invalidEvidence=precondition_true）**不消耗重试预算**，直接短路重试。
+    // 语义：谓词在动作执行前已成立（before.url 就是当前页 URL）⇒ 重执行不改变 before，
+    // 重试必然重放同一个不可能成功的动作。实证（task_muwco0lhxixif step_003）：判据
+    // url_contains "/signup" 在注册页恒真，step 级重试仍重执行了同一个 click「Get Started」，
+    // 而该按钮在注册页是提交按钮 ⇒ 空表单连提 4 次把站点逼出 hCaptcha（自伤）。
+    // 此处只决定「不重试」；真正的出口在下方恒真短接块（直达 replan 门，绝不重放）。
+    const _invalidEvidence = !!(r.error && r.error.invalidEvidence === 'precondition_true');
+    const canRetry = !_invalidEvidence && !!step.retryable && retries <= stepMax && retriesLeft >= 0;
     // C105 F5：失败签名记账 + 熔断判定（换步重置）。签名字符串化对 target 键排序，
     // 保证 {semantic,selector} 与 {selector,semantic} 恒等。
     {
@@ -1095,6 +1109,69 @@ async function run(taskId) {
       }
     }
 
+    // ── C171：replan 门唯一实现（唯一实现收口）──────────────────────────────
+    // 改前，「R5 同签名熔断 + tryReplan + 替换剩余步骤 + 重置 retries」这段逻辑在主循环里
+    // **存在两份逐字副本**（repair 编排超时路径 / 常规 plan-stale 路径），C171 又需要第三个
+    // 入口（恒真证据）—— 同一语义三份实现是典型 L6 不对称。此处收口为唯一实现，三处共用。
+    // 返回 true = 已基于当前观察重生成「剩余步骤」并替换 plan（调用方须立即 continue）。
+    // 返回 false = 预算耗尽 / 同签名熔断 / replan 失败（调用方按各自语义收口，不静默通过）。
+    const _replanGate = async (reason) => {
+      if ((task.replanCount || 0) >= maxReplansFor(task)) return false;
+      const sig = stepFailureSignature(step, r.error);
+      const cnt = sameSigReplanCount(sig, lastReplanSig, sameSigReplanRun);
+      if (shouldFuseSameSigReplan(cnt)) {
+        events.emit({
+          taskId: task.id, executionId: task.currentExecutionId, type: 'agent.replan_fused',
+          payload: { signature: sig, sameSigReplans: cnt, replanCount: task.replanCount || 0, errorCode: (r.error && r.error.code) || null, reason },
+        });
+        return false;
+      }
+      lastReplanSig = sig;
+      sameSigReplanRun = cnt;
+      const rp = await tryReplan(task, beforeObs, steps, index);
+      if (!rp || !rp.ok) return false;
+      task.replanCount = (task.replanCount || 0) + 1;
+      try { store.upsert('aiTasks', task); } catch (e) {}
+      steps = stepManager.listSteps(task.id);
+      // 当前失败 step 已被新计划替换；从 index 处的新 step 继续（置 PENDING 确保重跑）
+      if (steps[index]) { try { stepManager.setStepState(steps[index].id, 'PENDING'); } catch (e) {} }
+      retries = 0;
+      events.emit({
+        taskId: task.id, executionId: task.currentExecutionId, type: 'agent.replan',
+        payload: { replanCount: task.replanCount, reason },
+      });
+      return true;
+    };
+
+    // ── C171：恒真证据（P2 invalidEvidence=precondition_true）⇒ 不烧重试预算，直达 replan 门 ──
+    // 语义：契约在动作**执行前**已成立（before.url 就是当前页 URL）⇒ 重执行不改变 before，
+    // 重试必然重放同一个不可能成功的动作 —— 与 EVENTUAL_CONSISTENCY/OBSERVATION_DELAY 等
+    // 「再等一会儿可能收敛」的失败**结构不同**，故在此短路，不进 canRetry 重试、也不进 repair。
+    //
+    // 实证（task_muwco0lhxixif step_003，C169 首次真实任务）：planner 给的判据是
+    // url_contains "/signup"，动作是 click「Get Started」。第 3 次尝试时页面已在
+    // app.spocket.co/signup ⇒ 裁决面正确地以 P2 判「非本次动作的证据」（绝不放宽），
+    // 但该步仍被 step 级重试**重执行了同一个 click**；而「Get Started」在注册页是提交按钮
+    // ⇒ 空表单连提 4 次，把站点逼出 hCaptcha 挑战（自伤，非环境先决条件）。
+    // 处置：基于当前实况重规划剩余步骤（planner 能看到「已在 /signup」⇒ 直接规划填表）；
+    // replan 不可用 ⇒ 显式升级人工并说明原因（绝不静默重放，也绝不因此判成功）。
+    if (r.error && r.error.invalidEvidence === 'precondition_true') {
+      events.emit({
+        taskId: task.id, executionId: task.currentExecutionId, stepId: step.id,
+        type: 'agent.invalid_evidence',
+        payload: {
+          failureType: r.error.failureType, decision: r.error.vilDecision || null,
+          action: (pendingAction || step.action) ? (pendingAction || step.action).type : null,
+          reason: '契约在动作执行前已成立 → 重观察/重执行结构性不可能使其成立',
+        },
+      });
+      if (await _replanGate('验证契约在当前页面恒真（invalidEvidence=precondition_true）→ 基于实况重新规划剩余步骤')) continue;
+      const _ieErr = new Error('验证契约在当前页面恒真（P2 无效证据守卫）：判据在动作执行前已成立，'
+        + '重观察/重执行结构性不可能使其成立，且重新规划不可用（预算耗尽或同签名熔断）——需人工介入');
+      finalizeOrphans(taskId);
+      return taskManager.escalate(taskId, _ieErr, { reason: 'INVALID_EVIDENCE' });
+    }
+
     // 重试耗尽：进入修复编排（Phase 2.3）。修复失败/需审批 → 升级为显式终态，杜绝悬挂。
     // 5.9-E3 修复：修复编排内部含「真实 LLM 诊断 + 至多 3 次浏览器修复动作」，任一环节若挂起
     // （LLM 调用无超时 / 浏览器操作僵死）会让 runtime 主循环裸 await 永久不返回 → task 停在 RUNNING 永久悬挂。
@@ -1152,26 +1229,12 @@ async function run(taskId) {
       // 「计划缺一步前置导航」这类 plan-stale 失败会被误收口 FAILED。若底层错误是 replan 候选
       // （元素定位族/非凭证类）且 replan 预算未耗尽 → 与正常路径同门走 tryReplan
       // （R5 同签名熔断 + maxReplans 约束）；replan 不可用/失败 → 维持原语义明确终态 FAILED。
-      let _replanned = false;
-      if (r && r.error && isReplanCandidate(r.error, step) && (task.replanCount || 0) < maxReplansFor(task)) {
-        const _r5sig = stepFailureSignature(step, r.error);
-        const _r5cnt = sameSigReplanCount(_r5sig, lastReplanSig, sameSigReplanRun);
-        if (!shouldFuseSameSigReplan(_r5cnt)) {
-          lastReplanSig = _r5sig;
-          sameSigReplanRun = _r5cnt;
-          const rp = await tryReplan(task, beforeObs, steps, index);
-          if (rp && rp.ok) {
-            task.replanCount = (task.replanCount || 0) + 1;
-            try { store.upsert('aiTasks', task); } catch (e) {}
-            steps = stepManager.listSteps(task.id);
-            if (steps[index]) { try { stepManager.setStepState(steps[index].id, 'PENDING'); } catch (e) {} }
-            retries = 0;
-            _replanned = true;
-            events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'agent.replan', payload: { replanCount: task.replanCount, reason: 'repair orchestration timeout → regenerate remaining steps (C104)', errorCode: (r.error && r.error.code) || null } });
-            continue;
-          }
-        }
-      }
+      // C171：C104 兜底收口到 _replanGate（唯一实现）—— 候选门在下方三元的条件位，
+      // maxReplans 预算与 R5 同签名熔断由 helper 统一承担（收口前是本处的三份内联副本之一）。
+      const _replanned = (r && r.error && isReplanCandidate(r.error, step))
+        ? await _replanGate('repair orchestration timeout → regenerate remaining steps (C104)')
+        : false;
+      if (_replanned) continue;
       if (!_replanned) {
         console.warn('[runtime][5.9-E3] repair 编排超时/异常，收口 FAILED:', String(repairHang.message || repairHang).slice(0, 160));
         const err = new Error(`${step.description || step.id} 修复编排超时/异常（重试${attemptNo}次耗尽）: ${String(repairHang.message || repairHang).slice(0, 200)} [${r.error && r.error.code}]`);
@@ -1185,32 +1248,14 @@ async function run(taskId) {
     // 受 maxReplans 约束，耗尽后落入下方 escalate/fail 终态（绝不无限循环）。
     // STEP 4：诊断判定「不可重试」的失败（验证码/OTP/权限/支付被拒/凭据错误/记录重复）
     // 不允许走 replan —— 目标本身不可能达成，重新规划只会生成另一份不可能的计划。
-    if (outcome.paused && !outcome.notRetriable && isReplanCandidate(r.error, step) && (task.replanCount || 0) < maxReplansFor(task)) {
-      // R5 churn 熔断（2026-09-03）：同一业务位置连续 replan 且失败签名相同 → replan 无法收敛，
-      // 继续循环只会烧满任务预算（rw.091 实证：21 attempts / 241s 被 harness 杀）。
-      // 首次 replan 永远允许；连续第 2 次同签名即熔断 → 落入下方 outcome.paused → HUMAN_ESCALATION。
-      const _r5sig = stepFailureSignature(step, r.error);
-      const _r5cnt = sameSigReplanCount(_r5sig, lastReplanSig, sameSigReplanRun);
-      if (shouldFuseSameSigReplan(_r5cnt)) {
-        events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'agent.replan_fused', payload: { signature: _r5sig, sameSigReplans: _r5cnt, replanCount: task.replanCount || 0, errorCode: (r.error && r.error.code) || null } });
-        console.warn('[runtime][R5] 同签名连续 replan 熔断，转显式升级:', task.id, _r5sig);
-        // 不进入 replan；落入下方 escalate 终态
-      } else {
-        lastReplanSig = _r5sig;
-        sameSigReplanRun = _r5cnt;
-        const rp = await tryReplan(task, beforeObs, steps, index);
-        if (rp && rp.ok) {
-          task.replanCount = (task.replanCount || 0) + 1;
-          try { store.upsert('aiTasks', task); } catch (e) {}
-          steps = stepManager.listSteps(task.id);
-          // 当前失败 step 已被新计划替换；从 index 处的新 step 继续（置 PENDING 确保重跑）
-          if (steps[index]) { try { stepManager.setStepState(steps[index].id, 'PENDING'); } catch (e) {} }
-          retries = 0;
-          events.emit({ taskId: task.id, executionId: task.currentExecutionId, type: 'agent.replan', payload: { replanCount: task.replanCount, reason: 'plan stale → regenerate remaining steps' } });
-          continue;
-        }
-        // replan 失败 → 落入下方 escalate/fail 终态
-      }
+    // C171：收口到 _replanGate（唯一实现）。改前「R5 同签名熔断 + tryReplan + 替换剩余步骤 +
+    // 重置 retries」在本轮主循环里有**两份逐字副本**（上一处 catch 兜底 / 本处常规 plan-stale），
+    // 恒真证据又需要第三个入口 —— 同一语义三份实现。现在熔断记账与预算约束只在 helper 里存在一份。
+    if (outcome.paused && !outcome.notRetriable && isReplanCandidate(r.error, step)) {
+      // 首次 replan 永远允许；连续第 2 次同签名由 helper 熔断 → 返回 false → 落入下方 escalate 终态。
+      if (await _replanGate('plan stale → regenerate remaining steps')) continue;
+      console.warn('[runtime][R5] replan 未生效（同签名熔断 / 预算耗尽 / replan 失败），转显式升级:', task.id, stepFailureSignature(step, r.error));
+      // 不进入 replan；落入下方 escalate 终态
     }
 
     // P0-B：LLM 诊断的结构化决策回灌 Runtime（F22/F23 的最小接口连接）。

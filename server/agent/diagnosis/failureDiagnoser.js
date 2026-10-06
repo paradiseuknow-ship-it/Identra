@@ -99,6 +99,9 @@ const RETRY_POLICY_BY_CATEGORY = {
   VERIFICATION_TOO_STRICT: 'replan',
   STATE_UNKNOWN: 'replan',
   ACTION_REAL_FAILURE: 'replan',
+  // C171：恒真证据 = 契约与当前页面结构性错配 ⇒ 重试必然重放不可能成功的动作。
+  // 与 VERIFICATION_TOO_STRICT 同族归 'replan'（基于实况重规划剩余步骤），绝不 'backoff'（重试）。
+  INVALID_EVIDENCE: 'replan',
   BROWSER_CRASH: 'replan',
   CREDENTIAL_MISSING: 'escalate',
   APPROVAL_REQUIRED: 'escalate',

@@ -48,11 +48,14 @@ const fd = require(${JSON.stringify(fdPath)});
 const assert = (c, n) => { if (!c) throw new Error('assert: ' + n); console.log('  ok - ' + n); };
 
 // errorClassifier 全类别 ⊆ repairPlanner.STRATEGY_FOR_CATEGORY（C.4 闭合意图固化）。
-// 豁免 8 项 VIL failureType（errorClassifier P5 注释：登记性类别，recovery routing 由
+// 豁免 9 项 VIL failureType（errorClassifier P5 注释：登记性类别，recovery routing 由
 // repair/strategies/verifyFailed 按 VIL taxonomy 处理，不经 STRATEGY_FOR_CATEGORY）。
-const VIL_TAXONOMY = ['ASYNC_PENDING', 'SUBMIT_RESULT_UNKNOWN', 'DOM_CHANGED', 'EVENTUAL_CONSISTENCY', 'OBSERVATION_DELAY', 'VERIFICATION_TOO_STRICT', 'STATE_UNKNOWN', 'ACTION_REAL_FAILURE'];
+// C171：清单同步 VIL 新增类型 INVALID_EVIDENCE（恒真证据）。该类型**同时**配了
+// STRATEGY_FOR_CATEGORY 映射（防御：缺映射会被兜底成 GENERIC_RETRY = 重放动作），
+// 故此处在豁免清单中的存在只是保持「VIL 全量类型」语义完整，不表示豁免被放宽。
+const VIL_TAXONOMY = ['ASYNC_PENDING', 'SUBMIT_RESULT_UNKNOWN', 'DOM_CHANGED', 'EVENTUAL_CONSISTENCY', 'OBSERVATION_DELAY', 'VERIFICATION_TOO_STRICT', 'STATE_UNKNOWN', 'ACTION_REAL_FAILURE', 'INVALID_EVIDENCE'];
 const missingInRepair = ec.RECOVERY_CATEGORIES.filter((c) => !VIL_TAXONOMY.includes(c) && !rp.STRATEGY_FOR_CATEGORY[c]);
-assert(missingInRepair.length === 0, 'P2a RECOVERY_CATEGORIES（VIL 8 项豁免）全部有 repair 策略映射（缺: ' + missingInRepair.join(',') + '）');
+assert(missingInRepair.length === 0, 'P2a RECOVERY_CATEGORIES（VIL 9 项豁免）全部有 repair 策略映射（缺: ' + missingInRepair.join(',') + '）');
 
 // errorClassifier 全类别 ⊆ failureDiagnoser.RETRY_POLICY_BY_CATEGORY（兜底策略闭合，无豁免）
 const missingInPolicy = ec.RECOVERY_CATEGORIES.filter((c) => !fd.RETRY_POLICY_BY_CATEGORY[c]);
