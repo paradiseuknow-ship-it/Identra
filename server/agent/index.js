@@ -548,20 +548,10 @@ router.post('/chat', async (req, res) => {
     } catch (e) { /* Router 失败不阻断，沿用既有逻辑 */ }
 
     // 3) 创建 Task（不执行，等待人工确认 Plan）
-    // C99：vault→credentialRef 自动接线 —— 任务生效环境配置了凭据（vault）却无 cred_ 引用时，
-    // 幂等补注册并把引用挂到任务上。否则敏感字段门恒见空清单 → needsCredentials 恒成立，
-    // 「已配置凭据」在规划链路断裂（e2e 实证三连失败）。
-    let credentialRefs = Array.isArray(parsed.credentialRefs) ? parsed.credentialRefs.filter(Boolean) : [];
-    try {
-      const effProfileId = recommendedProfileId || profileId || null;
-      if (effProfileId) {
-        const autoRefs = secretManager.ensureProfileRefs(effProfileId, parsed.target || null, {
-          workspaceId: req.identityUser ? req.identityUser.currentWorkspaceId : undefined,
-          createdBy: req.identityUser ? req.identityUser.id : undefined,
-        });
-        credentialRefs = [...new Set([...credentialRefs, ...autoRefs])];
-      }
-    } catch (e) { /* 接线失败不阻断：维持原清单，门禁语义不变 */ }
+    // C170：vault→credentialRef 自动接线已**收口到 taskManager.createTask**（任务唯一写入口）。
+    // 此处不再内联接线 —— 旧实现只挂在 /chat 一条路由上，`POST /api/ai/tasks` 等路径全部绕过
+    // ⇒ secretRefs 恒空 ⇒ planner 凭据字段契约前置不成立（编造邮箱）+ runtime 凭据闸恒 needsCredentials。
+    const requestedRefs = Array.isArray(parsed.credentialRefs) ? parsed.credentialRefs.filter(Boolean) : [];
     // CAP-K2：Router 决策摘要（含失败经验 warnings）随任务落库，经 contextBuilder 进 Planner 上下文
     const { toIntelligence } = require('./intelligence/router/taskInputEnhancer');
     const intelligence = toIntelligence(routerDecision);
@@ -571,10 +561,17 @@ router.post('/chat', async (req, res) => {
       targetUrl: parsed.target || '',
       profileId: recommendedProfileId,
       executionMode: ['SIMULATION', 'ASSIST', 'AUTONOMOUS', 'DEBUG'].includes(executionMode) ? executionMode : 'ASSIST',
-      secretRefs: credentialRefs,
+      secretRefs: requestedRefs,
       constraints: parsed.constraints || [],
       routerHints: intelligence || undefined,
+      // CAP-O1 §10：归属盖章由服务端身份层注入（与 taskManager 内接线用的 stamp 同源，
+      // 避免「任务无归属、其凭据记录有归属」的不一致）。
+      workspaceId: req.identityUser ? req.identityUser.currentWorkspaceId : undefined,
+      createdBy: req.identityUser ? req.identityUser.id : undefined,
     });
+    // C170：以**落库结果**为权威清单 —— planner 与 runtime 必须看到同一份 refs
+    // （此前两处各算一份，存在漂移面）。createTask 已含自动接线。
+    const credentialRefs = Array.isArray(task.secretRefs) ? task.secretRefs : [];
     // C84：意图归因——/chat 的审计点锚在任务创建（而非规划成功）。规划失败时任务会被
     // 删除清理，但「用户发起过这次 AI 规划意图」是审计链上必须留存的事件。
     // message 是用户明文 → 只记 messageLen，永不落内容（C81 凭据/明文红线同族）。

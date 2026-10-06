@@ -46,14 +46,49 @@ function uid(prefix) {
 }
 
 // ---- 创建 / 查询 ----
+
+// C170：vault→credentialRef 自动接线**收口到本模块**（任务唯一写入口）。
+//
+// 症状（C169 真实任务 task_muwco0lhxixif 实证）：任务落库 secretRefs=[] —— 而 profile 01
+// 的 vault 里 email/password/card 三件齐全。后果是**双重的**：
+//   ① planner 的凭据字段契约（test_credential_contract.js 锁定）以「任务挂载可用凭据」为前置，
+//      清单为空 ⇒ 前置不成立 ⇒ 身份字段（email/username）允许 literal value ⇒ 规划器编造邮箱；
+//   ② runtime 侧凭据闸恒见空清单 ⇒ needsCredentials 恒成立。
+// 于是「用户已配置凭据」在规划链路上断裂：真实任务跑到注册页**一个输入框都没填**
+// （执行记录 8 个动作 = navigate + 5×click + reload + wait，**fill 数 = 0**）。
+//
+// 根因：原 C99 接线只挂在 `/api/ai/chat` 一条路由上（`index.js` 内联调用），
+// `POST /api/ai/tasks`、定时计划派遣等**其余全部创建路径一律绕过**（grep 实证调用点仅 1 处）。
+// 接线属「任务创建」的固有语义，与「谁发起创建」无关 ⇒ 必须放在唯一创建入口，
+// 否则每新增一条创建路径就静默复现一次（L6 同族：同一语义两处承载，必有一处漂移）。
+//
+// 幂等：ensureProfileRefs 按 (profileId, type) 复用既有记录。
+// 失败不阻断：vault 锁定/IO 异常 → 返回 []，维持原清单，门禁语义不变（绝不放宽）。
+function _autoCredentialRefs(input, targetUrl) {
+  let refs = Array.isArray(input.secretRefs) ? input.secretRefs.filter(Boolean) : [];
+  try {
+    const profileId = input.profileId || null;
+    if (!profileId) return refs;
+    const auto = require('./secretManager').ensureProfileRefs(profileId, targetUrl || null, {
+      workspaceId: input.workspaceId,
+      createdBy: input.createdBy,
+    });
+    refs = [...new Set([...refs, ...auto])];
+  } catch (e) {
+    return refs; // 接线失败不阻断：维持原清单
+  }
+  return refs;
+}
+
 function createTask(input = {}) {
+  // C147：入口归一化 —— 裸域名（用户写 "example.com" 而非 "https://example.com"）补默认 https。
+  // 不归一化则下游整条站点识别链静默失效（实测：profileId 恒 null ⇒ runtime 硬失败）。
+  const targetUrl = require('./urlIdentity').normalizeUrl(input.targetUrl || '');
   const task = {
     id: uid('task_'),
     name: input.name || '未命名任务',
     objective: input.objective || '',
-    // C147：入口归一化 —— 裸域名（用户写 "example.com" 而非 "https://example.com"）补默认 https。
-    // 不归一化则下游整条站点识别链静默失效（实测：profileId 恒 null ⇒ runtime 硬失败）。
-    targetUrl: require('./urlIdentity').normalizeUrl(input.targetUrl || ''),
+    targetUrl,
     profileId: input.profileId || null,
     executionMode: EXECUTION_MODES.includes(input.executionMode) ? input.executionMode : 'ASSIST',
     policy: { ...DEFAULT_POLICY, ...(input.policy || {}) },
@@ -63,7 +98,9 @@ function createTask(input = {}) {
     // 而 runtime.resolvePlan 与 planner 都会读 task.constraints —— 属于"契约编造"的结构性成因之一：
     // Planner 在 prompt 里渲染「约束：」却永远拿不到约束。这里补齐落库。
     constraints: Array.isArray(input.constraints) ? input.constraints : [],
-    secretRefs: Array.isArray(input.secretRefs) ? input.secretRefs : [],
+    // C170：vault 凭据自动接线（见 _autoCredentialRefs 头部）。**唯一入口**接线，
+    // 使 /chat、POST /tasks、定时计划等所有创建路径语义一致 —— 不再依赖调用方自觉。
+    secretRefs: _autoCredentialRefs(input, targetUrl),
     dependsOn: Array.isArray(input.dependsOn) ? input.dependsOn : [], // Phase 12B §T16 任务依赖
     // CAP-K2：Router 决策摘要（profileId/flowId/expectedSuccess/warnings）随任务落库，
     // 由 contextBuilder.build 读出进 Planner 上下文。null = 未咨询 Router 或无有效决策。
