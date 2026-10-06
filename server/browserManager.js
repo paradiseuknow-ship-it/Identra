@@ -378,7 +378,11 @@ function proxyToPlaywright(proxy) {
   const p = { server };
   if (proxy.username) p.username = proxy.username;
   if (proxy.password) p.password = proxy.password;
-  if (proxy.bypass) p.bypass = proxy.bypass;
+  // C168：回环地址必须直连（默认 bypass，用户显式配置在前，不覆盖）。
+  // 代理接管 127.0.0.1/localhost 会让 captureNativeUaBrands 的本地捕获页被上游拒绝
+  // （实测 rola 返回 403 Domain Blocked），fp._uaBrands 因此缺失，最终 UA-CH 被兜底
+  // override 清空：JS 层 navigator.userAgentData.brands=[] + HTTP 层无 Sec-CH-UA 头。
+  p.bypass = [proxy.bypass, '127.0.0.1', 'localhost'].filter(Boolean).join(',');
   return p;
 }
 
