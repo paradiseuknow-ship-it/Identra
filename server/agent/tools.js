@@ -13,6 +13,9 @@ const lock = require('./lock');
 const events = require('./events');
 const recorder = require('./recorder');
 const observation = require('./observation');
+// C172：结果落点窗口需要「导航是否已发起」这一最早信号 —— 复用网络就绪模块已记录的
+// 主 frame 文档请求时刻，不新增 page.on('request') 监听（避免第三份导航侦测实现）。
+const networkReadiness = require('./networkReadiness');
 const credentialAuthorization = require('./credentialAuthorization');
 const botChallenge = require('./botChallenge');
 const humanInput = require('./humanInput');
@@ -201,6 +204,105 @@ async function observeAfterClick(page, meta, opts) {
     if (!u) throw e; // 连 URL 都拿不到 ⇒ 保留原错误，不做任何掩盖
     return degradedObservationFor(u, meta, 'nav_timeout:' + code);
   }
+}
+
+// ---------------------------------------------------------------------------
+// C172 —— 结果落点窗口（唯一实现；click 与 submit/login/logout 共用）
+//
+// 现场（真实任务 task_muwco0lhxixif，2026-10-06；task_muw5da7hgw7bw 同构）：
+//   step_003 = click {semantic:'Get Started'}，判据 url_contains "/signup"。
+//   该点击**确实**触发了跨域跳转到 app.spocket.co/signup，但 after 观测读到的是**旧** URL
+//   （www.spocket.co/?ps_partner_key=…）⇒ 判失败 ⇒ 进入重试 / 重规划 / reload 链；
+//   等到后续 try 才看到新页，此时判据「在动作执行前已成立」⇒ 只拿到恒真证据（C171 拦下）
+//   ⇒ 整步最终升级人工。整条链的起点是**观察时刻**，不是判据过严。
+//
+// 根因（结构性不对称）：submit / login / logout 分支本来就有落点窗口，click 分支只有
+//   固定 300ms —— 观察点落在「旧文档仍在、新导航尚未提交」这一中间态上。
+//
+// 处置：把 click 的观察时刻后移到「导航已提交 + 新文档可观察」，并与 submit 族共用同一实现。
+// 边界（不得越线）：
+//   · 不改 Success Definition —— 不伪造任何元素 / 文本证据，只改**何时**观察；
+//   · 不动 P2 恒真守卫、不动 CONTEXT_NOT_READY 闸门、不动挑战检测；
+//   · 全部等待有界且失败静默：无导航 / 无网络 / 状态取不到一律降级，绝不阻断主流程。
+// 代价控制（否则每个不导航的 click 都会被拖满超时）：
+//   · 「导航已发起」读 networkReadiness 已记录的主 frame 文档请求时刻 —— 零新增监听、零轮询；
+//   · 「导航已提交」用**点击之前**武装的事件承诺 —— 点击后才武装会漏掉已提交的导航，
+//     窗口会退化成「永远等满超时」。
+const LANDING_START_GRACE_MS = Number(process.env.LANDING_START_GRACE_MS) || 400;
+const LANDING_COMMIT_TIMEOUT_MS = Number(process.env.LANDING_COMMIT_TIMEOUT_MS) || 8000;
+const LANDING_DOC_TIMEOUT_MS = Number(process.env.LANDING_DOC_TIMEOUT_MS) || 6000;
+const LANDING_IDLE_TIMEOUT_MS = Number(process.env.LANDING_IDLE_TIMEOUT_MS) || 2500;
+const LANDING_FALLBACK_WAIT_MS = Number(process.env.LANDING_FALLBACK_WAIT_MS) || 300;
+
+// 点击**之前**调用：记下文档请求时刻 + 武装「主 frame 导航提交」承诺（永不 reject）。
+// 返回 watch 对象；commitP 为 null 表示该 page 不支持事件等待（如测试桩）⇒ 自动降级。
+function armLandingWatch(page) {
+  const watch = { docReqAt: networkReadiness.lastDocumentRequestAt(page), commitP: null };
+  try {
+    if (page && typeof page.waitForEvent === 'function') {
+      watch.commitP = page.waitForEvent('framenavigated', {
+        predicate: (f) => { try { return !f || f === page.mainFrame(); } catch (e) { return true; } },
+        timeout: LANDING_COMMIT_TIMEOUT_MS,
+      }).then(() => true, () => false);
+    }
+  } catch (e) { watch.commitP = null; }
+  return watch;
+}
+
+// 有界等待「主 frame 文档请求时刻推进」= 导航已发起。纯定时器，不做页面操作（不占 withBrowserOp）。
+function waitDocumentRequest(page, fromTs, timeoutMs) {
+  if (networkReadiness.lastDocumentRequestAt(page) > fromTs) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      if (networkReadiness.lastDocumentRequestAt(page) > fromTs) { clearInterval(iv); resolve(true); }
+      else if (Date.now() - t0 >= timeoutMs) { clearInterval(iv); resolve(false); }
+    }, 25);
+    if (iv && typeof iv.unref === 'function') iv.unref();
+  });
+}
+
+/**
+ * 把 after-observation 的时刻后移到「页面已落点」。
+ * @param {object} page Playwright Page
+ * @param {object} meta { taskId }
+ * @param {object|null} watch armLandingWatch(page) 的返回值（必须在动作执行前取得）
+ * @returns {Promise<{started:boolean, navigated:boolean, idle:boolean, landed:boolean}>}
+ */
+async function settleResultLanding(page, meta, watch) {
+  const canObserveNet = networkReadiness.compute(page) !== 'unknown';
+  const canWaitState = !!(page && typeof page.waitForLoadState === 'function');
+  const fromTs = (watch && watch.docReqAt) || 0;
+  let navigated = false;
+  let idle = false;
+
+  // ① 导航是否已发起。无网络观测能力时按「可能已发起」保守处理（宁可多等，不可少等）。
+  const started = canObserveNet ? await waitDocumentRequest(page, fromTs, LANDING_START_GRACE_MS) : true;
+
+  // ② 等导航提交。承诺在动作执行前武装（见 armLandingWatch），此处只做有界等待。
+  if (started && watch && watch.commitP) navigated = await watch.commitP;
+
+  // ③ 提交已发生 ⇒ 生命周期已重置，此时等新文档解析才有意义。
+  //    提交**之前**调用它会因「旧文档早已就绪」立即返回，等于没等（本批最容易踩的坑）。
+  if (navigated && canWaitState) {
+    try {
+      await withBrowserOp('landing.doc', page, meta.taskId, () => page.waitForLoadState('domcontentloaded', { timeout: LANDING_DOC_TIMEOUT_MS }));
+    } catch (e) { /* 新文档解析超时：静默降级，用实时 URL 兜底 */ }
+  }
+
+  // ④ 网络稳态。已就绪页面上立即返回（不导航的 click 几乎不付代价）；
+  //    SPA 长轮询下必然超时 ⇒ 静默降级。
+  try {
+    await withBrowserOp('landing.idle', page, meta.taskId, () => page.waitForLoadState('networkidle', { timeout: LANDING_IDLE_TIMEOUT_MS }));
+    idle = true;
+  } catch (e) { /* 静默降级 */ }
+
+  // ⑤ 两条路都没走到 ⇒ 保底短等，维持 click 原有的最小一拍（不改变「至少等一拍」这一性质）。
+  //    注意：这里刻意不吞掉 BROWSER_CONTEXT_LOST —— 页面真死了仍要 fail-loud（与 observeAfterClick 一致）。
+  if (!navigated && !idle && page && typeof page.waitForTimeout === 'function') {
+    await withBrowserOp('landing.wait', page, meta.taskId, () => page.waitForTimeout(LANDING_FALLBACK_WAIT_MS));
+  }
+  return { started, navigated, idle, landed: navigated || idle };
 }
 
 
@@ -651,15 +753,21 @@ async function runTool(action, resolved, meta) {
       const beforeObs = obs.ok ? obs.observation : null;
       const sel = await resolveSelector(action, obs.observation, meta, page);
       if (!sel) return RESULT.error('ELEMENT_NOT_FOUND', '未找到目标元素: ' + (action.target.semantic || action.target.field || action.target.text || '?'));
+      // C172：落点窗口的「提交」承诺必须在点击**之前**武装 —— 否则点击触发的导航
+      // 可能在监听建立前就已提交，窗口退化为「永远等满超时」。
+      const landingWatch = armLandingWatch(page);
       await withBrowserOp('click', page, meta.taskId, () => {
         if (sel.selector.indexOf(' >> ') >= 0) return makeLocator(page, sel.selector).click();
         return browserManager.humanClick(page, sel.selector, {});
       });
       await withBrowserOp('click.wait', page, meta.taskId, () => page.waitForTimeout(300));
-      // C163：点击可能触发整页（跨域）导航，导航期间 evaluate 不可用 ⇒ 走降级观察
+      // C172：点击可能触发整页（跨域）导航，而 300ms 之后往往仍是**旧**文档 ⇒
+      // 观察时刻后移到「已落点」（与 submit 族共用唯一实现）。不改任何判据。
+      const landing = await settleResultLanding(page, meta, landingWatch);
+      // C163：导航期间 evaluate 不可用 ⇒ 走降级观察
       // （用实时 URL 承载「跳转已发生」这一真证据），避免把真成功判成失败。
       const afterObs = await observeAfterClick(page, meta);
-      return RESULT.ok({ clicked: sel.selector, element: sel.pattern, degradedObservation: !!(afterObs && afterObs.degraded) }, afterObs, beforeObs);
+      return RESULT.ok({ clicked: sel.selector, element: sel.pattern, degradedObservation: !!(afterObs && afterObs.degraded), landing }, afterObs, beforeObs);
     }
     // STEP 7 / CAP-F2：悬浮。真实网站大量导航在 mouseover 才展开（多级菜单、表格行操作、
     // 卡片 hover 按钮）。没有 hover 时，模型唯一的替代是去 click 一个尚未存在的元素，
@@ -1004,20 +1112,17 @@ async function runTool(action, resolved, meta) {
         if (pick) { sel = { selector: pick.selector, pattern: elementMemory.patternOf(pick.el), semantic, fromMemory: false }; if (meta) { meta.selFromMemory = false; meta.selPattern = null; } }
       }
       if (!sel) return RESULT.error('ELEMENT_NOT_FOUND', '未找到动作按钮: ' + (action.target.semantic || action.type));
+      // C172：落点窗口的「提交」承诺必须在点击**之前**武装（理由见 click 分支）。
+      const landingWatch = armLandingWatch(page);
       await withBrowserOp('action.click', page, meta.taskId, () => browserManager.humanClick(page, sel.selector, {}));
-      // 结果落点窗口（Business Capability P1）：提交/登录/登出后等待页面沉降，使 after-observation
-      // 反映真实提交结果（成功提示 / 跳转 / 错误页），而非点击瞬间的中间态。
-      // 上限 ~3s，不阻塞、不降低成功定义、绝不 silent-pass。降级：网络空闲超时则固定短等。
-      let landed = false;
-      try {
-        await withBrowserOp('action.land', page, meta.taskId, () => page.waitForLoadState('networkidle', { timeout: 3000 }));
-        landed = true;
-      } catch (e) { /* SPA 长轮询常见：退化为固定短等 */ }
-      if (!landed) {
-        await withBrowserOp('action.wait', page, meta.taskId, () => page.waitForTimeout(600));
-      }
+      // 结果落点窗口（Business Capability P1；C172 起 click 分支共用同一实现）：
+      // 提交/登录/登出后等待页面沉降，使 after-observation 反映真实提交结果
+      // （成功提示 / 跳转 / 错误页），而非点击瞬间的中间态。
+      // 上限有界、不阻塞、不降低成功定义、绝不 silent-pass；失败一律静默降级。
+      // landed 字段语义保留（phase9_gate_replay 会读 result.landed 做诊断输出）。
+      const landing = await settleResultLanding(page, meta, landingWatch);
       const after = await withBrowserOp('action.inspect2', page, meta.taskId, () => observation.inspect(page, { taskId: meta.taskId, skipCache: true }));
-      return RESULT.ok({ acted: action.type, selector: sel.selector, element: sel.pattern, landed }, after.observation, beforeObs);
+      return RESULT.ok({ acted: action.type, selector: sel.selector, element: sel.pattern, landed: landing.landed, landing }, after.observation, beforeObs);
     }
     default:
       return RESULT.error('UNSUPPORTED_TOOL', '未实现工具: ' + action.type);
@@ -1257,6 +1362,9 @@ module.exports = {
   // C163：整页导航后的观察降级（真成功不得被判失败）—— 导出供守护测试直接断言，
   // 不经浏览器（inspectFn 可注入桩）。
   observeAfterClick, degradedObservationFor, safePageUrl,
+  // C172：结果落点窗口（click 与 submit 族唯一实现）—— 导出供守护测试在**真实夹具页**上
+  // 直接断言「点击触发的延迟跨文档导航会被等到」，无需真实站点。
+  armLandingWatch, settleResultLanding, LANDING_START_GRACE_MS,
   // 导出 makeLocator：' >> ' 跨 frame 选择器只有它能正确解析
   // （实测 page.locator('iframe >> input') 在本版本不穿透 frame，恒为 0）。
   // 测试必须用它来验证 observation 产出的选择器，否则「看起来对」与「能用」无法区分。

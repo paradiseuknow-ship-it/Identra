@@ -36,6 +36,15 @@ const BLOCKING_WINDOW_MS = {
 // 未列入上表的类型一律不计入：ping(beacon) / eventsource / websocket / image /
 // font / media / manifest / other / prefetch —— 它们的存续不代表页面未就绪。
 
+// C172 —— 「导航已发起」信号的唯一记录点。
+//
+// 消费方：tools.js 的结果落点窗口（settleResultLanding）。点击可能触发整页导航，
+// 而观察必须在**新文档**上做；判断「这次点击有没有引发导航」需要一个**早于提交**的信号：
+// 主 frame 的 document 请求发出即成立（导航族 goto/reload/表单提交/点击跳转都会产生它）。
+// 该请求本来就经过本模块的 request 监听，因此只在此处多记一个时刻 —— 不新增监听器、
+// 不做轮询，避免出现第三份「导航侦测」实现。
+const DOC_REQUEST_TS_KEY = '__lastDocumentRequestAt';
+
 /**
  * 在 page 上挂载请求监听（幂等）。应在 page 创建后立即调用，
  * 否则会漏掉页面加载期间的请求。
@@ -62,6 +71,8 @@ function attach(page) {
         let isMain = true;
         try { const f = req.frame(); isMain = !f || !f.parentFrame(); } catch (e) { isMain = true; }
         if (!isMain) return;
+        // C172：记录主 frame 文档请求的发起时刻（导航族最早可观测信号，先于提交到达）
+        if (type === 'document') { try { page[DOC_REQUEST_TS_KEY] = Date.now(); } catch (e) {} }
         page.__blockingPending.set(req, { type, start: Date.now() });
       } catch (e) { /* 观测能力缺失不得影响主流程 */ }
     });
@@ -106,4 +117,21 @@ function compute(page) {
   return 'unknown';
 }
 
-module.exports = { attach, compute, BLOCKING_WINDOW_MS };
+/**
+ * C172：本页最近一次「主 frame 文档请求」的发起时刻（毫秒）。
+ * 0 = 本页从未观测到文档请求（含未挂监听的情况）。
+ *
+ * 语义边界（消费方必须知道）：
+ *   · 它回答的是「此刻之前**是否已经**有导航在发起」，**不是**「导航已完成」；
+ *   · 它只记录时刻，不判断成败 —— 请求失败（如 ERR_ABORTED）同样会推进它；
+ *   · 是否「有观测能力」由 compute(page) !== 'unknown' 判定，本函数不做该判断。
+ * @param {object} page Playwright Page
+ * @returns {number}
+ */
+function lastDocumentRequestAt(page) {
+  if (!page) return 0;
+  const v = page[DOC_REQUEST_TS_KEY];
+  return (typeof v === 'number' && v > 0) ? v : 0;
+}
+
+module.exports = { attach, compute, lastDocumentRequestAt, BLOCKING_WINDOW_MS };
