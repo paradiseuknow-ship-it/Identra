@@ -67,6 +67,37 @@ function isCredentialTransmit(action) {
   return credentialAuthorization.isCredentialAction(action);
 }
 
+// ── C174：跨域漂移（CROSS_ORIGIN_DRIFT）的**适用前提** —— 「动作确实执行过」──
+//
+// 缺陷（真实站点实测，非推断；task_mv2iow71s3id5，2026-10-10 15:01，新环境 01）：
+//   step_004 `fill{field:'email'}` 落在 app.spocket.co/signup，被 contextGuard 以
+//   CONTEXT_NOT_READY 拦下（13ms，**动作零执行**）—— 当时 URL 刚由验证窗口在 250ms 前
+//   确认跳到 /signup，新文档仍在渲染（可见文本为空 ⇒ 分类为 BLANK）。
+//   derive() 随后命中「host 不一致」（app.spocket.co ≠ 任务入口 sonymaxweb.com）⇒
+//   即便该错误的语义是「页面还没就绪」，仍产出 CROSS_ORIGIN_DRIFT
+//   （POLICY: escalate=true, noRepair=true, maxRepeats=0）⇒ 27.3s 等待后仍 HUMAN_ESCALATION。
+//
+// 为什么这是缺陷而不是安全边界（与本文件 derive() 自述「宁可让既有链路按原样重试」一致）：
+//   ① 跨域闸门保护的是「凭据被**写出**到第三方域」（见 credentialAuthorization.js 头部
+//      「为什么废弃 C106 F21 的双向子域包含判据」一节，以及本文件 isCredentialTransmit）；
+//   ② contextGuard 的前置拦截意味着动作**根本没有执行**（tools.js「4.5) 动作上下文守卫」：
+//      命中即 RESULT.error 直接返回，动作从未执行）⇒ **零凭据写出**；
+//   ③ 因此该判定在逻辑上不适用 —— 它不是「凭据到了不该去的域」，而是「页面还没准备好」；
+//   ④ 真正的授权边界由 credentialAuthorization.authorize（**动作之前**的凭据闸门）承担，
+//      与这里**事后**的诊断推导是两回事 —— 修这里不放宽任何授权判据（授权闸零改动）。
+//
+// 后果（未修前）：联盟/跳转链路上任何**瞬时**失败（页面未就绪）都会被放大成
+//   「需人工重新授权上下文」的终端升级 ⇒ 「入口站 → 目标站」这类合法链路结构性不可完成。
+//
+// fail-closed 边界（关键，不得放宽）：本集合只收「**contextGuard 前置拦截**」产出的码
+//   （contextGuard.js 的 block() 调用点），它们共同的性质是「动作零执行」。
+//   任何执行后失败（VERIFY_FAILED / TOOL_EXECUTION / ELEMENT_NOT_FOUND 等）**一律不豁免**，
+//   ⇒ 跨域 + 凭据动作的组合仍然升级人工。
+const PRECLUDED_EXECUTION_CODES = new Set([
+  'CONTEXT_NOT_READY',  // contextGuard 规则 2（E2）：页面未就绪（空白页/SPA 未挂载/加载中）
+  'CONTEXT_WRONG_APP',  // contextGuard 规则 3/5：错误页、或页面能力与动作语义冲突
+]);
+
 // ── 决策状态（最小集合）──
 const STATES = {
   TARGET_NOT_PRESENT_YET: 'TARGET_NOT_PRESENT_YET',
@@ -225,9 +256,12 @@ function derive(opts) {
   // 跨域漂移：页面已不在目标 host。
   // 只阻塞**凭据类**动作：联盟/跳转链路里 host 漂移是常态，普通动作照常执行 ——
   // 把普通动作一起挡住会让合法流程直接死掉（这不是安全边界，是误伤）。
+  // C174：再加一道前提 —— **动作确实执行过**（见 PRECLUDED_EXECUTION_CODES 的长注释）。
+  //   前置拦截（动作零执行）意味着凭据零写出 ⇒ 跨域闸门在逻辑上不适用，
+  //   交回既有重试链路（其恢复手段「等待 + 重新观察」正是「页面未就绪」该有的处理）。
   const ph = hostOf(o.pageUrl || (observation && observation.url));
   const th = hostOf(o.targetUrl);
-  if (ph && th && ph !== th) {
+  if (ph && th && ph !== th && !PRECLUDED_EXECUTION_CODES.has(errCode)) {
     // C155：口径与 isActionBlocked 同源（此前直接调 isCredentialAction，
     // 使 derive 与 isActionBlocked 对「只读观察步」给出相反结论）。
     const cred = isCredentialTransmit(action);
@@ -385,6 +419,7 @@ module.exports = {
   STATES,
   POLICY,
   OBSERVE_ACTION_TYPES,
+  PRECLUDED_EXECUTION_CODES,
   normalizeState,
   policyOf,
   blockKeyOf,
