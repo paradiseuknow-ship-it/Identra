@@ -425,9 +425,20 @@ function buildArgs(profile) {
       '--disable-bundled-ppapi-flash'
     );
   }
-  if (behavior.blockImages || (behavior.blockImagesThresholdKB !== undefined && behavior.blockImagesThresholdKB <= 0)) {
-    args.push('--blink-settings=imagesEnabled=false');
-  }
+  // 图片省流量（blockImages）**故意不在此处生成 Blink 开关**。
+  // 历史实现：只要 blockImages=true 就无条件 push '--blink-settings=imagesEnabled=false'，
+  // 完全忽略 blockImagesThresholdKB —— 阈值形同虚设，且 Blink 层关图会连带灭掉
+  // hCaptcha / reCAPTCHA 的挑战图与站点 logo（C182 实测：该开关下 3/3 张图
+  // naturalWidth=0，最小的那张仅 99 字节），验证码永远加载不出 ⇒ 人工验证无法通过。
+  // 该开关同时是强自动化指纹（页面用 new Image().width===0 即可判定「图片被禁用」，
+  // 真实用户不会全局关图），对反检测场景是负资产。
+  // 现统一交给 setupRoutes 的请求级拦截（resourceType==='image'）承载：
+  //   全禁（阈值 0/未设）与阈值模式共用同一处判据，且验证码域名一律放行 ——
+  //   与 UI 承诺「验证码/反爬挑战图已自动放行」一致。
+  // 口径声明（唯一实现 = setupRoutes）：
+  //   imgEnabled = blockImages === true
+  //   blockImagesAll = imgEnabled && (阈值未设 || 阈值 <= 0)
+  //   blockImagesThreshold = imgEnabled && 阈值 > 0 ? 阈值*1024 : 0
 
   // CAP hidden-headful（STEP 20）：launchBehavior.hiddenWindow=true 时窗口移出屏幕——
   // 进程仍是有界面 headful Chrome（UA/Worker/UA-CH 全真，无 HeadlessChrome 痕迹），
@@ -610,7 +621,19 @@ async function setupRoutes(page, behavior) {
       if (blockImagesThreshold) {
         try {
           const response = await route.fetch();
-          const len = Number(response.headers()['content-length'] || 0);
+          let len = Number(response.headers()['content-length'] || 0);
+          // C182：CDN / 动态图普遍用 Transfer-Encoding: chunked，不返回 content-length。
+          // 旧逻辑此时把 len 当 0 ⇒ len > 阈值 恒为 false ⇒ 「禁止加载大图」静默失效
+          // （C182 实测：307KB 的 chunked 大图被放行）。response 已被 fetch 缓冲在内存，
+          // 读 body 长度不额外产生网络流量。
+          if (!Number.isFinite(len) || len <= 0) {
+            try {
+              const buf = await response.body();
+              len = buf ? buf.length : 0;
+            } catch (_) {
+              len = 0;
+            }
+          }
           if (len > blockImagesThreshold) {
             route.abort('blockedbyclient');
             return;
@@ -1658,6 +1681,8 @@ module.exports = {
   // PHASE 17-A：测试专用 session 注入接缝（生产路径零调用，见函数注释）
   __setSessionForTest,
   cleanupOrphanedChromium, startZombieKiller, setupRoutes, isVerificationHost,
+  // C182：暴露启动参数构造器，供守护测试断言「阈值模式不得生成 Blink 关图开关」
+  buildArgs,
   humanMove, humanClick, humanType, humanScroll,
   getChromeVersion, captureNativeUaBrands, applyHeadlessBrandContract,
   getPages, switchToPage, openPage, closePage, acceptDialog, dismissDialog,
