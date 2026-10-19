@@ -148,6 +148,21 @@ function deleteProfileSecrets(profileId) {
   writeAll(all);
 }
 
+// C185：批量清理（一次读取 + 一次落盘）。
+// deleteProfileSecrets 每次调用都全量读写 vault 文件；「全部删除」循环调用即为 O(n²)。
+// 语义与单条完全一致（只删这些 id 的条目，不触碰其余条目 / 不清空整个 vault）。
+function deleteManyProfileSecrets(ids) {
+  const set = new Set((Array.isArray(ids) ? ids : []).map(String).filter(Boolean));
+  if (!set.size) return 0;
+  const all = readAll();
+  let removed = 0;
+  for (const id of set) {
+    if (Object.prototype.hasOwnProperty.call(all, id)) { delete all[id]; removed++; }
+  }
+  if (removed) writeAll(all);
+  return removed;
+}
+
 // 返回脱敏摘要（供前端展示，绝不回传明文）
 function getMaskedSummary(profileId) {
   // Phase D 交付健壮性修复：getMaskedSummary 是只读展示面。解密失败（FPB_MASTER_KEY
@@ -184,4 +199,4 @@ function getMaskedSummary(profileId) {
   };
 }
 
-module.exports = { setProfileSecrets, getProfileSecrets, deleteProfileSecrets, getMaskedSummary, encrypt, decrypt };
+module.exports = { setProfileSecrets, getProfileSecrets, deleteProfileSecrets, deleteManyProfileSecrets, getMaskedSummary, encrypt, decrypt };

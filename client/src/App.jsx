@@ -76,6 +76,9 @@ const TITLES = {
   readiness: ['Workspace Health', '环境自检与配置引导'],
 };
 
+// C185：批量删除的确认词（前端必须手动输入才允许提交；服务端另有 confirm='DELETE_ALL' 令牌）。
+const PURGE_CONFIRM_WORD = '全部删除';
+
 export default function App() {
   const [tab, setTab] = useState('overview');
   const [profiles, setProfiles] = useState([]);
@@ -192,6 +195,31 @@ export default function App() {
       } catch (e) { notify(e.message, false); }
     });
   };
+
+  // C185：「全部环境 → 全部删除」。
+  // 批量删除是不可逆面，故不走单条那套两行确认框，改为「手输确认词」闸（前端闸 + 服务端 confirm 令牌双保险）。
+  // 服务端另有授权 fail-closed：目标集合必须全部可见且可管理，任一不满足整体 403、零删除。
+  const [purgeAll, setPurgeAll] = useState(false);
+  const [purgeTyped, setPurgeTyped] = useState('');
+  const [purging, setPurging] = useState(false);
+  useEscapeClose(purgeAll && !purging, () => { setPurgeAll(false); setPurgeTyped(''); });
+  const openPurgeAll = () => { setPurgeTyped(''); setPurgeAll(true); };
+  const runPurgeAll = async () => {
+    if (purgeTyped.trim() !== PURGE_CONFIRM_WORD) return;
+    setPurging(true);
+    try {
+      const r = await api.deleteAllProfiles({ all: true, confirm: 'DELETE_ALL' });
+      setPurgeAll(false); setPurgeTyped('');
+      await loadProfiles();
+      const extra = [
+        r.closed ? `关闭 ${r.closed} 个运行中实例` : '',
+        r.failed && r.failed.length ? `${r.failed.length} 项清理告警` : '',
+      ].filter(Boolean).join('，');
+      notify(`已删除 ${r.deleted} 个环境${extra ? '（' + extra + '）' : ''}`);
+    } catch (e) { notify(e.message, false); }
+    finally { setPurging(false); }
+  };
+  const runningCount = profiles.filter((p) => p.running).length;
 
   const exportCookies = async (id) => {
     try {
@@ -360,7 +388,7 @@ export default function App() {
                   onAdd={addNew} onEdit={setEditing} onLaunch={launch} onStop={stop}
                   onDuplicate={duplicate} onRemove={remove} onView={setViewingId}
                   onRotate={rotate} onExport={exportProfiles} onImport={importProfiles}
-                  onExportCookies={exportCookies}
+                  onExportCookies={exportCookies} onRemoveAll={openPurgeAll}
                   notify={notify} onBatch={() => setBatch({ count: 5, namePrefix: '批量配置' })}
                 />
               )}
@@ -466,6 +494,31 @@ export default function App() {
           </div>
         </div>
       )}
+      {purgeAll && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-[440px] card p-5 shadow-2xl border-rose-900/40">
+            <div className="text-sm font-semibold text-rose-300 mb-1">删除全部环境</div>
+            <div className="text-xs text-slate-400 leading-relaxed mb-3">
+              将删除当前可见的 <b className="text-slate-100">{profiles.length}</b> 个环境
+              {runningCount > 0 && <>（其中 <b className="text-amber-300">{runningCount}</b> 个正在运行，会先被关闭）</>}。
+              环境本身与已保存的登录凭据一并清除，<b className="text-rose-300">删除后不可恢复</b>。
+              若需要留存，请先「导出」。
+            </div>
+            <label className="block mb-4">
+              <span className="label">输入「{PURGE_CONFIRM_WORD}」以确认</span>
+              <input autoFocus className="inp w-full" value={purgeTyped} disabled={purging}
+                placeholder={PURGE_CONFIRM_WORD}
+                onChange={(e) => setPurgeTyped(e.target.value)} />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => { setPurgeAll(false); setPurgeTyped(''); }} disabled={purging} className="btn btn-outline">取消</button>
+              <button onClick={runPurgeAll} disabled={purging || purgeTyped.trim() !== PURGE_CONFIRM_WORD} className="btn btn-danger">
+                {purging ? '删除中…' : '确认删除全部'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {runLog.length > 0 && (
         <div className="fixed bottom-5 left-5 max-w-md max-h-60 overflow-auto bg-black/80 border border-edge rounded p-3 text-xs font-mono text-green-300">
           {runLog.map((l, i) => <div key={i}>{l}</div>)}
@@ -478,7 +531,7 @@ export default function App() {
 // C74：具名导出 ProfilesTab —— 守护测试（test_c74）SSR 探针需零浏览器渲染运行中配置态；
 // 对 Vite 构建零影响（default 导出 App 不变）。
 // UI 重构：Browser Profiles 成为清晰核心资源 —— 分组卡 + 运行态前置 + 指纹细节收敛到一行摘要。
-export function ProfilesTab({ profiles, proxies, runtime, onAdd, onEdit, onLaunch, onStop, onDuplicate, onRemove, onView, onRotate, onExport, onImport, onExportCookies, onBatch, notify }) {
+export function ProfilesTab({ profiles, proxies, runtime, onAdd, onEdit, onLaunch, onStop, onDuplicate, onRemove, onView, onRotate, onExport, onImport, onExportCookies, onBatch, onRemoveAll, notify }) {
   const [integrity, setIntegrity] = useState(null); // { id, report } | null
   const [checkingId, setCheckingId] = useState(null);
 
@@ -515,6 +568,10 @@ export function ProfilesTab({ profiles, proxies, runtime, onAdd, onEdit, onLaunc
           <button onClick={onImport} className="btn btn-outline text-xs">导入</button>
           <button onClick={onExport} className="btn btn-outline text-xs">导出</button>
           <button onClick={onBatch} className="btn btn-outline text-xs" title="同模板基线 + 每号独立 seed（同形不同样）">批量创建</button>
+          {profiles.length > 0 && (
+            <button onClick={onRemoveAll} className="btn btn-outline text-xs border-rose-900/50 hover:text-rose-300 hover:border-rose-800"
+              title="删除全部环境（不可恢复，需输入确认词）">全部删除</button>
+          )}
           <button onClick={onAdd} className="btn btn-primary text-xs">+ 新建 Profile</button>
         </div>
       </div>

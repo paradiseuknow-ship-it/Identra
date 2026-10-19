@@ -20,6 +20,7 @@ const db = require('./db');
 const browserManager = require('./browserManager');
 const screencastManager = require('./screencastManager');
 const vault = require('./vault');
+const profilesBulkDelete = require('./profilesBulkDelete'); // C185：批量删除策略层（可离线守护）
 const backup = require('./backup');
 const settings = require('./settings'); // C14：运行时设置中心（保存即改 process.env，无需重启）
 settings.applyToEnv(); // 启动时应用已保存的覆盖（settings 已设置的字段优先于 .env）
@@ -400,6 +401,28 @@ router.post('/profiles/:id/duplicate', async (req, res) => {
   } catch (e) {
     res.status(e.status || 500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
   }
+});
+
+// C185：「全部环境 → 全部删除」。
+// 策略（能力闸 / 确认令牌 / 授权 fail-closed / close→vault→db 顺序 / O(1) 落盘）全在
+// server/profilesBulkDelete.js —— 路由只做转发与审计落点，好让这些不可逆面的闸门
+// 能被离线守护**真实执行**（test_c185），而不是靠 grep 断言源码文本。
+router.delete('/profiles', (req, res) => {
+  const r = profilesBulkDelete.runBulkDelete({
+    identityUser: req.identityUser,
+    body: req.body,
+    db,
+    vault,
+    browserManager,
+    assertCan: identity.assertCan,
+    filterByWorkspace: identity.filterByWorkspace,
+  });
+  try {
+    if (r.audit) auditReq(req, r.audit.action, r.audit.resourceType, r.audit.resourceId, r.audit.detail);
+  } catch (e) {
+    console.warn('[bulk-delete] 审计落点失败(已忽略):', e.message);
+  }
+  res.status(r.status).json(r.body);
 });
 
 router.delete('/profiles/:id', (req, res) => {

@@ -38,6 +38,8 @@ export const api = {
   updateProfile: (id, b) => req('PUT', '/profiles/' + id, b),
   regenerateSeed: (id) => req('PUT', '/profiles/' + id, { regenerateSeed: true }),
   deleteProfile: (id) => req('DELETE', '/profiles/' + id),
+  // C185：「全部删除」——confirm 是服务端强制令牌，缺了服务端直接 400 零删除
+  deleteAllProfiles: (b) => req('DELETE', '/profiles', b),
   duplicateProfile: (id) => req('POST', '/profiles/' + id + '/duplicate'),
   previewFp: (b) => req('POST', '/profiles/preview-fp', b),
 

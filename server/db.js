@@ -106,6 +106,20 @@ function deleteProfile(id) {
   return list;
 }
 
+// C185：批量删除（一次读取 + 一次落盘）。
+// deleteProfile 单条 = 全量重写 profiles 文件；「全部环境 → 全部删除」若循环调用即退化成
+// O(n²) 落盘（n 个环境 = n 次全量写）。批量入口必须保持 O(1) 次落盘，且筛选语义与单条一致：
+// 只删库记录；运行实例关闭与凭据清理由调用方按同一顺序负责（不在此层越界）。
+function deleteProfiles(ids) {
+  const set = new Set((Array.isArray(ids) ? ids : []).map(String).filter(Boolean));
+  const before = getProfiles();
+  if (!set.size) return { removed: 0, remaining: before.length, ids: [] };
+  const list = before.filter((p) => !set.has(p.id));
+  const removedIds = before.filter((p) => set.has(p.id)).map((p) => p.id);
+  if (removedIds.length) saveProfiles(list);
+  return { removed: removedIds.length, remaining: list.length, ids: removedIds };
+}
+
 // ---- Proxies ----
 // 读取时透明解密（内存明文供消费点使用；落盘仅密文）
 function getProxies() {
@@ -157,7 +171,7 @@ function deleteTask(id) {
 }
 
 module.exports = {
-  getProfiles, saveProfiles, getProfile, upsertProfile, deleteProfile,
+  getProfiles, saveProfiles, getProfile, upsertProfile, deleteProfile, deleteProfiles,
   getProxies, saveProxies, getProxiesPublic,
   getTasks, saveTasks, getTask, upsertTask, deleteTask,
 };
