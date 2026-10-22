@@ -11,6 +11,10 @@
 //      （与 CAP-C1 批量导出「授权不 fail-open」同口径，绝不做部分删除）；
 //   ④ 顺序 —— 先 close 运行实例，再清凭据，最后删库；每一步各自**一次落盘**
 //      （循环调用单条实现是 O(n²)，n 个环境＝n 次全量重写）。
+//   ⑤ 可选清盘（C189）—— body.deleteFiles === true 时，把每个环境的本地数据目录一并删除；
+//      默认 false＝沿用旧行为（只删库记录留目录），因为清盘会连带删掉 Cookie/登录态，不可逆。
+//      清盘失败**不阻断删库**（与 vault 同口径：否则被占用的目录会永久锁死删除能力），
+//      但必须逐条记进 failed，绝不静默成功。
 // 这些只有靠「可被测试真实执行」才守得住，所以策略在此、路由只做转发。
 
 const CONFIRM_TOKEN = 'DELETE_ALL';
@@ -20,9 +24,9 @@ function fail(status, body) {
   return { status, body };
 }
 
-// deps: { db, vault, browserManager, assertCan, filterByWorkspace, now }
+// deps: { db, vault, browserManager, assertCan, filterByWorkspace, removeProfileData, now }
 // 返回 { status, body, audit } —— route 只负责 res.status(...).json(body) 与 audit 落点。
-function runBulkDelete({ identityUser, body, db, vault, browserManager, assertCan, filterByWorkspace }) {
+function runBulkDelete({ identityUser, body, db, vault, browserManager, assertCan, filterByWorkspace, removeProfileData }) {
   const b = body || {};
 
   // ① 能力闸（先鉴权后确认：未授权者不该从错误码里探出「令牌长什么样」）
@@ -52,7 +56,7 @@ function runBulkDelete({ identityUser, body, db, vault, browserManager, assertCa
     });
   }
   if (!requested.length) {
-    return { status: 200, body: { ok: true, deleted: 0, closed: 0, secrets: 0, remaining: 0, failed: [] }, audit: null };
+    return { status: 200, body: { ok: true, deleted: 0, closed: 0, secrets: 0, filesRemoved: 0, remaining: 0, failed: [] }, audit: null };
   }
 
   // ④ 顺序执行：close → vault → db
@@ -74,16 +78,36 @@ function runBulkDelete({ identityUser, body, db, vault, browserManager, assertCa
     failed.push({ id: null, stage: 'vault', error: String(e.message || e).slice(0, 120) });
   }
 
+  // ⑤ 可选清盘（C189）：必须在 db 删除**之前** —— 一旦记录没了，UI 上再也定位不到这个目录，
+  // 清盘失败就永久退化成孤儿目录（正是 1181 个 / 16 GB 的成因）。删库前失败 ⇒ 记录仍在，
+  // 用户可在界面上重试，不会出现「库里没有、盘上有」的幽灵。
+  const deleteFiles = b.deleteFiles === true;
+  let filesRemoved = 0;
+  if (deleteFiles) {
+    if (typeof removeProfileData !== 'function') {
+      failed.push({ id: null, stage: 'files', error: 'REMOVE_IMPL_MISSING' });
+    } else {
+      for (const id of requested) {
+        try {
+          const r = removeProfileData(id);
+          if (r && r.removed) filesRemoved++;
+        } catch (e) {
+          failed.push({ id, stage: 'files', error: String(e.message || e).slice(0, 120) });
+        }
+      }
+    }
+  }
+
   const r = db.deleteProfiles(requested);
 
   return {
     status: 200,
-    body: { ok: true, deleted: r.removed, closed, secrets, remaining: r.remaining, failed },
+    body: { ok: true, deleted: r.removed, closed, secrets, filesRemoved, remaining: r.remaining, failed },
     audit: {
       action: 'profile.bulk_delete',
       resourceType: 'profile',
       resourceId: null,
-      detail: { count: r.removed, closed, secrets, scope: explicit ? 'ids' : 'all' },
+      detail: { count: r.removed, closed, secrets, filesRemoved, deleteFiles, scope: explicit ? 'ids' : 'all' },
     },
   };
 }

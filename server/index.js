@@ -15,12 +15,14 @@ require('./loadEnv'); // C15：.env 加载器（必须早于一切读 env 的模
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 
 const db = require('./db');
 const browserManager = require('./browserManager');
 const screencastManager = require('./screencastManager');
 const vault = require('./vault');
 const profilesBulkDelete = require('./profilesBulkDelete'); // C185：批量删除策略层（可离线守护）
+const profilesOrphans = require('./profilesOrphans'); // C189：孤儿环境目录清点/清理策略层
 const backup = require('./backup');
 const settings = require('./settings'); // C14：运行时设置中心（保存即改 process.env，无需重启）
 settings.applyToEnv(); // 启动时应用已保存的覆盖（settings 已设置的字段优先于 .env）
@@ -301,6 +303,30 @@ router.get('/profiles/runtime', (req, res) => {
   res.json({ profiles: snapshots, at: Date.now() });
 });
 
+// C189：孤儿环境目录清点（只读）。
+// 「孤儿」＝ profilesRoot 下的直接子目录 − 库内 profile id 全量集合。历史上删除只删库记录
+// 不删目录，堆出过 1181 个目录 / 约 16 GB 无 UI 入口的残留，故给一个可持续的出口。
+// 注意必须注册在 /profiles/:id 之前，否则 'orphans' 会被当作 id 吞掉。
+function listProfileDirs() {
+  try {
+    return fs.readdirSync(browserManager.PROFILES_ROOT, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch (e) {
+    return []; // 目录还不存在＝没有任何环境数据，等同「无孤儿」
+  }
+}
+
+router.get('/profiles/orphans', (req, res) => {
+  const r = profilesOrphans.scanOrphans({
+    identityUser: req.identityUser,
+    db,
+    assertCan: identity.assertCan,
+    listProfileDirs,
+  });
+  res.status(r.status).json(r.body);
+});
+
 // C82：浮动 async handler 守卫（Express 4 不接 rejection → 任何 await 抛错 = 请求悬挂至超时）。
 // 与 C65 cookie 两路由同族，本轮水平复审全量清退：路由层永远回 JSON，不悬挂。
 router.get('/profiles/:id', async (req, res) => {
@@ -416,6 +442,7 @@ router.delete('/profiles', (req, res) => {
     browserManager,
     assertCan: identity.assertCan,
     filterByWorkspace: identity.filterByWorkspace,
+    removeProfileData: browserManager.deleteProfileData, // C189：body.deleteFiles 为 true 时清盘
   });
   try {
     if (r.audit) auditReq(req, r.audit.action, r.audit.resourceType, r.audit.resourceId, r.audit.detail);
@@ -425,17 +452,53 @@ router.delete('/profiles', (req, res) => {
   res.status(r.status).json(r.body);
 });
 
+// C189：清理孤儿环境目录（不可逆面，但只碰「库里没有」的目录）。
+// 必须注册在 /profiles/:id 之前，否则 'orphans' 会被当作 id 吞掉。
+router.delete('/profiles/orphans', (req, res) => {
+  const r = profilesOrphans.runPurgeOrphans({
+    identityUser: req.identityUser,
+    body: req.body,
+    db,
+    assertCan: identity.assertCan,
+    listProfileDirs,
+    deleteProfileData: browserManager.deleteProfileData,
+  });
+  try {
+    if (r.audit) auditReq(req, r.audit.action, r.audit.resourceType, r.audit.resourceId, r.audit.detail);
+  } catch (e) {
+    console.warn('[purge-orphans] 审计落点失败(已忽略):', e.message);
+  }
+  res.status(r.status).json(r.body);
+});
+
 router.delete('/profiles/:id', (req, res) => {
   const p = db.getProfile(req.params.id);
   if (!p) return res.status(404).json({ error: 'not found' });
   if (!guardProfile(res, req.identityUser, p, 'profile:manage')) return;
+  // C189：可选「同时删除本地数据文件」（Cookie / LocalStorage / 缓存 / 登录态）。
+  // 默认 false ＝ 沿用旧行为（只删库记录）。UI 上默认勾选，但服务端仍以此显式布尔为准。
+  const deleteFiles = !!(req.body && req.body.deleteFiles === true);
   try {
     if (browserManager.isRunning(req.params.id)) browserManager.close(req.params.id);
     try { vault.deleteProfileSecrets(req.params.id); }
     catch (e) { console.warn('[delete] vault 清理失败(已忽略):', e.message); }
+    // 清盘必须在 db 删除之前：记录一旦消失，UI 就再也定位不到这个目录，删除失败只能退化成孤儿目录。
+    // 失败 ⇒ 409 且**不删库记录**，用户可关掉浏览器后重试，或取消勾选改为只删记录。
+    if (deleteFiles) {
+      try {
+        browserManager.deleteProfileData(req.params.id);
+      } catch (e) {
+        console.warn('[delete] 本地数据目录清理失败:', e.message);
+        return res.status(409).json({
+          ok: false,
+          error: 'FILES_IN_USE',
+          detail: '本地数据目录删除失败（可能仍被浏览器进程占用）：「' + String(e.message || e).slice(0, 120) + '」。该环境未被删除，请先停止浏览器后重试，或取消勾选「同时删除本地文件」。',
+        });
+      }
+    }
     db.deleteProfile(req.params.id);
-    auditReq(req, 'profile.delete', 'profile', req.params.id, { name: p.name });
-    res.json({ ok: true });
+    auditReq(req, 'profile.delete', 'profile', req.params.id, { name: p.name, deleteFiles });
+    res.json({ ok: true, deleteFiles });
   } catch (e) {
     console.error('[delete] 失败:', e);
     res.status(500).json({ error: e.message || '删除失败' });

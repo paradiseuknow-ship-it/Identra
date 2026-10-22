@@ -514,6 +514,23 @@ async function clearProfileCache(profileId, mode = 'cache', opts = {}) {
   return cleared;
 }
 
+// C189：删除某个环境在磁盘上的**整个**浏览器数据目录（Cookie / LocalStorage / IndexedDB /
+// 缓存 / 登录态全在其中）。与 clearProfileCache 的分工：
+//   clearProfileCache = 环境还要用，只想清状态；
+//   本函数           = 环境本身要被删除，数据目录随之清盘（否则库里记录没了、盘上目录永远咬住空间，
+//                      1181 个孤儿目录 / 16 GB 就是这么堆出来的 —— 单条与批量删除此前都只删库记录）。
+// 安全：路径 100% 走 profileDataDir（assertSafeName 段名白名单 + resolveWithin 根内解析），
+//       绝不字符串拼接外部 id；幂等：目录不存在视为已达成，返回 existed=false 而非报错。
+// 顺序约束（调用方职责）：必须先 close 实例再调用 —— Windows 下 Chrome 未退出时目录文件被占用，
+// rmSync 会 EPERM/EBUSY。本函数保留 maxRetries 兜底瞬时占用（如 crashpad 句柄晚释放）。
+function deleteProfileData(profileId) {
+  const dir = profileDataDir(profileId);
+  if (!fs.existsSync(dir)) return { removed: false, existed: false, path: dir };
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 120 });
+  if (fs.existsSync(dir)) throw new Error('PROFILE_DIR_NOT_REMOVED');
+  return { removed: true, existed: true, path: dir };
+}
+
 async function resolveLaunchIpGeo(profile, proxy) {
   const override = profile.fingerprintOverride || {};
   const tzIp = override.timezoneMode === 'ip';
@@ -1687,4 +1704,6 @@ module.exports = {
   getChromeVersion, captureNativeUaBrands, applyHeadlessBrandContract,
   getPages, switchToPage, openPage, closePage, acceptDialog, dismissDialog,
   PROFILES_ROOT, // C46：暴露根路径供守护测试断言 FPB_DATA_DIR 隔离解析
+  deleteProfileData, // C189：「删除环境」时可选清盘（唯一实现，路径安全由 profileDataDir 保证）
+  profileDataDir, // C189：暴露给孤儿目录清点/清理（只读 + 同一套根内解析，避免第二份路径拼接）
 };

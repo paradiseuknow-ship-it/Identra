@@ -24,8 +24,11 @@ async function req(method, url, body) {
   const res = await fetch(BASE + url, opts);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(data.error || res.statusText);
+    // C189：服务端对可解释失败会同时给机器码（error）与人话说明（detail），
+    // 例如「本地数据目录被占用」时 error=FILES_IN_USE + detail=怎么处理。优先展示人话。
+    const err = new Error(data.detail || data.error || res.statusText);
     err.status = res.status; // C49：401（未登录/会话过期）等状态码透传给调用方做登录门控
+    err.code = data.error;
     throw err;
   }
   return data;
@@ -37,9 +40,12 @@ export const api = {
   createProfile: (b) => req('POST', '/profiles', b),
   updateProfile: (id, b) => req('PUT', '/profiles/' + id, b),
   regenerateSeed: (id) => req('PUT', '/profiles/' + id, { regenerateSeed: true }),
-  deleteProfile: (id) => req('DELETE', '/profiles/' + id),
+  deleteProfile: (id, b) => req('DELETE', '/profiles/' + id, b),
   // C185：「全部删除」——confirm 是服务端强制令牌，缺了服务端直接 400 零删除
   deleteAllProfiles: (b) => req('DELETE', '/profiles', b),
+  // C189：孤儿环境目录（库里没有、盘上残留）——清点只读，清理需 confirm='PURGE_ORPHANS'
+  listOrphanProfiles: () => req('GET', '/profiles/orphans'),
+  purgeOrphanProfiles: (b) => req('DELETE', '/profiles/orphans', b),
   duplicateProfile: (id) => req('POST', '/profiles/' + id + '/duplicate'),
   previewFp: (b) => req('POST', '/profiles/preview-fp', b),
 

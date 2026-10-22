@@ -172,7 +172,15 @@ section('A. 策略层：确认令牌 / 授权 fail-closed / 顺序 / 落盘次�
 {
   const { r } = run();
   ok('A9 审计动作 = profile.bulk_delete', r.audit && r.audit.action === 'profile.bulk_delete', JSON.stringify(r.audit));
-  eq('A9 审计 detail', r.audit && r.audit.detail, { count: 3, closed: 1, secrets: 3, scope: 'all' });
+  // C189 同步：审计 detail 新增 filesRemoved / deleteFiles（记录是否清盘，属审计要素）。
+  // 这里由「整对象全等」改为「逐字段精确断言」——覆盖面不减：原四字段仍要求值完全相等，
+  // 新增两字段同样要求精确值；只是不再因新增审计字段而误红。
+  eq('A9 审计 detail.count/closed/secrets/scope',
+    r.audit && { count: r.audit.detail.count, closed: r.audit.detail.closed, secrets: r.audit.detail.secrets, scope: r.audit.detail.scope },
+    { count: 3, closed: 1, secrets: 3, scope: 'all' });
+  eq('A9 审计 detail 记录清盘口径（缺省不清盘）',
+    r.audit && { deleteFiles: r.audit.detail.deleteFiles, filesRemoved: r.audit.detail.filesRemoved },
+    { deleteFiles: false, filesRemoved: 0 });
 }
 
 {
@@ -241,10 +249,14 @@ ok('C3 路由层不再自行实现删除序列（无双份实现）',
   !/router\.delete\('\/profiles',[\s\S]{0,900}db\.deleteProfiles\(/.test(indexSrc));
 ok('C4 api.js 映射 DELETE /profiles', /deleteAllProfiles:\s*\(b\)\s*=>\s*req\('DELETE',\s*'\/profiles',\s*b\)/.test(apiSrc));
 ok('C5 App 定义确认词常量', /const PURGE_CONFIRM_WORD = '全部删除'/.test(appSrc));
-ok('C6 App 调用服务端令牌 DELETE_ALL', /deleteAllProfiles\(\{\s*all:\s*true,\s*confirm:\s*'DELETE_ALL'\s*\}\)/.test(appSrc));
+// C189 同步：调用点新增 deleteFiles 参数，故正则由「整串字面量」放宽为「两要素必须存在且顺序不限」。
+// 覆盖面不减：all:true 与 confirm:'DELETE_ALL' 仍是硬性要求（缺任一条即红）。
+ok('C6 App 调用服务端令牌 DELETE_ALL', /deleteAllProfiles\(\{[^}]*\ball:\s*true\b[^}]*\bconfirm:\s*'DELETE_ALL'[^}]*\}/.test(appSrc));
+ok('C6b App 显式传递清盘开关 deleteFiles', /deleteAllProfiles\(\{[^}]*\bdeleteFiles:\s*purgeFiles\b[^}]*\}/.test(appSrc));
 ok('C7 确认按钮在未输入确认词时不可点',
   /disabled=\{purging \|\| purgeTyped\.trim\(\) !== PURGE_CONFIRM_WORD\}/.test(appSrc));
-ok('C8 ProfilesTab 收到 onRemoveAll', /onRemoveAll=\{openPurgeAll\}/.test(appSrc) && /onRemoveAll, notify \}/.test(appSrc));
+// C189 同步：ProfilesTab 形参新增 onPurgeOrphans（残留清理入口），onRemoveAll 仍是必须项。
+ok('C8 ProfilesTab 收到 onRemoveAll', /onRemoveAll=\{openPurgeAll\}/.test(appSrc) && /onRemoveAll,\s*onPurgeOrphans,\s*notify\s*\}/.test(appSrc));
 ok('C9 「全部删除」按钮仅在存在环境时出现',
   /\{profiles\.length > 0 && \(\s*<button onClick=\{onRemoveAll\}/.test(appSrc));
 ok('C10 弹窗展示数量与运行中数量（不盲删）',

@@ -188,12 +188,30 @@ export default function App() {
     try { await api.duplicateProfile(id); await loadProfiles(); notify('已复制'); }
     catch (e) { notify(e.message, false); }
   };
+  // C189：单条删除改为专用弹窗 —— 让用户显式选择「是否一并删除本地数据文件」。
+  // 默认勾选：库记录一旦删除，磁盘目录就再无 UI 入口（历史遗留 1181 个目录 / 约 16 GB 的成因），
+  // 所以「删环境」的默认语义应当是删干净；留档需求可以取消勾选。
+  const [removeTarget, setRemoveTarget] = useState(null); // profile 对象 | null
+  const [removeFiles, setRemoveFiles] = useState(true);
+  const [removing, setRemoving] = useState(false);
+  useEscapeClose(!!removeTarget && !removing, () => setRemoveTarget(null));
   const remove = (id) => {
-    requestConfirm('确认删除该配置？删除后无法恢复。', async () => {
-      try {
-        await api.deleteProfile(id); await loadProfiles(); notify('已删除');
-      } catch (e) { notify(e.message, false); }
-    });
+    const p = profiles.find((x) => x.id === id);
+    setRemoveFiles(true);
+    setRemoveTarget(p || { id, name: id });
+  };
+  const runRemove = async () => {
+    if (!removeTarget) return;
+    setRemoving(true);
+    try {
+      await api.deleteProfile(removeTarget.id, { deleteFiles: removeFiles });
+      setRemoveTarget(null);
+      await loadProfiles();
+      notify(removeFiles ? '已删除环境及其本地数据文件' : '已删除环境（本地文件已保留）');
+    } catch (e) {
+      // FILES_IN_USE 时环境**没有**被删（服务端在删库前就中止了），提示用户重试或取消勾选
+      notify(e.message, false);
+    } finally { setRemoving(false); }
   };
 
   // C185：「全部环境 → 全部删除」。
@@ -202,17 +220,19 @@ export default function App() {
   const [purgeAll, setPurgeAll] = useState(false);
   const [purgeTyped, setPurgeTyped] = useState('');
   const [purging, setPurging] = useState(false);
+  const [purgeFiles, setPurgeFiles] = useState(true); // C189：批量删除时是否一并清盘
   useEscapeClose(purgeAll && !purging, () => { setPurgeAll(false); setPurgeTyped(''); });
-  const openPurgeAll = () => { setPurgeTyped(''); setPurgeAll(true); };
+  const openPurgeAll = () => { setPurgeTyped(''); setPurgeFiles(true); setPurgeAll(true); };
   const runPurgeAll = async () => {
     if (purgeTyped.trim() !== PURGE_CONFIRM_WORD) return;
     setPurging(true);
     try {
-      const r = await api.deleteAllProfiles({ all: true, confirm: 'DELETE_ALL' });
+      const r = await api.deleteAllProfiles({ all: true, confirm: 'DELETE_ALL', deleteFiles: purgeFiles });
       setPurgeAll(false); setPurgeTyped('');
       await loadProfiles();
       const extra = [
         r.closed ? `关闭 ${r.closed} 个运行中实例` : '',
+        r.filesRemoved ? `清理 ${r.filesRemoved} 个本地数据目录` : '',
         r.failed && r.failed.length ? `${r.failed.length} 项清理告警` : '',
       ].filter(Boolean).join('，');
       notify(`已删除 ${r.deleted} 个环境${extra ? '（' + extra + '）' : ''}`);
@@ -220,6 +240,29 @@ export default function App() {
     finally { setPurging(false); }
   };
   const runningCount = profiles.filter((p) => p.running).length;
+
+  // C189：孤儿环境目录（库里没有、盘上残留）——删除环境时若选择「保留文件」或历史遗留，
+  // 目录会永久无 UI 入口。这里给一个显式出口：先只读清点，确认后才真删。
+  const [orphan, setOrphan] = useState(null); // { orphanCount, ids } | null
+  const [purgingOrphan, setPurgingOrphan] = useState(false);
+  useEscapeClose(!!orphan && !purgingOrphan, () => setOrphan(null));
+  const scanOrphans = async () => {
+    try {
+      const r = await api.listOrphanProfiles();
+      if (!r.orphanCount) return notify('没有残留环境文件');
+      setOrphan(r);
+    } catch (e) { notify(e.message, false); }
+  };
+  const runPurgeOrphans = async () => {
+    setPurgingOrphan(true);
+    try {
+      const r = await api.purgeOrphanProfiles({ confirm: 'PURGE_ORPHANS' });
+      setOrphan(null);
+      const extra = r.failed && r.failed.length ? `，${r.failed.length} 个被占用未清理` : '';
+      notify(`已清理 ${r.removed} 个残留目录${extra}`);
+    } catch (e) { notify(e.message, false); }
+    finally { setPurgingOrphan(false); }
+  };
 
   const exportCookies = async (id) => {
     try {
@@ -388,7 +431,7 @@ export default function App() {
                   onAdd={addNew} onEdit={setEditing} onLaunch={launch} onStop={stop}
                   onDuplicate={duplicate} onRemove={remove} onView={setViewingId}
                   onRotate={rotate} onExport={exportProfiles} onImport={importProfiles}
-                  onExportCookies={exportCookies} onRemoveAll={openPurgeAll}
+                  onExportCookies={exportCookies} onRemoveAll={openPurgeAll} onPurgeOrphans={scanOrphans}
                   notify={notify} onBatch={() => setBatch({ count: 5, namePrefix: '批量配置' })}
                 />
               )}
@@ -494,6 +537,61 @@ export default function App() {
           </div>
         </div>
       )}
+      {removeTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-[440px] card p-5 shadow-2xl border-rose-900/40">
+            <div className="text-sm font-semibold text-rose-300 mb-1">删除环境</div>
+            <div className="text-xs text-slate-400 leading-relaxed mb-3">
+              将删除「<b className="text-slate-100">{removeTarget.name || removeTarget.id}</b>」
+              {removeTarget.running && <>（该环境正在运行，会先被关闭）</>}
+              及其已保存的登录凭据，<b className="text-rose-300">删除后不可恢复</b>。
+            </div>
+            <label className="flex items-start gap-2.5 mb-2 p-3 rounded border border-edge bg-black/20 cursor-pointer">
+              <input type="checkbox" className="mt-0.5 accent-rose-500" checked={removeFiles} disabled={removing}
+                onChange={(e) => setRemoveFiles(e.target.checked)} />
+              <span className="text-xs text-slate-300 leading-relaxed">
+                同时删除本地数据文件（Cookie / 缓存 / 登录态）
+                <span className="block text-[11px] text-slate-500 mt-0.5">
+                  取消勾选＝只从列表中移除，磁盘目录保留（之后只能靠「清理残留」回收）
+                </span>
+              </span>
+            </label>
+            <div className="text-[11px] text-slate-500 mb-4">
+              需要留存请先「导出」环境配置与 Cookie。
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setRemoveTarget(null)} disabled={removing} className="btn btn-outline">{t('c.cancel')}</button>
+              <button onClick={runRemove} disabled={removing} className="btn btn-danger">
+                {removing ? '删除中…' : '确认删除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {orphan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-[440px] card p-5 shadow-2xl border-amber-900/40">
+            <div className="text-sm font-semibold text-amber-300 mb-1">清理残留环境文件</div>
+            <div className="text-xs text-slate-400 leading-relaxed mb-3">
+              发现 <b className="text-slate-100">{orphan.orphanCount}</b> 个残留目录：其环境记录已不在列表中，
+              磁盘上的数据目录仍然留存（Cookie / 缓存 / 登录态）。清理后这些目录被
+              <b className="text-rose-300">永久删除</b>，不会影响列表中的任何环境。
+            </div>
+            {Array.isArray(orphan.ids) && orphan.ids.length > 0 && (
+              <div className="mb-3 max-h-24 overflow-auto rounded border border-edge bg-black/30 p-2 font-mono text-[11px] text-slate-500">
+                {orphan.ids.slice(0, 12).map((x) => <div key={x}>{x}</div>)}
+                {orphan.orphanCount > 12 && <div>…共 {orphan.orphanCount} 个{orphan.truncated ? '（仅列出前 200 个）' : ''}</div>}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setOrphan(null)} disabled={purgingOrphan} className="btn btn-outline">取消</button>
+              <button onClick={runPurgeOrphans} disabled={purgingOrphan} className="btn btn-danger">
+                {purgingOrphan ? '清理中…' : `确认清理 ${orphan.orphanCount} 个`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {purgeAll && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="w-[440px] card p-5 shadow-2xl border-rose-900/40">
@@ -504,6 +602,16 @@ export default function App() {
               环境本身与已保存的登录凭据一并清除，<b className="text-rose-300">删除后不可恢复</b>。
               若需要留存，请先「导出」。
             </div>
+            <label className="flex items-start gap-2.5 mb-3 p-3 rounded border border-edge bg-black/20 cursor-pointer">
+              <input type="checkbox" className="mt-0.5 accent-rose-500" checked={purgeFiles} disabled={purging}
+                onChange={(e) => setPurgeFiles(e.target.checked)} />
+              <span className="text-xs text-slate-300 leading-relaxed">
+                同时删除本地数据文件（Cookie / 缓存 / 登录态）
+                <span className="block text-[11px] text-slate-500 mt-0.5">
+                  取消勾选＝只清空列表，磁盘目录全部保留（可用「清理残留」回收）
+                </span>
+              </span>
+            </label>
             <label className="block mb-4">
               <span className="label">输入「{PURGE_CONFIRM_WORD}」以确认</span>
               <input autoFocus className="inp w-full" value={purgeTyped} disabled={purging}
@@ -531,7 +639,7 @@ export default function App() {
 // C74：具名导出 ProfilesTab —— 守护测试（test_c74）SSR 探针需零浏览器渲染运行中配置态；
 // 对 Vite 构建零影响（default 导出 App 不变）。
 // UI 重构：Browser Profiles 成为清晰核心资源 —— 分组卡 + 运行态前置 + 指纹细节收敛到一行摘要。
-export function ProfilesTab({ profiles, proxies, runtime, onAdd, onEdit, onLaunch, onStop, onDuplicate, onRemove, onView, onRotate, onExport, onImport, onExportCookies, onBatch, onRemoveAll, notify }) {
+export function ProfilesTab({ profiles, proxies, runtime, onAdd, onEdit, onLaunch, onStop, onDuplicate, onRemove, onView, onRotate, onExport, onImport, onExportCookies, onBatch, onRemoveAll, onPurgeOrphans, notify }) {
   const [integrity, setIntegrity] = useState(null); // { id, report } | null
   const [checkingId, setCheckingId] = useState(null);
 
@@ -572,6 +680,9 @@ export function ProfilesTab({ profiles, proxies, runtime, onAdd, onEdit, onLaunc
             <button onClick={onRemoveAll} className="btn btn-outline text-xs border-rose-900/50 hover:text-rose-300 hover:border-rose-800"
               title="删除全部环境（不可恢复，需输入确认词）">全部删除</button>
           )}
+          {/* C189：库里没有、盘上残留的环境数据目录（删除时选择「保留文件」或历史遗留会产生） */}
+          <button onClick={onPurgeOrphans} className="btn btn-outline text-xs"
+            title="清点并清理不在列表中的残留环境数据目录">清理残留</button>
           <button onClick={onAdd} className="btn btn-primary text-xs">+ 新建 Profile</button>
         </div>
       </div>
