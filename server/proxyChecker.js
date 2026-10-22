@@ -7,6 +7,21 @@ const { lookupIp } = require('./geoip');
 const { startShim } = require('./socksShim');
 const { SocksClient } = require('socks');
 
+// C186：socks 库 v2.x 的 ProxyInfo 认证字段名是 userId，不是 username。
+// 传错字段的后果是**静默**的：库读到 userId 缺失 ⇒ 用户名恒为空 ⇒ 只发密码 ⇒
+// 上游认证失败（SOCKS5 应答 rep=0x02 NotAllowed）⇒ 上游被误判成"不支持 SOCKS5 转发"
+// ⇒ 自动降级 http ⇒ 启动前的出口 IP 探测彻底失败 ⇒ 环境启动被阻断。
+// 两处调用统一走这一处构造，避免相同语义再漂移出第二种写法。
+function socksProxyInfo(parts) {
+  return {
+    host: parts.host,
+    port: parts.port,
+    type: 5,
+    userId: parts.username || '',
+    password: parts.password || '',
+  };
+}
+
 function proxyToParts(proxy) {
   if (!proxy || !proxy.server) return null;
   const type = (proxy.type || 'http').toLowerCase();
@@ -115,7 +130,7 @@ async function fetchEgressIpViaProxy(proxy) {
     try {
       if (parts.type === 'socks5') {
         const info = await SocksClient.createConnection({
-          proxy: { host: parts.host, port: parts.port, type: 5, username: parts.username, password: parts.password },
+          proxy: socksProxyInfo(parts),
           command: 'connect',
           destination: { host: IPIFY.host, port: s.port },
           timeout: 15000,
@@ -278,7 +293,7 @@ async function quickEgress(parts, type) {
   const TIMEOUT = 8000;
   if (type === 'socks5') {
     const info = await SocksClient.createConnection({
-      proxy: { host: parts.host, port: parts.port, type: 5, username: parts.username, password: parts.password },
+      proxy: socksProxyInfo(parts),
       command: 'connect',
       destination: { host: IPIFY.host, port: IPIFY.port },
       timeout: TIMEOUT,
@@ -320,4 +335,4 @@ async function resolveProxyType(proxy) {
   return preferred; // 都连不通则沿用用户所选
 }
 
-module.exports = { checkProxy, checkProxyGeo, getEgressIp, getProxyEgressGeo, resolveProxyType, waitForConnect };
+module.exports = { checkProxy, checkProxyGeo, getEgressIp, getProxyEgressGeo, resolveProxyType, waitForConnect, socksProxyInfo };
