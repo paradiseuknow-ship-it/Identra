@@ -131,10 +131,20 @@ function resolveForProfile(profile, proxy, opts) {
   return resolveForOverride(profile && profile.fingerprintOverride, proxy, opts);
 }
 
+// C195：体检/诊断入口——不依赖 override 的 mode 判定，**总是**解析「当前出口地理」。
+// 为什么不能复用 resolveForProfile：mode 全非 ip（custom/随机——恰是出口↔指纹矛盾体检
+// 的核心场景）时它返回 not-needed/geo=null，比对会被静默跳过。本入口借用「时区=ip」
+// 形态触发同一套解析（resolveForOverride 是唯一实现，这里只是绕过 modes.any 前置，
+// 非第二实现；geo 返回完整字段，缓存与其它路径共用）。
+async function resolveEgressGeo(proxy, opts) {
+  return resolveForOverride({ timezoneMode: 'ip' }, proxy, opts);
+}
+
 module.exports = {
   ipModesOf,
   resolveForOverride,
   resolveForProfile,
+  resolveEgressGeo,
   strictError,
   __setDepsForTest,
   __resetDepsForTest,

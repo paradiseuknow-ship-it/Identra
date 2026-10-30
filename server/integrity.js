@@ -27,6 +27,23 @@ function uaChromeMajor(ua) {
   return m ? parseInt(m[1], 10) : null;
 }
 
+// C195：大圆距离（km）——出口 IP 坐标 vs 指纹 geolocation 坐标的矛盾度量
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const rad = (d) => (d * Math.PI) / 180;
+  const dLat = rad(lat2 - lat1);
+  const dLng = rad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+    + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+// locale 主子标签（zh-CN / zh_CN / zh → zh）：地区变体允许不同（en-US 界面 + en-GB 出口不算矛盾），
+// 主语言不同才是「语言与出口地区不一致」的有效信号
+function localeMainTag(l) {
+  return l ? String(l).split(/[-_]/)[0].toLowerCase() : '';
+}
+
 // 校验 IANA 时区名是否真实有效：无效时 Intl 会抛 RangeError
 function isTzValid(tz) {
   if (!tz) return false;
@@ -41,7 +58,9 @@ function isTzValid(tz) {
 const LOCALE_RE = /^[a-z]{2,3}([-_][A-Za-z0-9]{2,8})?$/;
 
 // 主入口：返回 { pass, status, results, summary }
-// opts: { fp, engineVersion, proxies, proxy }
+// opts: { fp, engineVersion, proxies, proxy, ipGeo }
+//   ipGeo —— 出口 IP 地理解析结果（geoip.lookupIp 归一化形态）或 null。
+//   null 时第 7 项（出口↔指纹一致性）跳过；网络解析由调用方负责（本模块纯同步本地计算）。
 function runIntegrityCheck(profile, opts = {}) {
   const { fp, engineVersion, proxies, proxy } = opts;
   const results = [];
@@ -132,6 +151,55 @@ function runIntegrityCheck(profile, opts = {}) {
   }
 
   // ---- network 层 ----
+  // 7) 出口 IP ↔ 指纹一致性（C195，防关联核心交叉信号）。
+  //    只对「非 ip 来源」的维度比对：mode='ip' 的维度生成时已用出口值对齐，比对恒等、无信息量。
+  //    opts.ipGeo 由调用方注入（geoip.lookupIp 归一化形态：{ timezone, language, country, city, lat, lng, ip }），
+  //    本模块保持纯同步本地计算，不做网络（模板自检离线路径传 null ⇒ 跳过，不误报）。
+  //    与其余体检项一致：WARNING 只报警不阻断启动。
+  {
+    const geo = opts.ipGeo || null;
+    const fpMode = {
+      timezone: fp && fp.timezoneMode,
+      language: fp && fp.languageMode,
+      geo: fp && fp.geolocation && fp.geolocation.mode,
+    };
+    if (!geo) {
+      note('network', true, '出口 IP 地理未解析，跳过出口↔指纹一致性体检（离线自检或解析失败）');
+    } else if (fpMode.timezone === 'ip' && fpMode.language === 'ip' && fpMode.geo === 'ip') {
+      note('network', true, '时区/语言/坐标均为「基于 IP」，生成时已对齐出口，无需一致性比对');
+    } else {
+      const where = `${geo.country || '?'}${geo.city ? '/' + geo.city : ''}（出口 ${geo.ip || '?'}）`;
+      let mismatch = 0;
+      // 7a) 时区：IP↔时区矛盾是风控最强信号（Stripe Radar / PX 一级特征）
+      if (fpMode.timezone !== 'ip' && fp && fp.timezone && geo.timezone && fp.timezone !== geo.timezone) {
+        warn('network', `时区与出口 IP 地理不一致：指纹 ${fp.timezone} vs 出口 ${where} 应为 ${geo.timezone} —— 防关联强信号，建议时区改「基于 IP」或手动对齐`);
+        mismatch++;
+      }
+      // 7b) 语言主子标签：弱信号（英文界面 + 非英语出口在真实用户中常见），提示但不阻断
+      if (fpMode.language !== 'ip' && fp && fp.language && geo.language
+        && localeMainTag(fp.language) && localeMainTag(geo.language)
+        && localeMainTag(fp.language) !== localeMainTag(geo.language)) {
+        warn('network', `语言与出口 IP 地区不一致：指纹 ${fp.language} vs 出口 ${where} 惯用 ${geo.language} —— 弱信号（英文界面用户常见），请确认是否有意为之`);
+        mismatch++;
+      }
+      // 7c) 坐标距离：Geolocation API 坐标距出口 IP 过远可被风控交叉识别。
+      //     'block' 模式是显式禁止地理位置（lat/lng=0 无语义），跳过。
+      const fpCoord = fp && fp.geolocation;
+      if (fpMode.geo !== 'ip' && fpMode.geo !== 'block' && fpCoord
+        && Number.isFinite(fpCoord.lat) && Number.isFinite(fpCoord.lng)
+        && Number.isFinite(geo.lat) && Number.isFinite(geo.lng)) {
+        const km = Math.round(haversineKm(fpCoord.lat, fpCoord.lng, geo.lat, geo.lng));
+        if (km > 500) {
+          warn('network', `地理位置坐标距出口 IP ${km} km（阈值 500）：指纹 (${fpCoord.lat.toFixed(2)},${fpCoord.lng.toFixed(2)}) vs 出口 ${where} —— Geolocation 与 IP 矛盾可被风控识别，建议坐标改「基于 IP」`);
+          mismatch++;
+        }
+      }
+      if (mismatch === 0) {
+        ok('network', `出口 IP ↔ 指纹一致性 PASS：出口 ${where}，时区/语言/坐标无矛盾`);
+      }
+    }
+  }
+
   // proxy 有效性：保存代理必须能在代理库中找到；内联代理必须有 server(host:port) 或 host/port。
   // 兼容系统两种存储：server 带 scheme（socks5://h:p）与不带（h:p）。
   const parseServer = (s) => {
@@ -190,4 +258,4 @@ function logIntegrity(profileId, report) {
   }
 }
 
-module.exports = { runIntegrityCheck, logIntegrity, profileDataDir };
+module.exports = { runIntegrityCheck, logIntegrity, profileDataDir, haversineKm };

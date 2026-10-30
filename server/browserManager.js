@@ -557,6 +557,64 @@ async function resolveLaunchIpGeo(profile, proxy) {
   return r.geo;
 }
 
+// C195：出口↔指纹一致性体检的出口地理来源。启动路径在 runIntegrityCheck 之前调用：
+//   - needsFresh（mode=ip 维度存在 / randomFingerprint）时上游已 strict 解析 ⇒ 直接复用，
+//     不重复打网络；
+//   - 否则**总是新鲜解析**而非复用 profile.fingerprint.ipGeo 存储旧值——体检比对的是
+//     「当前真实出口 vs 生效指纹」，旧值可能过期（换代理后尤其失真），比对过期数据得出
+//     PASS 是假阴性。注意 mode 全非 ip（custom/随机，恰是本体检的核心场景）时
+//     resolveForProfile 会返回 not-needed/geo=null ⇒ 必须走 resolveEgressGeo
+//     （同一实现，仅绕过 mode 前置）。strict=false（体检失败只跳过该项，绝不阻断启动
+//     ——integrity 的既有契约是「只报警不改行为」），并用 shim 改写前的**原始代理**
+//     （proxySourceOf）做解析 ⇒ ipGeo 60s 缓存 key 稳定，同 profile 连续启动只打一次网络。
+async function resolveIpGeoForIntegrity(profile, proxies, needsFresh, freshIpGeo) {
+  if (needsFresh) return freshIpGeo;
+  try {
+    const r = await ipGeoResolve.resolveEgressGeo(proxySourceOf(profile, proxies), { strict: false, cache: true });
+    return r.geo;
+  } catch (e) {
+    return null; // 体检尽力而为：解析失败跳过该项（note），不误报也不阻断
+  }
+}
+
+// C184 下半段：CDP 版本回读兜底。getChromeVersion() 依赖 powershell 读 chrome.exe 的 PE
+// 版本头，L62 已实证该路径可失败（shell 缺 WindowsPowerShell/v1.0、负载高超时、权限异常）
+// ⇒ 返回 null ⇒ 伪造 UA 停在指纹池版本而 brands/identity 走原生回放 ⇒ UA↔brands 分裂。
+// Chromium 起来之后，CDP Browser.getVersion 是浏览器级协议调用（不受页面注入/spoof 影响），
+// 永远返回真实引擎版本。启动路径在会话建立后 fire-and-forget 调用本函数：
+//   - 文件版本读取失败（realVer=null）或 major 与 CDP 不一致 ⇒ CDP 值回填 _chromeVerCache，
+//     **下次启动** UA 即自愈对齐（本次 UA 已在启动前生成，无法热改）；
+//   - 一致 ⇒ 不动缓存；
+//   - CDP 也失败 ⇒ 保持现状（console.warn 已由 getChromeVersion 留下），双兜底皆失静默退场。
+async function captureCdpChromeVersion(page, realVer) {
+  try {
+    if (!page || typeof page.context !== 'function') return null;
+    const ctx = await page.context(); // context() 返回 Promise（Playwright API），先 await 再建 CDP session
+    const client = await ctx.newCDPSession(page);
+    try {
+      const v = await client.send('Browser.getVersion');
+      const m = v && v.product && String(v.product).match(/(\d+\.\d+\.\d+\.\d+)/);
+      if (!m) return null;
+      const cdpVer = m[1];
+      const cdpMajor = parseInt(cdpVer.split('.')[0], 10);
+      const fileMajor = realVer ? parseInt(String(realVer).split('.')[0], 10) : null;
+      if (fileMajor === cdpMajor) return cdpVer; // 一致：不回填（文件版本与 CDP 同源）
+      _chromeVerCache = cdpVer;
+      _chromeVerStamp = chromeFileStamp();
+      if (fileMajor === null) {
+        console.warn(`[ua] 引擎版本文件读取失败，已由 CDP 回读兜底：${cdpVer}（本次 UA 未对齐，下次启动自愈）`);
+      } else {
+        console.warn(`[ua] 引擎版本不一致：文件 ${realVer} vs CDP ${cdpVer}，缓存已按 CDP 修正（下次启动自愈）`);
+      }
+      return cdpVer;
+    } finally {
+      try { await client.detach(); } catch (_) {}
+    }
+  } catch (e) {
+    return null;
+  }
+}
+
 function videoMimeOrUrl(req) {
   const rt = req.resourceType();
   const url = req.url().toLowerCase();
@@ -1066,7 +1124,10 @@ async function _launchProfile(profile, proxies) {
 
   // Profile Integrity：启动前内部一致性体检（只报警、不阻断启动，供开发期排查"脏 Profile"）
   try {
-    const report = runIntegrityCheck(profile, { fp, engineVersion: realVer, proxies });
+    // C195：出口↔指纹一致性体检需要出口地理。needsFresh 时上面已 strict 解析（直接复用），
+    // 否则新鲜解析（strict=false，失败跳过该项；原始代理 ⇒ 缓存 key 稳定）。
+    const ipGeoForCheck = await resolveIpGeoForIntegrity(profile, proxies, needsFreshIpGeo, ipGeo);
+    const report = runIntegrityCheck(profile, { fp, engineVersion: realVer, proxies, ipGeo: ipGeoForCheck });
     logIntegrity(profile.id, report);
   } catch (e) {
     console.warn('[integrity] 体检执行异常(已忽略):', String(e.message || e).slice(0, 200));
@@ -1375,6 +1436,13 @@ h1{margin:0 0 18px;font-size:22px;color:#38bdf8}
 
   const session = { context, page, fp, proxy: proxy || null, proxySourceSig, profileId: profile.id, startedAt: Date.now(), shimServers, chromePid, pages: [page], activePageIndex: 0, behavior: behavior || {} };
   sessions.set(profile.id, session);
+
+  // C184 下半段：会话已建立，CDP 回读真实引擎版本做兜底（fire-and-forget，不阻塞启动；
+  // 仅在文件版本读取失败时介入：回填 _chromeVerCache，下次启动 UA 自愈对齐。
+  // 文件版本可读时不动正常路径——CDP 校验文件值属于另一失败面，本批不扩）。
+  if (!realVer) {
+    captureCdpChromeVersion(page, realVer).catch(() => {});
+  }
   return session;
   } catch (e) {
     // C64 L2（B 类）：启动失败（launchPersistentContext 抛错/代理检查失败等）必须
@@ -1751,4 +1819,6 @@ module.exports = {
   proxySourceOf, proxySignature, planSessionReuse, consumeProxyRelaunched,
   // C194：内核版本检测/更新需要「当前引擎落点」与「缓存失效」两个事实源
   SYSTEM_CHROME, invalidateChromeVersionCache,
+  // C184 下半段：CDP 版本回读兜底（守护真实执行缓存回填分支）
+  captureCdpChromeVersion,
 };

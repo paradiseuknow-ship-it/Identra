@@ -372,14 +372,23 @@ router.get('/profiles/:id/integrity', async (req, res) => {
   if (!guardProfile(res, req.identityUser, p, 'profile:use')) return;
   try {
     const mergedOverride = { os: p.os, browser: p.browser, ...p.fingerprintOverride };
-    const ipGeo = await resolveIpGeo(mergedOverride, resolveProxy(p, db.getProxies()));
+    const proxyForProfile = resolveProxy(p, db.getProxies());
+    const ipGeo = await resolveIpGeo(mergedOverride, proxyForProfile);
     const fp = generateFingerprint(seedFromProfile(p), mergedOverride, ipGeo);
+    // C195：mode=ip 维度存在时 ipGeo 已解析（直接复用）；否则（custom/随机——恰是
+    // 出口↔指纹矛盾体检的核心场景）补一次「总是解析」的出口查询供比对。失败跳过该项。
+    let ipGeoForCheck = ipGeo;
+    if (!ipGeoForCheck) {
+      try {
+        ipGeoForCheck = (await ipGeoResolve.resolveEgressGeo(proxyForProfile, { strict: false, cache: true })).geo;
+      } catch (e) { ipGeoForCheck = null; }
+    }
     // 镜像启动时的 UA 对齐，使报告反映真实运行态（而非存储里的旧 UA）
     const realVer = browserManager.getChromeVersion();
     if (realVer && fp.userAgent && /Chrome\/\d+(\.\d+)*/.test(fp.userAgent)) {
       fp.userAgent = fp.userAgent.replace(/Chrome\/\d+(\.\d+)*/, 'Chrome/' + realVer);
     }
-    const report = runIntegrityCheck(p, { fp, engineVersion: realVer, proxies: db.getProxies() });
+    const report = runIntegrityCheck(p, { fp, engineVersion: realVer, proxies: db.getProxies(), ipGeo: ipGeoForCheck });
     res.json({ id: p.id, ...report });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) });
