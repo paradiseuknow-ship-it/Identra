@@ -27,6 +27,8 @@ const backup = require('./backup');
 const settings = require('./settings'); // C14：运行时设置中心（保存即改 process.env，无需重启）
 settings.applyToEnv(); // 启动时应用已保存的覆盖（settings 已设置的字段优先于 .env）
 const { generateFingerprint, seedFromProfile } = require('./fp/generate');
+const ipGeoResolve = require('./fp/ipGeo'); // C193：「基于 IP」解析唯一实现（与启动路径同源）
+const engineInfo = require('./engineInfo'); // C194：内核版本检测 / 定期检查 / 触发更新
 const { runIntegrityCheck } = require('./integrity');
 const { runWorkflow } = require('./automation/engine');
 const { registrationTemplate, checkoutTemplate } = require('./automation/templates');
@@ -73,17 +75,24 @@ function auditReq(req, action, resourceType, resourceId, detail) {
 }
 
 // 判断是否需要基于 IP 解析指纹，并返回检测结果
-async function resolveIpGeo(override, proxy) {
-  const tzIp = override.timezoneMode === 'ip';
-  const langIp = override.languageMode === 'ip';
-  const geoIp = override.geolocation?.mode === 'ip';
-  if (!tzIp && !langIp && !geoIp) return null;
-
-  if (proxy) {
-    const r = await checkProxyGeo(proxy);
-    return r.geo || null;
+//
+// C193 真缺陷（A 类，双口径）：本函数旧实现在 **proxy 为 null 时直接 return null** ——
+// 于是「新建配置（还没填代理）」或「代理未填」时，预览/编辑器把「基于 IP」的时区、语言、
+// 经纬度全部落到指纹池随机值（每次换 seed 就换一个国家），而真实启动走的
+// browserManager.resolveLaunchIpGeo 无代理时**会解解析本机出口、失败则阻断启动**。
+// 同一语义两套行为 ⇒ 预览看到的和跑起来的是两个指纹（也正是「右侧各国乱跳」的来源）。
+// 现在两条路径统一委托 fp/ipGeo.js；本函数只保留「拿 geo」的旧签名，另暴露详细状态供 UI 明示。
+async function resolveIpGeoDetailed(override, proxy) {
+  try {
+    return await ipGeoResolve.resolveForOverride(override, proxy, { strict: false, cache: true });
+  } catch (e) {
+    return { geo: null, status: 'unresolved', error: String(e.message || e).slice(0, 300), reason: 'exception', ip: null };
   }
-  return null;
+}
+
+async function resolveIpGeo(override, proxy) {
+  const r = await resolveIpGeoDetailed(override, proxy);
+  return r.geo;
 }
 
 // STEP 0.5 §2.4：CORS 白名单化。此前为 cors()（= Access-Control-Allow-Origin: *），
@@ -335,10 +344,22 @@ router.get('/profiles/:id', async (req, res) => {
     if (!p) return res.status(404).json({ error: 'not found' });
     if (!guardProfile(res, req.identityUser, p, 'profile:use')) return;
     const mergedOverride = { os: p.os, browser: p.browser, ...p.fingerprintOverride };
-    const ipGeo = await resolveIpGeo(mergedOverride, resolveProxy(p, db.getProxies()));
-    p.fingerprint = generateFingerprint(seedFromProfile(p), mergedOverride, ipGeo);
-    db.upsertProfile(p);
-    res.json({ ...p, running: browserManager.isRunning(p.id), vault: vault.getMaskedSummary(p.id) });
+    const geoState = await resolveIpGeoDetailed(mergedOverride, resolveProxy(p, db.getProxies()));
+    // C193：解析失败时**不覆盖**库里已有的指纹。旧实现在这里必定落库一份「池随机」指纹，
+    // 等于把"基于 IP"伪装成成功，与启动态（严格解析或阻断）彻底脱节。
+    if (geoState.status === 'ok' || geoState.status === 'not-needed') {
+      p.fingerprint = generateFingerprint(seedFromProfile(p), mergedOverride, geoState.geo);
+      db.upsertProfile(p);
+    } else if (!p.fingerprint) {
+      p.fingerprint = generateFingerprint(seedFromProfile(p), mergedOverride, null);
+      db.upsertProfile(p);
+    }
+    res.json({
+      ...p,
+      running: browserManager.isRunning(p.id),
+      vault: vault.getMaskedSummary(p.id),
+      ipGeoStatus: { status: geoState.status, error: geoState.error || null, ip: geoState.ip || null },
+    });
   } catch (e) {
     res.status(e.status || 500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
   }
@@ -373,6 +394,10 @@ router.put('/profiles/:id', async (req, res) => {
   if (req.body.regenerateSeed) {
     p.seed = 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
   }
+  // C192：代理相关字段（模式 / 具体代理 / 内联地址凭据）变化必须让用户看得见。
+  // 代理是 Chromium 的启动参数，改配置不会热连到运行中的实例——旧行为静默保存成功，
+  // 页面继续走已失效的旧代理。这里在落库前取旧签名，落库后比对并回传 restartRequired。
+  const prevProxySig = browserManager.proxySignature(browserManager.proxySourceOf(p, db.getProxies()));
   const mode = req.body.proxyMode === 'saved' || req.body.proxyMode === 'none' || req.body.proxyMode === 'inline' ? req.body.proxyMode : p.proxyMode;
   Object.assign(p, {
     name: req.body.name ?? p.name,
@@ -393,12 +418,26 @@ router.put('/profiles/:id', async (req, res) => {
     fingerprintOverride: req.body.fingerprintOverride ?? p.fingerprintOverride,
   });
   const mergedOverride = { os: p.os, browser: p.browser, ...p.fingerprintOverride };
-  const ipGeo = await resolveIpGeo(mergedOverride, resolveProxy(p, db.getProxies()));
-  p.fingerprint = generateFingerprint(seedFromProfile(p), mergedOverride, ipGeo);
+  const geoState = await resolveIpGeoDetailed(mergedOverride, resolveProxy(p, db.getProxies()));
+  // C193：保存配置本身绝不被网络阻断（用户只是改配置），但绝不能把「池随机」当「基于 IP」落库。
+  if (geoState.status === 'ok' || geoState.status === 'not-needed') {
+    p.fingerprint = generateFingerprint(seedFromProfile(p), mergedOverride, geoState.geo);
+  } else if (!p.fingerprint) {
+    p.fingerprint = generateFingerprint(seedFromProfile(p), mergedOverride, null);
+  }
   p.updatedBy = req.identityUser ? req.identityUser.id : p.updatedBy; // CAP-O1：归属审计
   db.upsertProfile(p);
   auditReq(req, 'profile.update', 'profile', p.id, { name: p.name });
-  res.json(p);
+  const proxyChanged = prevProxySig !== browserManager.proxySignature(browserManager.proxySourceOf(p, db.getProxies()));
+  // restartRequired 语义：代理已变更且实例仍在跑 —— 点一次「启动」会自动重建（无需先手动停止）
+  const restartRequired = proxyChanged && browserManager.isRunning(p.id);
+  res.json({
+    ...p,
+    proxyChanged,
+    restartRequired,
+    // C193：把「基于 IP」的解析状态显式回传（前端必须能区分"真的按 IP 生成了"与"没解析到"）
+    ipGeoStatus: { status: geoState.status, error: geoState.error || null, ip: geoState.ip || null },
+  });
   } catch (e) {
     res.status(e.status || 500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
   }
@@ -510,15 +549,58 @@ router.post('/profiles/preview-fp', async (req, res) => {
   try {
     const seed = req.body.seed || 'preview';
     const override = req.body.fingerprintOverride || {};
-    const ipGeo = await resolveIpGeo(override, resolveProxy({ proxyId: req.body.proxyId, proxyInline: req.body.proxyInline }, db.getProxies()));
-    const fp = generateFingerprint(seed, override, ipGeo);
-    res.json(fp);
+    const geoState = await resolveIpGeoDetailed(override, resolveProxy({ proxyId: req.body.proxyId, proxyInline: req.body.proxyInline }, db.getProxies()));
+    const fp = generateFingerprint(seed, override, geoState.geo);
+    // C193：ipGeoStatus 是预览可信度的唯一判据 —— status='unresolved' 表示「基于 IP」没解析到，
+    // 本次预览的时区/语言/坐标来自指纹池（每次换种子都会变），与真实运行态不同。
+    res.json({
+      ...fp,
+      ipGeoStatus: { status: geoState.status, error: geoState.error || null, ip: geoState.ip || null },
+    });
   } catch (e) {
     res.status(e.status || 500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
   }
 });
 
 router.use('/', (req, res, next) => next());
+
+// ---------------- 浏览器内核版本（C194） ----------------
+// 读状态：任意成员（只读）；强制检测 / 触发更新：profile:manage（影响整机所有环境的引擎）。
+// 更新动作只调用系统自带 Google Update，绝不下载/执行第三方二进制。
+router.get('/system/engine', async (req, res) => {
+  try {
+    res.json(await engineInfo.getStatus({ force: req.query.force === '1' }));
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
+  }
+});
+
+router.post('/system/engine/check', async (req, res) => {
+  try {
+    const u = req.identityUser;
+    identity.assertCan(u && u.id, u && u.currentWorkspaceId, 'profile:use');
+    const st = await engineInfo.checkNow();
+    // C83 口径：会写 engine-status.json 的路由属 mutation，必须留审计
+    auditReq(req, 'system.engine_check', 'system', 'engine', {
+      current: st.current, latest: st.latest, error: st.error ? String(st.error).slice(0, 120) : null,
+    });
+    res.json(st);
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: e.status === 401 ? 'UNAUTHORIZED' : String(e.message || e).slice(0, 200) });
+  }
+});
+
+router.post('/system/engine/update', async (req, res) => {
+  try {
+    const u = req.identityUser;
+    identity.assertCan(u && u.id, u && u.currentWorkspaceId, 'profile:manage');
+    const r = await engineInfo.triggerUpdate();
+    auditReq(req, 'system.engine_update', 'system', 'engine', { ok: r.ok, via: r.via });
+    res.status(r.ok ? 200 : 400).json(r);
+  } catch (e) {
+    res.status(e.status || 500).json({ ok: false, error: e.status === 401 ? 'UNAUTHORIZED' : String(e.message || e).slice(0, 200) });
+  }
+});
 
 // ---------------- Fingerprint Templates (CAP-A1) ----------------
 // workspace-scoped：创建/改/删 = profile:manage；读 = 任意成员（filterByWorkspace）。
@@ -764,8 +846,11 @@ browserRouter.post('/browser/:id/launch', async (req, res) => {
       auditReq(req, 'proxy.auto_rotate', 'profile', p.id, { to: rot.to.id, reason: rot.reason });
     }
     await browserManager.launch(p, proxies);
-    auditReq(req, 'browser.launch', 'profile', p.id, { name: p.name });
-    res.json({ ok: true, running: true });
+    // C192：本次启动是否因代理配置变更而自动重建过 —— 必须回传，否则用户无法分辨
+    // 「用了新代理」还是「仍卡在旧代理的错误页」。
+    const proxySwitched = browserManager.consumeProxyRelaunched(p.id);
+    auditReq(req, 'browser.launch', 'profile', p.id, { name: p.name, proxySwitched });
+    res.json({ ok: true, running: true, proxySwitched });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) });
   }
@@ -1348,6 +1433,14 @@ app.listen(PORT, BIND, () => {
   browserManager.cleanupOrphanedChromium();
   // 启动定时僵尸进程扫描（默认 5 分钟），强杀非活跃 profile 的残留 chrome 进程
   browserManager.startZombieKiller();
+
+  // C194：内核版本定期检测（启动 30s 后首检，之后每 24h；FPB_DISABLE_ENGINE_CHECK=1 可关）。
+  // 定时器全部 unref —— 绝不阻止进程退出。
+  try {
+    if (engineInfo.startScheduler()) console.log('[engine] 内核版本定期检测已启用（默认 24h 周期，启动 30s 后首检）');
+  } catch (e) {
+    console.warn('[engine] 定期检测启动失败(忽略):', e.message);
+  }
 
   // Phase 12B §I6/§I7/§T18：周期清理与优雅关闭
   const lock = require('./agent/lock');

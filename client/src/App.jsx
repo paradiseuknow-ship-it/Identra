@@ -175,7 +175,13 @@ export default function App() {
   }, [tab]);
 
   const launch = async (id) => {
-    try { await api.launch(id); notify('已启动'); await loadProfiles(); }
+    try {
+      const r = await api.launch(id);
+      // C192：代理改过之后点启动，服务端会自动重建会话应用新代理 —— 必须说清楚，
+      // 否则用户仍以为"要手动停止再启动才生效"。
+      notify(r && r.proxySwitched ? '代理已变更，已自动重启并应用新代理' : '已启动');
+      await loadProfiles();
+    }
     catch (e) { notify(e.message, false); }
   };
   const stop = async (id) => {

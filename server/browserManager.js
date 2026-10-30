@@ -3,9 +3,11 @@
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const crypto = require('crypto');
 const { execSync, spawnSync } = require('child_process');
 const { chromium } = require('playwright');
 const { generateFingerprint, seedFromProfile } = require('./fp/generate');
+const ipGeoResolve = require('./fp/ipGeo'); // C193：「基于 IP」解析唯一实现（启动与预览共用）
 const { ensureIdentity } = require('./fp/identityStore');
 const { buildIdentity } = require('./fp/identityFactory');
 const { buildInjectionScript } = require('./fp/inject');
@@ -98,10 +100,27 @@ function profileDataDir(profileId) {
 //   ① 版本号属进程级不变事实 → memo 缓存（一次成功即复用，彻底消除重复 fork 与负载窗口）；
 //   ② 失败重试一轮 + 超时放宽到 8s；
 //   ③ 失败必须留下可观测 warn（原先 return null 静默，等于把失守的一致性藏起来）。
+// C194：版本号是「进程级不变事实」，但**文件会被更新**。旧实现一次成功就永久缓存 ——
+// Chrome 自动更新（或 C194 触发更新）后进程内仍返回旧版本，于是伪造 UA 对齐到旧引擎、
+// 而 brands/identity 来自新二进制 ⇒ 又回到 C30 修掉的「UA 层 ↔ brands 层版本分裂」。
+// 现在缓存随 chrome.exe 的 mtime 失效：文件一换，下次取用即重读。
 let _chromeVerCache = null;
+let _chromeVerStamp = null;
 let _chromeVerWarned = false;
+
+function chromeFileStamp() {
+  try { return fs.statSync(SYSTEM_CHROME).mtimeMs; } catch (e) { return null; }
+}
+
+// 供内核更新流程/设置页显式失效（更新器返回后立即可观测，无需重启读缓存）
+function invalidateChromeVersionCache() {
+  _chromeVerCache = null;
+  _chromeVerStamp = null;
+}
+
 function getChromeVersion() {
-  if (_chromeVerCache) return _chromeVerCache;
+  const stamp = chromeFileStamp();
+  if (_chromeVerCache && _chromeVerStamp === stamp) return _chromeVerCache;
   if (!SYSTEM_CHROME || !fs.existsSync(SYSTEM_CHROME)) {
     if (!_chromeVerWarned) {
       _chromeVerWarned = true;
@@ -114,7 +133,7 @@ function getChromeVersion() {
     try {
       const out = execSync(cmd, { encoding: 'utf8', timeout: 8000, stdio: ['pipe', 'pipe', 'pipe'] });
       const m = (out || '').trim().match(/^(\d+\.\d+\.\d+\.\d+)/);
-      if (m) { _chromeVerCache = m[1]; return _chromeVerCache; }
+      if (m) { _chromeVerCache = m[1]; _chromeVerStamp = stamp; return _chromeVerCache; }
     } catch (e) {
       if (attempt === 1 && !_chromeVerWarned) {
         _chromeVerWarned = true;
@@ -532,51 +551,10 @@ function deleteProfileData(profileId) {
 }
 
 async function resolveLaunchIpGeo(profile, proxy) {
-  const override = profile.fingerprintOverride || {};
-  const tzIp = override.timezoneMode === 'ip';
-  const langIp = override.languageMode === 'ip';
-  const geoIp = override.geolocation?.mode === 'ip';
-  if (!tzIp && !langIp && !geoIp) return null;
-
-  // 配置了代理 + "基于 IP"模式：必须拿到【代理出口】的地理信息。
-  // 否则时区/语言/地理位置会回退成随机或本机值，与代理地区不一致 → 出库被识别为泄露。
-  // 因此：解析失败一律报错并阻断启动，【绝不回退直连 / 随机】。
-  if (proxy && proxy.server) {
-    let ip = null;
-    let geo = null;
-    try {
-      ({ ip, geo } = await getProxyEgressGeo(proxy)); // 内部已重试 socks5/http + 多 geo 源
-    } catch (e) {
-      throw new Error(
-        '代理出口 IP 解析失败：' + (e.message || e) +
-        '。已阻止启动，避免指纹回退成本机直连导致泄露。请检查代理可用性，或改用「自定义」时区/语言/地理位置后重试。'
-      );
-    }
-    if (!ip) {
-      throw new Error(
-        '代理出口 IP 解析失败：无法获取代理的公网出口地址。已阻止启动，避免指纹回退成本机直连导致泄露。' +
-        '请检查代理可用性，或改用「自定义」时区/语言/地理位置后重试。'
-      );
-    }
-    if (!geo) {
-      throw new Error(
-        '已取得代理出口 IP，但地理位置库未返回时区/语言/经纬度。已阻止启动，避免"基于 IP"指纹落空造成环境不一致（出库异常）。' +
-        '请检查本机到 geo 服务的网络可达性，或改用「自定义」后重试。'
-      );
-    }
-    return geo;
-  }
-
-  // 无代理：直连本就是该环境的真实出口，用本机出口 IP 解析地理（不算泄露）
-  try {
-    const ip = await getEgressIp(null);
-    const geo = await lookupIp(ip);
-    if (geo) geo.ip = ip;
-    if (!geo) throw new Error('无法解析本机出口 IP 的地理位置');
-    return geo;
-  } catch (e) {
-    throw new Error('未配置代理且无法解析本机出口 IP，无法生成"基于 IP"指纹：' + (e.message || e));
-  }
+  // C193：委托 fp/ipGeo.js 的唯一实现（预览路径共用同一份判定与失败语义）。
+  // strict=true 保持启动路径原契约：解析失败一律抛错阻断启动，绝不静默回退随机/本机。
+  const r = await ipGeoResolve.resolveForProfile(profile, proxy, { strict: true, cache: true });
+  return r.geo;
 }
 
 function videoMimeOrUrl(req) {
@@ -933,21 +911,84 @@ async function warmupProxyConnection(context, proxy) {
 // 冲突 / 双实例半启动 / profile 数据损坏）。in-flight Promise 表：同 profile 并发
 // 调用共享同一次启动；完成/失败后移除（失败允许重试）。
 const _launchInFlight = new Map();
+// 本次 launch 是否因代理切换而重建过（供路由回传前端提示；读后即清，避免"上次重启"的陈旧提示）
+const _proxyRelaunched = new Set();
+function consumeProxyRelaunched(profileId) {
+  const hit = _proxyRelaunched.has(profileId);
+  _proxyRelaunched.delete(profileId);
+  return hit;
+}
+
+// C192 真缺陷（A 类）：代理切换无法热生效。
+// Chromium 的代理是**进程启动参数**（--proxy-server / --proxy-pac-url）固化的，会话内改配置
+// 不会重连；而旧 launch() 只要 sessions.has(profile.id) 就原样返回旧会话 —— 于是「代理挂了
+// → 换新代理 → 点启动」仍在走已失效的旧代理，页面一直 network error，用户被迫
+// 关闭网页 + 停止环境 + 重新启动才能用上新代理。
+// 修复：会话记录「代理来源签名」，复用时比对；不一致则关闭后重建（一次点击即可切换）。
+// 签名只取决定出口连通性的字段（类型/地址/用户名/密码摘要），凭据明文绝不进日志。
+function proxySourceOf(profile, proxies) {
+  if (!profile) return null;
+  if (profile.proxyInline && profile.proxyInline.server) return profile.proxyInline;
+  if (profile.proxyId) {
+    const list = Array.isArray(proxies) ? proxies : [];
+    return list.find((x) => x && x.id === profile.proxyId) || null;
+  }
+  return null;
+}
+
+function proxySignature(proxy) {
+  if (!proxy || !proxy.server) return 'direct';
+  const type = String(proxy.type || '').toLowerCase();
+  const user = String(proxy.username || '');
+  const pass = String(proxy.password || '');
+  const secret = pass ? crypto.createHash('sha256').update(pass).digest('hex').slice(0, 12) : '';
+  return [type, String(proxy.server), user, secret].join('|');
+}
+
+// 会话复用决策（纯函数、无 IO —— 守护可直接真实执行，不靠 grep 源码）：
+//   'fresh'    无会话，走正常启动
+//   'reuse'    会话存活且代理来源一致，直接复用（零副作用）
+//   'relaunch' 会话存活但代理配置已变更，必须关闭重建才能应用新代理
+// 旧会话/测试注入会话没有 proxySourceSig ⇒ 视为来源未知，保守复用（绝不因缺字段打断运行实例）。
+function planSessionReuse(session, profile, proxies) {
+  if (!session) return 'fresh';
+  const had = session.proxySourceSig;
+  if (had === undefined || had === null) return 'reuse';
+  return had === proxySignature(proxySourceOf(profile, proxies)) ? 'reuse' : 'relaunch';
+}
 
 async function launch(profile, proxies) {
-  if (sessions.has(profile.id)) return sessions.get(profile.id);
+  let existing = sessions.get(profile.id);
+  if (existing && existing.context) {
+    // 进程已崩但 disconnected 尚未触发（或已触发但残留）⇒ 清掉走全新启动，避免复用死 context
+    try {
+      if (existing.context.isClosed()) { sessions.delete(profile.id); existing = null; }
+    } catch (e) { /* 读存活状态失败：按存在处理，行为与旧实现一致 */ }
+  }
+  if (existing) {
+    const plan = planSessionReuse(existing, profile, proxies);
+    if (plan === 'reuse') return existing;
+    console.warn(
+      '[proxy] profile ' + profile.id + ' 代理配置已变更（运行中: ' + existing.proxySourceSig +
+      ' → 目标: ' + proxySignature(proxySourceOf(profile, proxies)) + '），自动重建会话以应用新代理'
+    );
+    await close(profile.id);
+    _proxyRelaunched.add(profile.id);
+  }
   if (_launchInFlight.has(profile.id)) return _launchInFlight.get(profile.id);
   const p = _launchProfile(profile, proxies).finally(() => { _launchInFlight.delete(profile.id); });
   _launchInFlight.set(profile.id, p);
   return p;
 }
 
+
 async function _launchProfile(profile, proxies) {
   let shimServers = []; // C64 L2：声明提到 try 外——失败路径清理需要
   try {
-  let proxy = profile.proxyInline && profile.proxyInline.server
-    ? profile.proxyInline
-    : (proxies ? proxies.find((x) => x.id === profile.proxyId) : null);
+  // C192：签名必须在本地 shim 改写之前取 —— shim 会把 server 换成 127.0.0.1:随机端口，
+  // 用改写后的值签名会让「配置没变」也判成变更（每次启动都强制重建，等于丢掉会话复用）。
+  let proxy = proxySourceOf(profile, proxies);
+  const proxySourceSig = proxySignature(proxy);
 
   // 启动前判定代理实际可用协议：优先用户所选（多为 socks5），若 SOCKS5 仅握手不转发则回退 http
   if (proxy && proxy.server) {
@@ -1332,7 +1373,7 @@ h1{margin:0 0 18px;font-size:22px;color:#38bdf8}
     } catch (e) {}
   }
 
-  const session = { context, page, fp, proxy: proxy || null, profileId: profile.id, startedAt: Date.now(), shimServers, chromePid, pages: [page], activePageIndex: 0, behavior: behavior || {} };
+  const session = { context, page, fp, proxy: proxy || null, proxySourceSig, profileId: profile.id, startedAt: Date.now(), shimServers, chromePid, pages: [page], activePageIndex: 0, behavior: behavior || {} };
   sessions.set(profile.id, session);
   return session;
   } catch (e) {
@@ -1706,4 +1747,8 @@ module.exports = {
   PROFILES_ROOT, // C46：暴露根路径供守护测试断言 FPB_DATA_DIR 隔离解析
   deleteProfileData, // C189：「删除环境」时可选清盘（唯一实现，路径安全由 profileDataDir 保证）
   profileDataDir, // C189：暴露给孤儿目录清点/清理（只读 + 同一套根内解析，避免第二份路径拼接）
+  // C192：代理切换热生效 —— 签名/复用决策是纯函数，暴露给守护真实执行；consumeProxyRelaunched 供路由回传提示
+  proxySourceOf, proxySignature, planSessionReuse, consumeProxyRelaunched,
+  // C194：内核版本检测/更新需要「当前引擎落点」与「缓存失效」两个事实源
+  SYSTEM_CHROME, invalidateChromeVersionCache,
 };

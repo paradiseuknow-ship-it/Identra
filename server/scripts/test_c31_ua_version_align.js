@@ -65,8 +65,14 @@ function probe() {
     src.includes('attempt < 2'), 'missing');
   chk('P4c 源码含读取失败 warn（不再静默 return null）',
     src.includes('读取引擎版本失败'), 'missing');
-  chk('P4d 缓存命中前置短路存在',
-    /if \(_chromeVerCache\) return _chromeVerCache;/.test(src), 'missing');
+  // C194：缓存命中不再是「有缓存就返回」——必须同时校验 chrome.exe 的文件指纹。
+  // 内核更新（C194 触发 Google Update）后二进制换了但进程不重启，若仍返回旧版本号，
+  // 伪造 UA 会停留在旧引擎版本，而 brands/identity 来自新二进制 ⇒ 本文件守护的
+  // 「层间版本一致」目标被打破。所以这条断言从"短路存在"升级为"短路必须带文件指纹守卫"。
+  chk('P4d 缓存命中前置短路存在（且校验 chrome.exe mtime，C194）',
+    /if \(_chromeVerCache && _chromeVerStamp === stamp\) return _chromeVerCache;/.test(src), 'missing');
+  chk('P4e 版本缓存可被外部失效（内核更新流程用）',
+    src.includes('function invalidateChromeVersionCache()') && src.includes('_chromeVerStamp = null'), 'missing');
   chk('P5 launch 侧对齐失守时必须报警',
     src.includes('引擎版本未知（profile ') && src.includes('未与 brands/identity 对齐'), 'missing');
 

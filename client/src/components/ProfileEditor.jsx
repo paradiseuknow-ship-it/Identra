@@ -157,7 +157,17 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved, noti
       const payload = buildPayload(form);
       let saved;
       if (isNew) saved = await api.createProfile(payload);
-      else saved = await api.updateProfile(profile.id, payload);
+      else {
+        saved = await api.updateProfile(profile.id, payload);
+        // C192：代理是 Chromium 启动参数，改配置不会热连到已运行的实例。
+        // 服务端比对签名后回传 restartRequired / proxyChanged —— 必须当场告知，
+        // 否则用户会以为"改了没生效"，继续手动停止→启动。
+        if (saved && saved.restartRequired) {
+          notify?.('代理已更新：点一次「启动」即会自动重启并应用新代理（无需先手动停止）');
+        } else if (saved && saved.proxyChanged) {
+          notify?.('代理配置已更新，下次启动生效');
+        }
+      }
 
       const v = vault;
       if (v.email || v.password || v.card.number || v.card.cvv) {
@@ -231,6 +241,13 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved, noti
 function SummaryPanel({ fp, form, onRegenerate, regenerating, isNew, onRetry, fpError }) {
   const ov = form.fingerprintOverride;
   const seed = form.seed || (isNew ? '（新建）' : form.seed);
+  // C193：预览必须能区分「真的按 IP 生成」与「没解析到、当前是池随机值」。
+  // 修复前预览接口在无代理时直接不回解析 ⇒ 概要在各国之间跳，用户以为「基于 IP 失效」。
+  const geoState = (fp && fp.ipGeoStatus) || null;
+  const ipUnresolved = !!(geoState && geoState.status === 'unresolved');
+  const ipMode = (k) => !!ov && ov[k] === 'ip';
+  const geoIpMode = !!(ov && ov.geolocation && ov.geolocation.mode === 'ip');
+  const tag = (isIp) => (ipUnresolved && isIp ? ' · 指纹池随机' : '');
 
   const noiseLabel = (k) => {
     const v = ov[k];
@@ -279,13 +296,23 @@ function SummaryPanel({ fp, form, onRegenerate, regenerating, isNew, onRetry, fp
               基于 IP: {fp.ipGeo.ip} · {fp.ipGeo.country} {fp.ipGeo.city}
             </div>
           )}
+          {ipUnresolved && (
+            <div className="rounded border border-rose-500/40 bg-rose-500/10 p-2 mb-2 space-y-1">
+              <div className="font-medium text-rose-300">「基于 IP」未解析到出口位置</div>
+              <div className="text-[11px] leading-relaxed text-rose-200/80">
+                下面标了「指纹池随机」的项目来自指纹随机池（每次「生成新指纹」都会变，与真实出口不一致）。
+                请先配置可用代理（或在「指纹配置」改成自定义/固定值）再保存；否则启动会被阻断。
+              </div>
+              {geoState.error && <div className="text-[11px] text-rose-300/70 break-words">{geoState.error}</div>}
+            </div>
+          )}
           <Row label="浏览器" value={`${form.browser} (${form.os})`} />
           <Row label="User-Agent" value={fp.userAgent} multiline />
           <Row label="WebRTC" value={WEBRTC_OPTIONS.find((x) => x.value === (ov.webRtc || 'proxy'))?.label} />
-          <Row label="时区" value={`${fp.timezone} (${fp.timezoneOffset >= 0 ? '+' : ''}${fp.timezoneOffset / 60}h)`} />
-          <Row label="地理位置" value={fmtGeo(fp.geolocation)} />
-          <Row label="语言" value={fp.language} />
-          <Row label="界面语言" value={fp.interfaceLanguage} />
+          <Row label="时区" value={`${fp.timezone} (${fp.timezoneOffset >= 0 ? '+' : ''}${fp.timezoneOffset / 60}h)${tag(ipMode('timezoneMode'))}`} />
+          <Row label="地理位置" value={`${fmtGeo(fp.geolocation)}${tag(geoIpMode)}`} />
+          <Row label="语言" value={`${fp.language}${tag(ipMode('languageMode'))}`} />
+          <Row label="界面语言" value={`${fp.interfaceLanguage}${tag(ipMode('languageMode'))}`} />
           <Row label="分辨率" value={`${fp.screen.width}x${fp.screen.height} @ ${fp.screen.pixelRatio}x`} />
           <Row label="字体" value={fp.fonts || '默认'} />
           <Row label="Canvas" value={noiseLabel('canvas')} />
@@ -591,6 +618,11 @@ function FingerprintTab({ form, setField, setOv, setNested, fp, refreshPreview }
         {fp?.ipGeo && (
           <div className="text-xs mb-2 text-emerald-400">
             基于 IP 检测: {fp.ipGeo.ip} · {fp.ipGeo.country} {fp.ipGeo.city} · 时区 {fp.ipGeo.timezone} · 语言 {fp.ipGeo.language || '(根据国家推断)'}
+          </div>
+        )}
+        {fp?.ipGeoStatus?.status === 'unresolved' && (
+          <div className="text-xs mb-2 rounded border border-rose-500/40 bg-rose-500/10 p-2 text-rose-300 break-words">
+            「基于 IP」未解析到出口位置：{fp.ipGeoStatus.error}
           </div>
         )}
         {fp ? (

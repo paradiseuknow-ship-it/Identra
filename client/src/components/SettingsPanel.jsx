@@ -112,6 +112,7 @@ export default function SettingsPanel({ notify, requestConfirm, proxies = [], on
 
   return (
     <div className="max-w-4xl mx-auto space-y-4 p-4">
+      <EngineView notify={notify} />
       <StorageView notify={notify} />
       <div>
         <h2 className="text-lg font-semibold text-slate-100">系统设置</h2>
@@ -252,6 +253,83 @@ const fmtBytes = (n) => {
   if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
   return n + ' B';
 };
+function EngineView({ notify }) {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = React.useCallback(async (force) => {
+    try { setSt(await api.getEngineStatus(!!force)); }
+    catch (e) { notify('内核版本查询失败: ' + e.message, false); }
+  }, [notify]);
+  React.useEffect(() => { load(false); }, [load]);
+
+  const recheck = async () => {
+    setBusy(true);
+    try { setSt(await api.checkEngine()); notify('已检查官方最新稳定版'); }
+    catch (e) { notify('检查失败: ' + e.message, false); }
+    finally { setBusy(false); }
+  };
+  const doUpdate = async () => {
+    setBusy(true);
+    try {
+      const r = await api.updateEngine();
+      if (r.ok) notify('已触发系统 Google 更新器：更新完成后重启浏览器才会生效');
+      else notify('无法自动更新：' + (r.error || '未知原因'), false);
+      await load(true);
+    } catch (e) { notify('触发更新失败: ' + e.message, false); }
+    finally { setBusy(false); }
+  };
+
+  const badge = (() => {
+    if (!st) return null;
+    if (st.level === 'up-to-date') return <span className="text-[11px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 ml-2">已是最新</span>;
+    if (st.level === 'patch') return <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 ml-2">有补丁更新（差 {st.behind && st.behind.patch} 个修订）</span>;
+    if (st.level === 'build') return <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 ml-2">有构建更新（建议更新）</span>;
+    if (st.level === 'major') return <span className="text-[11px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 ml-2">大版本落后 {st.behind && st.behind.major} 版（必须更新）</span>;
+    return <span className="text-[11px] px-1.5 py-0.5 rounded bg-white/[0.06] text-slate-400 ml-2">无法判定（版本读取失败）</span>;
+  })();
+
+  return (
+    <div className="card p-4">
+      <div className="font-medium mb-2 flex justify-between items-center">
+        <span>浏览器内核</span>
+        <span>
+          <button disabled={busy} onClick={recheck} className="text-xs px-2 py-1 bg-white/[0.06] hover:bg-white/[0.1] rounded mr-2 text-slate-300 border border-edge/60 disabled:opacity-50">检查更新</button>
+          <button disabled={busy || !st || st.level === 'up-to-date'} onClick={doUpdate} className="text-xs px-2 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded disabled:opacity-40">触发更新</button>
+        </span>
+      </div>
+      {!st && <div className="text-gray-400 text-sm">检测中…</div>}
+      {st && (
+        <div className="text-sm space-y-1.5">
+          <div className="flex flex-wrap items-center">
+            <span className="text-slate-400 w-28 shrink-0">当前内核</span>
+            <span className="font-mono text-slate-200">{st.current || '未读取到'}</span>
+            {badge}
+          </div>
+          <div className="flex flex-wrap items-center">
+            <span className="text-slate-400 w-28 shrink-0">官方稳定版</span>
+            <span className="font-mono text-slate-200">{st.latest || '未获取'}</span>
+            {st.source && <span className="text-[11px] text-slate-500 ml-2">来源 {st.source}</span>}
+          </div>
+          <div className="flex flex-wrap">
+            <span className="text-slate-400 w-28 shrink-0">检测时间</span>
+            <span className="text-xs text-slate-400">{st.checkedAt ? new Date(st.checkedAt).toLocaleString() : '尚未成功检测'}{st.checkIntervalMs ? ' · 每 ' + Math.round(st.checkIntervalMs / 3600000) + ' 小时自动检测' : ''}</span>
+          </div>
+          {st.error && <div className="text-xs text-amber-300 break-words">最近一次在线检测失败：{st.error}（当前显示的是上次成功结果，不代表已最新）</div>}
+          {!st.chromeExists && <div className="text-xs text-rose-300">未找到内核可执行文件：{st.chromePath || '（路径未知）'}</div>}
+          {st.update && st.update.lastAttemptAt && (
+            <div className="text-xs text-slate-400">
+              上次更新尝试：{new Date(st.update.lastAttemptAt).toLocaleString()} · {st.update.ok ? '已触发成功' : '失败：' + (st.update.error || '')}
+            </div>
+          )}
+          <div className="text-[11px] text-gray-400 pt-1 border-t border-edge/60">
+            内核版本必须与伪造的 UA / Client Hints 一致。内核落后会让版本号成为可识别的特征（旧版本 Chrome 在真实流量里占比过低），所以定期更新内核属于反检测基础维护。更新由系统自带 Google Update 完成，更新后需重启服务与新开环境才会使用新内核。
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StorageView({ notify }) {
   const [items, setItems] = useState(null);
   const [plan, setPlan] = useState(null);

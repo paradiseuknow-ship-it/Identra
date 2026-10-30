@@ -149,6 +149,10 @@ export const api = {
   // 例外：/stream 是 EventSource（无法附带 header），保留内联，边界记录于 BrowserViewer。）
   launch: (id) => req('POST', '/browser/' + id + '/launch'),
   stop: (id) => req('POST', '/browser/' + id + '/stop'),
+  // C194：内核版本检测 / 定期检查 / 触发官方更新器
+  getEngineStatus: (force) => req('GET', '/system/engine' + (force ? '?force=1' : '')),
+  checkEngine: () => req('POST', '/system/engine/check'),
+  updateEngine: () => req('POST', '/system/engine/update'),
   navigate: (id, url) => req('POST', '/browser/' + id + '/navigate', { url }),
   screenshot: (id) => req('GET', '/browser/' + id + '/screenshot'),
   humanMove: (id, x, y) => req('POST', '/browser/' + id + '/human-move', { x, y }),
