@@ -585,14 +585,37 @@ function buildInjectionScript(fp) {
   try {
     if (FP.clientRects !== false) {
       const origGetBounding = Element.prototype.getBoundingClientRect;
+      // C191：矩形噪声必须对**同一布局**返回**逐字段相同**的结果。
+      // 旧实现每次调用都重掷 r2() ⇒ 同一元素连续两次调用得到不同几何，破坏了两个契约：
+      //   ① 浏览器事实契约：同一布局下 getBoundingClientRect() 是稳定的；会抖的 rect 本身
+      //      就是比"无噪声"更强的自动化破绽。
+      //   ② 框架契约：React/Vue 里「render 期读 rect → effect 里 setState」很常见（浮层定位、
+      //      虚拟列表、react-select 的菜单）。依赖值每次都变 ⇒ 无限重渲染 ⇒ React #185
+      //      （Maximum update depth exceeded）⇒ Next.js 整页 "Application error"。
+      //      实测 GitKraken checkout「Country or region」下拉一点即崩整页。
+      // 现改为按「原始几何签名」缓存偏移：几何不变 ⇒ 噪声不变；几何变化（滚动/缩放/重排）
+      // ⇒ 重新掷一次，冷却后的静态布局依然逐帧稳定。
+      const rectNoiseCache = new WeakMap();
       Element.prototype.getBoundingClientRect = function(){
         const rect = origGetBounding.apply(this, arguments);
-        const n = () => (r2() * 2 - 1) * 0.02;
+        const sig = rect.x + '|' + rect.y + '|' + rect.width + '|' + rect.height;
+        let rec = rectNoiseCache.get(this);
+        if (!rec || rec.sig !== sig) {
+          const n = () => (r2() * 2 - 1) * 0.02;
+          rec = { sig: sig, dx: n(), dy: n(), dw: n(), dh: n() };
+          rectNoiseCache.set(this, rec);
+        }
+        // 同一份偏移复用到 x/left 与 y/top，并由 width/height 推导 right/bottom，
+        // 保持真实 DOMRect 的内部不变量：x===left、y===top、
+        // right-left===width、bottom-top===height（旧实现对八个字段各自独立加噪，
+        // 这四条等式全部不成立，同样是一致性检测的靶子）。
+        const x = rect.x + rec.dx;
+        const y = rect.y + rec.dy;
+        const w = rect.width + rec.dw;
+        const h = rect.height + rec.dh;
         return {
-          x: rect.x + n(), y: rect.y + n(),
-          width: rect.width + n(), height: rect.height + n(),
-          top: rect.top + n(), left: rect.left + n(),
-          right: rect.right + n(), bottom: rect.bottom + n(),
+          x: x, y: y, width: w, height: h,
+          top: y, left: x, right: x + w, bottom: y + h,
           toJSON: () => ({}),
         };
       };
