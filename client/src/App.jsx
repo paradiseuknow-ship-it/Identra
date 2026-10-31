@@ -793,6 +793,7 @@ function ProfileCard({ p, rt, fmtUptime, onView, onStop, onExportCookies, onLaun
         {p.running ? (
           <>
             <button onClick={() => onView(p.id)} className="btn btn-accent px-2.5 py-1 text-xs">实时画面</button>
+            <button onClick={() => onLaunch(p.id)} className="btn btn-outline px-2.5 py-1 text-xs" title="重启浏览器实例：代理配置已变更时自动重建会话应用新代理（C197）">重启</button>
             <button onClick={() => onStop(p.id)} className="btn btn-outline px-2.5 py-1 text-xs hover:text-rose-300">停止</button>
             <button onClick={() => onExportCookies(p.id)} className="btn btn-outline px-2.5 py-1 text-xs" title="导出运行中浏览器的全部 Cookie（JSON）">Cookie</button>
           </>

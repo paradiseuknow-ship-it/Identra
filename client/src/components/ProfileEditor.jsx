@@ -84,6 +84,21 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved, noti
   };
   const mainRef = useRef(null);
 
+  // C197：预览必须与保存同一代理口径 —— 旧实现只传 proxyId，「直接填写代理」（inline）模式
+  // 下 proxyInline 从未进预览请求 ⇒ 后端 resolveProxy 取到 null ⇒ 「基于 IP」按**本机直连**出口
+  // 解析（国内直连=Asia/Shanghai/zh-CN），预览与真实运行态（走代理出口）不一致 —— 正是
+  // 「生成新指纹却显示 shanghai」的根因。与 buildPayload 的 inline 组装条件严格同口径。
+  const inlineProxyForPreview = () => {
+    const pi = form.proxyInline;
+    if (form.proxyMode !== 'inline' || !pi?.host || !pi?.port) return null;
+    return {
+      type: pi.type || 'socks5',
+      server: `${pi.host}:${pi.port}`,
+      username: pi.username || '',
+      password: pi.password || '',
+    };
+  };
+
   const refreshPreview = async (payload) => {
     // C70：seed 支持显式覆盖 —— 新建态「生成新指纹」先 setField('seed') 再调本函数时，
     // 闭包里的 form.seed 还是旧值（setState 未生效），旧实现会用旧种子生成预览 = 看似无效。
@@ -92,6 +107,7 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved, noti
       const data = await api.previewFp({
         seed,
         proxyId: form.proxyId,
+        proxyInline: inlineProxyForPreview(), // C197：inline 断点修复（口径同 buildPayload）
         fingerprintOverride: payload?.fingerprintOverride ?? form.fingerprintOverride,
       });
       setFp(data);
@@ -103,6 +119,13 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved, noti
 
   useEffect(() => { refreshPreview(); }, []);
   useEffect(() => { refreshPreview(); }, [form.proxyId]);
+  // C197：inline 代理字段变化也要重取预览（旧实现只监听 proxyId —— 用户填完新 IP
+  // 右侧概要纹丝不动，仍显示直连出口的旧解析）。防抖 300ms：逐键输入 host/port
+  // 不该每次都打一次出口解析。
+  useEffect(() => {
+    const t = setTimeout(() => { refreshPreview(); }, 300);
+    return () => clearTimeout(t);
+  }, [form.proxyInline]);
 
   useEffect(() => {
     const main = mainRef.current;
@@ -132,6 +155,20 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved, noti
     sectionRefs[key].current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  // C197b：代理热切换收口 —— 保存后若实例仍在跑且代理已变，自动调一次 launch 完成
+  // 重建（后端 launch 对 running 实例按 proxySourceSig 走 relaunch，无需先手动停止）。
+  // 旧实现只弹提示让用户去点启动，但列表上运行中的环境**没有启动按钮**（只有
+  // 实时画面/停止/Cookie）⇒ 用户被迫手动停止→启动，体验上等于"改了不生效"。
+  const applyProxyHotswap = async (saved) => {
+    if (!saved || !saved.restartRequired) return;
+    try {
+      const r = await api.launch(saved.id);
+      notify?.(r && r.proxySwitched ? '代理已更新：浏览器已自动重启并应用新代理，无需手动关闭' : '代理已更新，已确认运行状态');
+    } catch (e) {
+      notify?.('代理已更新，但自动重启失败：' + (e.message || e) + ' —— 请手动「停止」后重新「启动」', false);
+    }
+  };
+
   const regenerateFingerprint = async () => {
     setRegenerating(true);
     try {
@@ -141,9 +178,13 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved, noti
         // C70：显式传新种子 —— 闭包 form.seed 陈旧，refreshPreview 原样读会拿旧值
         await refreshPreview({ seed: newSeed });
       } else {
-        const updated = await api.regenerateSeed(profile.id);
+        // C197a：生成新指纹 = 以**当前表单**（尤其刚改的代理/IP）为基准换 seed 重解析。
+        // 旧实现只发 { regenerateSeed: true } ⇒ 服务端用**库内旧代理**（可能是刚过期
+        // 的死 IP）解析 ⇒ unresolved 时静默保留旧指纹，用户"换了 IP 点生成"却纹丝不动。
+        const updated = await api.updateProfile(profile.id, { ...buildPayload(form), regenerateSeed: true });
         setForm((f) => ({ ...f, seed: updated.seed }));
         setFp(updated.fingerprint);
+        await applyProxyHotswap(updated);
       }
     } catch (e) { notify?.('生成失败: ' + e.message, false); } finally {
       setRegenerating(false);
@@ -159,11 +200,12 @@ export default function ProfileEditor({ profile, proxies, onClose, onSaved, noti
       if (isNew) saved = await api.createProfile(payload);
       else {
         saved = await api.updateProfile(profile.id, payload);
-        // C192：代理是 Chromium 启动参数，改配置不会热连到已运行的实例。
-        // 服务端比对签名后回传 restartRequired / proxyChanged —— 必须当场告知，
-        // 否则用户会以为"改了没生效"，继续手动停止→启动。
+        // C192/C197b：代理是 Chromium 启动参数，改配置不会热连到已运行的实例。
+        // 服务端比对签名回传 restartRequired —— 这里**直接自动热切换**（重启语义
+        // 的语义由后端 launch 对 running 实例的 relaunch 承担），不再只弹提示把
+        // 动作甩回给用户（列表运行态没有启动按钮，用户只能手动停止→启动）。
         if (saved && saved.restartRequired) {
-          notify?.('代理已更新：点一次「启动」即会自动重启并应用新代理（无需先手动停止）');
+          await applyProxyHotswap(saved);
         } else if (saved && saved.proxyChanged) {
           notify?.('代理配置已更新，下次启动生效');
         }
