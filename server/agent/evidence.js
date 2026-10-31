@@ -45,7 +45,25 @@ function filePath(taskId, file) {
   return safeJoinWithin(SNAP_DIR, taskId, file);
 }
 
-module.exports = { saveSnapshot, listForTask, filePath, SNAP_DIR };
+// C196：删除任务的整组快照（deleteTask/retry 源头清退，与 store 记录同一口径）。
+// taskId 经 safeJoinWithin 段名白名单校验（防穿越）；逐文件 unlink 而非 rmSync recursive
+// （小半径：快照目录内只有 saveSnapshot 写入的 png 文件，无子目录）；目录不存在静默
+// 返回 0；单文件删除失败跳过（不阻断任务删除）。返回删除的文件数。
+function purgeTaskSnapshots(taskId) {
+  if (!taskId || typeof taskId !== 'string') return 0;
+  let dir;
+  try { dir = safeJoinWithin(SNAP_DIR, taskId); } catch (e) { return 0; }
+  let files;
+  try { files = fs.readdirSync(dir); } catch (e) { return 0; } // 目录不存在 = 零文件，非错误
+  let removed = 0;
+  for (const f of files) {
+    try { fs.unlinkSync(safeJoinWithin(SNAP_DIR, taskId, f)); removed++; } catch (e) {}
+  }
+  try { fs.rmdirSync(dir); } catch (e) {} // 空目录移除；非空/失败留着无害
+  return removed;
+}
+
+module.exports = { saveSnapshot, listForTask, filePath, purgeTaskSnapshots, SNAP_DIR };
 
 // 对外抛出路径校验错误，供路由层转换为 400（此前会冒泡成 500）。
 module.exports.SAFE_PATH_ERROR_CODES = new Set(['UNSAFE_PATH_SEGMENT', 'PATH_ESCAPE']);

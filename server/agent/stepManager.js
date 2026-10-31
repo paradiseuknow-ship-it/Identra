@@ -242,6 +242,29 @@ function listAttempts(stepId) {
   return store.findWhere('aiAttempts', (a) => a.stepId === stepId).sort((a, b) => a.startedAt - b.startedAt);
 }
 
+// C196：清退指定 attempt 集的外置证据文件（evidence/attempt_errors/<attemptId>.<field>.json，
+// externalizeEvidence 落盘面）。调用方 = taskManager._purgeTaskEvidence（deleteTask/retry
+// 源头清退，与 store 记录同一口径）——此前只删记录，文件永久孤儿（C190 清理实测
+// evidence 318→239，25% 为孤儿）。fail-safe：目录缺失静默返回 0；单文件删除失败跳过
+// （不阻断任务删除）；带点边界用 `id + '.'` 前缀防 attemptId 互为前缀时误删。
+function purgeAttemptErrorFiles(attemptIds) {
+  if (!attemptIds || typeof attemptIds[Symbol.iterator] !== 'function') return 0;
+  let dir;
+  try { dir = evidenceErrorDir(); } catch (e) { return 0; }
+  let files;
+  try { files = fs.readdirSync(dir); } catch (e) { return 0; } // 目录不存在 = 零文件，非错误
+  let removed = 0;
+  for (const f of files) {
+    let hit = false;
+    for (const id of attemptIds) {
+      if (id && f.startsWith(id + '.')) { hit = true; break; }
+    }
+    if (!hit) continue;
+    try { fs.unlinkSync(path.join(dir, f)); removed++; } catch (e) {}
+  }
+  return removed;
+}
+
 module.exports = {
   createStep, listSteps, getStep, setStepState,
   uniqueStepId, // B1 修复：replan 步骤 id 无冲突分配（导出供 tryReplan 与针对性测试）
@@ -249,4 +272,5 @@ module.exports = {
   orphanCodeFor,
   normalizeErrorShape, // 导出供测试（仅暴露既有纯函数，不改运行时行为）
   evidenceErrorDir, // C116：导出供守护测试断言 AI store 根解析（C46 先例）
+  purgeAttemptErrorFiles, // C196：deleteTask/retry 连带清外置证据文件（消费方只委托）
 };

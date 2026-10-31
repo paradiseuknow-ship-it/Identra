@@ -25,6 +25,7 @@ const recorder = require('./recorder');
 const budget = require('./budget');
 const queue = require('./queue');
 const stepManager = require('./stepManager');
+const evidence = require('./evidence'); // C196：deleteTask/retry 连带清快照（消费方只委托）
 const { DEFAULT_POLICY } = require('./policy');
 
 const EXECUTION_MODES = ['SIMULATION', 'ASSIST', 'AUTONOMOUS', 'DEBUG'];
@@ -158,7 +159,17 @@ function listTasks() {
 // taskId 字段（runtime.js errorHistory 也按 taskId 消费）。改为删除前快照 stepIds：
 // taskId 命中直接删；pre-v0.2.2 的 taskId=null 孤儿经 stepId 命中一并删。
 function _purgeTaskEvidence(taskId) {
-  const stepIds = new Set(store.read('aiSteps', []).filter((s) => s.taskId === taskId).map((s) => s.id));
+  const taskSteps = store.read('aiSteps', []).filter((s) => s.taskId === taskId);
+  const stepIds = new Set(taskSteps.map((s) => s.id));
+  // C196：记录删除前先快照将被清退的 attempt id —— 过滤条件与下方 aiAttempts 写回
+  // 严格同口径（taskId 命中 ∪ stepId 命中，含 pre-v0.2.2 taskId=null 孤儿）。
+  // 快照必须在删除**之前**：删除后反查永远为空（C67b 同族死逻辑形态）。
+  const purgedAttemptIds = new Set(
+    store.read('aiAttempts', [])
+      .filter((a) => a && (a.taskId === taskId || stepIds.has(a.stepId)))
+      .map((a) => a.id)
+      .filter(Boolean)
+  );
   store.write('aiSteps', store.read('aiSteps', []).filter((s) => s.taskId !== taskId));
   store.write('aiAttempts', store.read('aiAttempts', []).filter((a) => a.taskId !== taskId && !stepIds.has(a.stepId)));
   // ★ C112：aiSkillRouting 也是任务级证据 —— retry 复用同一 taskId 时，旧 attempt 的
@@ -166,6 +177,16 @@ function _purgeTaskEvidence(taskId) {
   //   终态按 taskId 回填 → 跨 execution 决策/实际错配（17-E 决策质量数据集失真）；
   //   deleteTask 同理留下永久孤儿。与 aiSteps/aiAttempts 同一清退口径。
   store.write('aiSkillRouting', store.read('aiSkillRouting', []).filter((r) => r && r.taskId !== taskId));
+  // C196：外置证据文件与 store 记录同一清退口径 —— 此前只删记录，
+  // evidence/attempt_errors/<attemptId>.*.json 与 evidence/snapshots/<taskId>/
+  // 永久孤儿（C190 清理实测 evidence 318→239，25% 为孤儿）。两实现均 fail-safe：
+  // 文件/目录缺失静默跳过，删除失败不阻断任务删除。
+  try { stepManager.purgeAttemptErrorFiles(purgedAttemptIds); } catch (e) {
+    console.warn('[taskManager] C196 attempt_errors 清理失败:', e && e.message);
+  }
+  try { evidence.purgeTaskSnapshots(taskId); } catch (e) {
+    console.warn('[taskManager] C196 snapshots 清理失败:', e && e.message);
+  }
   return stepIds.size;
 }
 
