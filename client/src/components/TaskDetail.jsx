@@ -57,6 +57,75 @@ function Section({ title, children }) {
   );
 }
 
+// C175：跨域凭据授权面板。数据全部来自任务自身 —— credentialAuthorization 声明（已授权域）
+// + securityBlocks 拦截留痕（待授权域），零新增拉取。
+// 只对「域未授权族」提供授权按钮：ORIGIN_NOT_AUTHORIZED / THIRD_PARTY_AUTH_SURFACE_UNAUTHORIZED /
+// CROSS_ORIGIN_FRAME。SECURITY_CHALLENGE（人机验证）与 NO_ORIGIN_CONTEXT **刻意不提供**授权 ——
+// 前者授权即绕过人机验证（红线），后者要的是先导航而非授权。
+const ORIGIN_BLOCK_REASONS = ['ORIGIN_NOT_AUTHORIZED', 'THIRD_PARTY_AUTH_SURFACE_UNAUTHORIZED', 'CROSS_ORIGIN_FRAME'];
+
+function CredentialAuthSection({ task, onRefresh }) {
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const decl = task?.credentialAuthorization || {};
+  const authorized = Array.isArray(decl.authorizedOrigins) ? decl.authorizedOrigins : [];
+  const anchorOrigin = (() => { try { return new URL(task?.targetUrl || '').origin || null; } catch (e) { return null; } })();
+  const pending = [];
+  for (const b of (Array.isArray(task?.securityBlocks) ? task.securityBlocks : [])) {
+    if (b && b.kind === 'CREDENTIAL_ACTION_BLOCKED' && ORIGIN_BLOCK_REASONS.indexOf(b.reason) >= 0 && b.pageOrigin) {
+      if (authorized.indexOf(b.pageOrigin) < 0 && pending.indexOf(b.pageOrigin) < 0) pending.push(b.pageOrigin);
+    }
+  }
+  if (!authorized.length && !pending.length) return null; // 与跨域凭据无关的任务：面板无声隐藏
+  const grant = async (origin) => {
+    setBusy(origin);
+    setMsg('');
+    try {
+      const r = await api.aiAuthorizeOrigin(task.id, origin, task.status === 'PAUSED_FOR_HUMAN');
+      setMsg('已授权 ' + r.origin + (r.resumed ? '，任务已恢复执行' : '，对下一次动作即时生效'));
+      onRefresh && onRefresh();
+    } catch (e) {
+      setMsg('授权失败：' + String(e.message || e).slice(0, 160));
+    } finally { setBusy(''); }
+  };
+  return (
+    <Section title="Credential Authorization（凭据授权）">
+      <div className="text-xs text-slate-500 mb-2">
+        跨域凭据动作默认拒绝。授权某个域 = 允许 AI 在该域的页面上输入凭据（邮箱/密码/卡号等）。
+      </div>
+      {authorized.length > 0 && (
+        <div className="mb-2">
+          <div className="text-xs text-slate-500 mb-1">已授权域：</div>
+          <div className="flex flex-wrap gap-1.5">
+            {authorized.map((o) => (
+              <span key={o} className="text-xs font-mono px-2 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+                {o}{o === anchorOrigin ? '（入口）' : ''}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {pending.length > 0 && (
+        <div>
+          <div className="text-xs text-amber-400 mb-1">以下域的凭据动作被安全拦截（待你决定）：</div>
+          <div className="space-y-1.5">
+            {pending.map((o) => (
+              <div key={o} className="flex items-center justify-between gap-2 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5">
+                <span className="text-xs font-mono text-amber-200 break-all">{o}</span>
+                <button disabled={!!busy} onClick={() => grant(o)}
+                  className="text-xs px-2 py-1 rounded border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40 shrink-0">
+                  {busy === o ? '授权中…' : '✓ 授权此域' + (task.status === 'PAUSED_FOR_HUMAN' ? '并继续' : '')}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {msg && <div className="text-xs text-sky-300 mt-2">{msg}</div>}
+    </Section>
+  );
+}
+
 export default function TaskDetail({ taskId, onClose }) {
   useEscapeClose(true, onClose);
   const [task, setTask] = useState(null);
@@ -67,6 +136,7 @@ export default function TaskDetail({ taskId, onClose }) {
   const [recovering, setRecovering] = useState(false);
   const [recoverMsg, setRecoverMsg] = useState('');
   const eventsRef = useRef([]);
+  const reloadRef = useRef(null); // C175：授权域后立即刷新任务（不重订 SSE / 不等 2.5s 轮询）
 
   useEffect(() => {
     let alive = true;
@@ -92,6 +162,7 @@ export default function TaskDetail({ taskId, onClose }) {
       ).catch(() => {});
     };
 
+    reloadRef.current = reload; // C175：暴露给授权面板（组件卸载后 reloadRef 仍在但 alive=false，安全）
     reload();
     const poll = setInterval(reload, 2500);
 
@@ -219,6 +290,9 @@ export default function TaskDetail({ taskId, onClose }) {
               <div className="text-amber-400">升级人工：{escalation.reason || 'verification 重试耗尽 / credential 需审批'}</div>
             </Section>
           )}
+
+          {/* C175：跨域凭据授权 —— 被拦 origin 一键授权（闸门只认任务声明，授权即时生效） */}
+          <CredentialAuthSection task={task} onRefresh={() => reloadRef.current && reloadRef.current()} />
 
           {/* C27 取证四件套：诊断 / 修复尝试 / 执行详情 / 动作链重放（此前 client 零消费） */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

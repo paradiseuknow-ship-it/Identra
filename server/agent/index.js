@@ -145,6 +145,21 @@ router.post('/tasks/:id/resume', (req, res) => {
   }
 });
 
+// C175：人工授权跨域凭据 origin。只写任务声明（credentialAuthorization.authorizedOrigins），
+// 闸门判定零改动；授权对下一次动作即时生效（含 RUNNING 中）。origin 是域名声明、
+// 非凭据值，可入审计（与聊天明文红线无交集）。
+router.post('/tasks/:id/authorize-origin', (req, res) => {
+  if (aiTaskGuarded(req, res) === false) return; // C65
+  try {
+    const body = req.body || {};
+    const r = taskManager.authorizeOrigin(req.params.id, String(body.origin || '').trim(), { resume: body.resume === true });
+    aiAudit(req, 'ai.task.authorize_origin', 'ai_task', req.params.id, { origin: r.origin, resumed: r.resumed }); // C84
+    res.json({ ok: true, task: r.task, origin: r.origin, resumed: r.resumed });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e.message || e).slice(0, 300) });
+  }
+});
+
 router.post('/tasks/:id/pause', (req, res) => {
   if (aiTaskGuarded(req, res) === false) return; // C65
   try {

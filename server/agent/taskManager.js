@@ -311,6 +311,47 @@ function resume(id) {
   return task;
 }
 
+// C175：人工授权一个跨域凭据 origin —— **只写任务声明，闸门零改动**。
+// 背景：跨域凭据动作被授权闸拦截（ORIGIN_NOT_AUTHORIZED / THIRD_PARTY_AUTH_SURFACE_
+// UNAUTHORIZED / CROSS_ORIGIN_FRAME）后 pageOrigin 已落 task.securityBlocks，但此前
+// 用户没有任何途径授权该域 ⇒ 任务只能死在升级/失败。闸门每次动作都 getTask +
+// contextFor 刷新显式授权集合 ⇒ 本授权对**下一次动作即时生效**（含 RUNNING 中）。
+// 语义边界：
+//   · 归一化与闸门同口径（urlIdentity.normalizeUrl 补 scheme + credentialAuthorization
+//     .originOf 取标准 origin，默认端口省略形态一致）；不可解析 → 抛错，不落半归一垃圾；
+//   · 只合并 authorizedOrigins（去重），不触碰 allowedOAuthProviders /
+//     authorizeFlowTransitions / 运行期授予 —— 收紧/放宽其它声明不是本入口的职责；
+//   · opts.resume=true 且任务处于 PAUSED_FOR_HUMAN 时连带恢复（一键「授权并继续」）；
+//     其它状态不改变任务状态（授权是声明，不是状态转换）。
+function authorizeOrigin(id, origin, opts = {}) {
+  const credAuth = require('./credentialAuthorization');
+  const urlIdentity = require('./urlIdentity');
+  const task = getTask(id);
+  if (!task) throw new Error('任务不存在');
+  const normalized = credAuth.originOf(urlIdentity.normalizeUrl(String(origin || '').trim()));
+  if (!normalized) throw new Error('origin 不可解析: ' + String(origin).slice(0, 120));
+  const decl = task.credentialAuthorization || {};
+  const origins = Array.isArray(decl.authorizedOrigins) ? decl.authorizedOrigins.slice() : [];
+  if (origins.indexOf(normalized) < 0) origins.push(normalized);
+  task.credentialAuthorization = {
+    authorizedOrigins: origins,
+    allowedOAuthProviders: Array.isArray(decl.allowedOAuthProviders) ? decl.allowedOAuthProviders.slice() : [],
+    authorizeFlowTransitions: decl.authorizeFlowTransitions === true,
+  };
+  store.upsert('aiTasks', task);
+  events.emit({
+    taskId: task.id, executionId: task.currentExecutionId,
+    type: 'ai.credential_origin_authorized', payload: { origin: normalized },
+  });
+  let resumed = false;
+  if (opts.resume && task.status === 'PAUSED_FOR_HUMAN') {
+    resume(id);
+    resumed = true;
+  }
+  // store 读写均为副本：resume 后必须重新取任务，否则返回的是授权前的旧快照
+  return { task: getTask(id), origin: normalized, resumed };
+}
+
 // 人工审批：批准待执行动作（写入 approvedActions，policy 据此放行）
 function approve(id) {
   const task = getTask(id);
@@ -690,6 +731,7 @@ function escalate(id, error, opts = {}) {
 module.exports = {
   createTask, getTask, listTasks, deleteTask, touch,
   start, pauseForHuman, resume, cancel, retry, complete, fail, escalate,
+  authorizeOrigin, // C175：人工授权跨域凭据 origin（写声明，闸门零改动）
   attachPlan, revisePlan, approve, reject, modify, recover,
   setExecutor, isTaskTerminal, markFlowUsed,
   recordRoutingActual, // C112：导出面（fail-open 包装，供守护测试直接验证配对行为）

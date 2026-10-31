@@ -48,6 +48,8 @@ const EVENT_TYPES = [
   'agent.invalid_evidence',
   // PHASE 17-A：凭据动作授权闸拒绝（reason/pageOrigin/anchorOrigin 取证，绝不落凭据值）
   'agent.credential_action_blocked',
+  // C175：人工授权跨域凭据 origin（taskManager.authorizeOrigin 发出；payload 只含归一后 origin）
+  'ai.credential_origin_authorized',
   // PHASE 17-A：诊断进入 Runtime 决策层（state/blockedAction/required 取证）
   'agent.diagnosis_decision',
   // C135：LLM 调用遥测（llm/provider.js 发出，调用成功与否在 payload.ok 内）。

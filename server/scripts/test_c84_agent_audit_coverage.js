@@ -116,7 +116,8 @@ function parseMutationRoutes(src) {
 function structuralScan() {
   const src = fs.readFileSync(path.join(ROOT, 'server', 'agent', 'index.js'), 'utf8');
   const muts = parseMutationRoutes(src);
-  chk('P2n mutation 路由数量符合预期(34)', muts.length === 34, '实际=' + muts.length + '（新 mutation 落地后须同步更新守护基数）');
+  // C175：+1（POST /tasks/:id/authorize-origin，ai.task.authorize_origin 已埋点）
+  chk('P2n mutation 路由数量符合预期(35)', muts.length === 35, '实际=' + muts.length + '（新 mutation 落地后须同步更新守护基数）');
 
   // P2a: 双向对账 —— 每条 mutation 路由必须含 aiAudit / audit.log 埋点，或命中冻结豁免
   for (const m of muts) {
