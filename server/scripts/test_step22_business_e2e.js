@@ -26,6 +26,7 @@
 const crypto = require('crypto');
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { URLSearchParams } = require('url');
 
@@ -36,7 +37,10 @@ function section(name) { console.log('\n=== ' + name + ' ==='); }
 // ---------------------------------------------------------------- 隔离 env（必须先于 require server）
 const RUN_ID = process.env.STEP22_RUN_ID || ('run_' + Date.now().toString(36));
 const ROOT = path.resolve(__dirname, '..', '..');
-const DATA_DIR = path.join(ROOT, '.step22-e2e', RUN_ID, 'data');
+// C190：临时数据落 os.tmpdir()（C140 纪律）——原路径 ROOT/.step22-e2e/<run>/data 在仓库内
+// 跨回归累积（实测 6.1 GB 垃圾）。DATA_DIR 仅本脚本自引用（断言均走 path.join(DATA_DIR,...)），
+// 迁移到临时目录零行为变化。
+const DATA_DIR = path.join(os.tmpdir(), 'fpb-step22-e2e-' + RUN_ID);
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const MASTER_KEY = crypto.randomBytes(32).toString('base64'); // 32 字节 base64

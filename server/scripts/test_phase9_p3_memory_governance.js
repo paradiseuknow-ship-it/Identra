@@ -19,6 +19,16 @@
 //   D. 真实链路：无验证契约 → 记忆仍增长（不退化）
 //   E. 红线：不绕过验证、不判假成功、不改变 recordFailure 语义
 
+// C190：产品数据根隔离（C140 纪律）——本测试产生的任务/步骤/记忆/profile 全部落临时目录
+// （历史累积 263 条 P9P3 幽灵任务 + 83 条 p3.unit/redline 记忆进产品库）。
+// 必须在首个 server 模块 require 之前生效（dataRoot 在 require 期解析）。
+// 注：fork 的子进程重跑本文件头部 ⇒ 各自获得独立临时目录（父/子不共享数据文件，
+// before/after 的 successSum 均在子进程内自洽）。
+const _fsC190 = require('fs');
+const _osC190 = require('os');
+const _pathC190 = require('path');
+process.env.FPB_DATA_DIR = _fsC190.mkdtempSync(_pathC190.join(_osC190.tmpdir(), 'fpb-c190-p9p3-'));
+
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
@@ -215,7 +225,19 @@ async function runCaseInChild(name, planStep, timeoutMs, navPath) {
     let buf = '';
     child.stdout.on('data', (d) => { buf += String(d); });
     child.stderr.on('data', () => {});
-    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (e) {} resolve({ caseName: name, error: '子进程超时' }); }, (timeoutMs || 90000) + 30000);
+    // C190：超时击杀必须杀【整棵进程树】——child.kill('SIGKILL') 在 Windows 只杀 node 子进程，
+    // 其拉起的 Chromium 进程树全部泄漏（实测一次回归残留 16 个 chrome 进程）。
+    // win32 用 taskkill /T /F 杀树；其余平台回落 SIGKILL。
+    const killTree = (pid) => {
+      try {
+        if (process.platform === 'win32' && pid) {
+          require('child_process').spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+        } else {
+          child.kill('SIGKILL');
+        }
+      } catch (e) {}
+    };
+    const timer = setTimeout(() => { killTree(child.pid); resolve({ caseName: name, error: '子进程超时' }); }, (timeoutMs || 90000) + 30000);
     child.on('exit', () => {
       clearTimeout(timer);
       const m = buf.match(/__RESULT__(\{.*?\})__END__/s);

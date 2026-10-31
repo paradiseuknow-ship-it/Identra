@@ -10,6 +10,12 @@
 //   旧实现 `page.locator(sel).first()` → boundingBox()===null → 误报 not found，
 //   实证连续 18 次假性 ELEMENT_NOT_FOUND（task_mtudaiwupwsmo），恢复链反复 reload 后升级人工。
 
+// C190：产品数据根隔离（C140 纪律）——本测试经动态 require 触及 browserManager 写入面，
+// 全部落临时目录不再污染 server/data。必须在首个 server 模块 require 之前生效。
+const _fsC190 = require('fs');
+const _osC190 = require('os');
+const _pathC190 = require('path');
+process.env.FPB_DATA_DIR = _fsC190.mkdtempSync(_pathC190.join(_osC190.tmpdir(), 'fpb-c190-f14-'));
 const path = require('path');
 const browserManager = require(path.join(__dirname, '..', 'browserManager'));
 

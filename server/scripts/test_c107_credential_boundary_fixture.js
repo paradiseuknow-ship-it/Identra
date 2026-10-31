@@ -15,6 +15,13 @@
  *       A8 挑战页禁止 / N1 非凭据字段不受影响。
  */
 
+// C190：产品数据根隔离（C140 纪律）——本测试产生的任务/记忆/profile 全部落临时目录，
+// 不再污染 server/data。必须在首个 server 模块 require 之前生效（dataRoot 在 require 期解析）。
+const _fsC190 = require('fs');
+const _osC190 = require('os');
+const _pathC190 = require('path');
+process.env.FPB_DATA_DIR = _fsC190.mkdtempSync(_pathC190.join(_osC190.tmpdir(), 'fpb-c190-credfix-'));
+
 const http = require('http');
 const { chromium } = require('playwright');
 const tools = require('../agent/tools');

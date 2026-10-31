@@ -13,6 +13,12 @@
 // F11 计划契约：semantic 语言契约（站点原文）+ field 不得臆造 + navigate 证据不得用
 //     入口 URL 已有片段 —— planner prompt 契约层（源级守护，与 test_c105_reliability 先例一致）。
 
+// C190：产品数据根隔离（C140 纪律）——本测试经 tools/semanticResolver 传递触及持久化层，
+// 全部落临时目录不再污染 server/data。必须在首个 server 模块 require 之前生效。
+const _fsC190 = require('fs');
+const _osC190 = require('os');
+const _pathC190 = require('path');
+process.env.FPB_DATA_DIR = _fsC190.mkdtempSync(_pathC190.join(_osC190.tmpdir(), 'fpb-c190-f1011-'));
 const path = require('path');
 const fs = require('fs');
 

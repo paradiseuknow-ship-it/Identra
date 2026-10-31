@@ -13,6 +13,13 @@
 //   8) 端到端：createTask(经 enhancer) → getTask → build → contextBlock 含失败经验文本（无 LLM）
 // 用法：node server/scripts/test_step9_router_wiring.js
 
+// C190：产品数据根隔离（C140 纪律）——本测试产生的任务/记忆/profile 全部落临时目录，
+// 不再污染 server/data。必须在首个 server 模块 require 之前生效（dataRoot 在 require 期解析）。
+const _fsC190 = require('fs');
+const _osC190 = require('os');
+const _pathC190 = require('path');
+process.env.FPB_DATA_DIR = _fsC190.mkdtempSync(_pathC190.join(_osC190.tmpdir(), 'fpb-c190-s9-'));
+
 const store = require('../agent/store');
 const taskManager = require('../agent/taskManager');
 const contextBuilder = require('../agent/contextBuilder');

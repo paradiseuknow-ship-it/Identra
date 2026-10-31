@@ -7,6 +7,15 @@
 // 4) stepManager 大观察体外置（externalizeEvidence / normalizeErrorShape）
 // 5) archiveAiStore 分拣纯函数（引用完整性：task 归档则关联记录一并归档）
 
+// C190：产品数据根隔离（C140 纪律）——stepManager 的 evidence 外置走 aiStoreRoot()
+// 惰性解析（每次调用重读 env），原「逐测试 env 变戏法」虽有效，但无顶层隔离时
+// 窗口外调用（如 normalizeErrorShape 的非外置分支）仍以产品根为兜底落点。
+// 顶层隔离对两种绑定模型（require 期冻结 / 惰性解析）都成立，逐测试覆写保留无害。
+const _fsC190 = require('fs');
+const _osC190 = require('os');
+const _pathC190 = require('path');
+process.env.FPB_DATA_DIR = _fsC190.mkdtempSync(_pathC190.join(_osC190.tmpdir(), 'fpb-c190-p15st-'));
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

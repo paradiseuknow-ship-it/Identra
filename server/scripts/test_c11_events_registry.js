@@ -10,6 +10,12 @@
 // 命名空间前缀 = 事件语义锁（task./agent./ai./scheduler./dispatch./worker./schedule./
 // execution./observability.），业务对象字段（element type 等）天然不落此域。
 
+// C190：产品数据根隔离（C140 纪律）——本测试触及 events 持久化链（aiEvents.json），
+// 全部落临时目录不再污染 server/data。必须在首个 server 模块 require 之前生效。
+const _fsC190 = require('fs');
+const _osC190 = require('os');
+const _pathC190 = require('path');
+process.env.FPB_DATA_DIR = _fsC190.mkdtempSync(_pathC190.join(_osC190.tmpdir(), 'fpb-c190-c11-'));
 const fs = require('fs');
 const path = require('path');
 const { EVENT_TYPES, emit } = require('../agent/events');

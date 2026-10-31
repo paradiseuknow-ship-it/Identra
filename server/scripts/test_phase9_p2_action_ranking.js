@@ -16,6 +16,15 @@
 //   B. 真实浏览器：submit 目标落在按钮而非输入框；点击后结果真实渲染；验证仍以真证据为准
 //   C. 回归：fill 仍定位输入框；未禁用/可点击前提；ELEMENT_NOT_FOUND 语义不变
 //   D. 红线：DOM_CHANGED ≠ SUCCESS；不放宽任何验证阈值
+// C190：产品数据根隔离（C140 纪律）——本测试产生的任务/记忆/profile 全部落临时目录，
+// 不再污染 server/data（此前 E.2 探针记忆会 ARCHIVED 残留进产品 aiElementMemory）。
+// 必须在首个 server 模块 require 之前生效（dataRoot 在 require 期解析）。
+// 注：E.1 依赖「真实 store 存在污染记忆」的前提，隔离后恒走 skip 分支——其确定性
+// 覆盖由 E.2 自播种探针承担（干净环境下本就如此，无覆盖损失）。
+const _fsC190 = require('fs');
+const _osC190 = require('os');
+const _pathC190 = require('path');
+process.env.FPB_DATA_DIR = _fsC190.mkdtempSync(_pathC190.join(_osC190.tmpdir(), 'fpb-c190-p9p2-'));
 const fs = require('fs');
 const path = require('path');
 const http = require('http');

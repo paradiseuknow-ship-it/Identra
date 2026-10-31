@@ -2,6 +2,12 @@
 // test_phase4_blockers.js — Phase 4 Blockers C1/C2/C3 纯函数测试（无 API KEY / 无浏览器 / 只读）。
 // 直接验证：C1 executionFailureTaxonomy 九类覆盖；C2 传输补丁 + Evidence 链路闭合；C3 CANCELLED 100% 归因；回归。
 
+// C190：产品数据根隔离（C140 纪律）——本测试产生的任务/事件/记忆 全部落临时目录，
+// 不再污染 server/data。必须在首个 server 模块 require 之前生效（dataRoot 在 require 期解析）。
+const _fsC190 = require('fs');
+const _osC190 = require('os');
+const _pathC190 = require('path');
+process.env.FPB_DATA_DIR = _fsC190.mkdtempSync(_pathC190.join(_osC190.tmpdir(), 'fpb-c190-p4-'));
 const path = require('path');
 const fs = require('fs');
 

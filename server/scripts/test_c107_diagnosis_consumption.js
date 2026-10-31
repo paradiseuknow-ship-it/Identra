@@ -22,6 +22,13 @@
  * 全部断言基于**真实事件流 + 真实 attempt 记录 + 真实页面值**，不看源码字符串。
  */
 
+// C190：产品数据根隔离（C140 纪律）——本测试动态 require store/taskManager/db/runtime，
+// 产生的任务/事件/记忆全部落临时目录不再污染 server/data（历史每次回归留 1 条幽灵任务）。
+// 必须在首个 server 模块 require 之前生效（dataRoot 在 require 期解析）。
+const _fsC190 = require('fs');
+const _osC190 = require('os');
+const _pathC190 = require('path');
+process.env.FPB_DATA_DIR = _fsC190.mkdtempSync(_pathC190.join(_osC190.tmpdir(), 'fpb-c190-dxcons-'));
 const path = require('path');
 const http = require('http');
 const { chromium } = require('playwright');

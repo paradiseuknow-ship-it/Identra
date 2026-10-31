@@ -10,6 +10,12 @@
 //   4) 错误文案不含任何明文凭据（安全约束）。
 //   5) runtime.js 在 CREDENTIAL_UNAVAILABLE 时直送 escalate（人工），不进 repair 重试。
 
+// C190：产品数据根隔离（C140 纪律）——本测试产生的任务/事件/记忆 全部落临时目录，
+// 不再污染 server/data。必须在首个 server 模块 require 之前生效（dataRoot 在 require 期解析）。
+const _fsC190 = require('fs');
+const _osC190 = require('os');
+const _pathC190 = require('path');
+process.env.FPB_DATA_DIR = _fsC190.mkdtempSync(_pathC190.join(_osC190.tmpdir(), 'fpb-c190-credun-'));
 const fs = require('fs');
 const path = require('path');
 const tools = require('../agent/tools');

@@ -15,6 +15,12 @@
 //   B. 真实浏览器：form 进入候选池 → resolver 命中 → element_present 验证通过
 //   C. 回归：既有 input 定位、数量上限、脱敏、text_present 均未受影响
 //   D. 语义红线：DOM_CHANGED ≠ SUCCESS；元素不存在时仍判失败
+// C190：产品数据根隔离（C140 纪律）——本测试产生的任务/记忆/profile 全部落临时目录，
+// 不再污染 server/data。必须在首个 server 模块 require 之前生效（dataRoot 在 require 期解析）。
+const _fsC190 = require('fs');
+const _osC190 = require('os');
+const _pathC190 = require('path');
+process.env.FPB_DATA_DIR = _fsC190.mkdtempSync(_pathC190.join(_osC190.tmpdir(), 'fpb-c190-p9p1-'));
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');

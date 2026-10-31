@@ -16,6 +16,13 @@
 //   E 格式化：前端给卡号插空格 → 非敏感字段宽松放行，不误报
 //   F 长值：>120 字符降级整体赋值（对应人类粘贴），不击穿超时
 
+// C190：产品数据根隔离（C140 纪律）——本测试产生的任务/记忆/profile 全部落临时目录，
+// 不再污染 server/data。必须在首个 server 模块 require 之前生效（dataRoot 在 require 期解析）。
+const _fsC190 = require('fs');
+const _osC190 = require('os');
+const _pathC190 = require('path');
+process.env.FPB_DATA_DIR = _fsC190.mkdtempSync(_pathC190.join(_osC190.tmpdir(), 'fpb-c190-f20-'));
+
 const http = require('http');
 const { chromium } = require('playwright');
 const tools = require('../agent/tools');
