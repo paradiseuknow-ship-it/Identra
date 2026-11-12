@@ -320,8 +320,13 @@ async function sendIntlLocaleOverride(client, language) {
 //   ② 本次 launch 实际使用 native patched 二进制（FPB_NATIVE_CHROME 指向）——
 //      stock 系统 Chrome 无 fp-platform-version switch/merge 语义，此时让位会造成
 //      platformVersion 空值直漏（B 类一致性缺陷），必须保持既有 '15.0.0' 行为。
+//   ② 本次 launch 实际使用 native patched 二进制（FPB_NATIVE_CHROME 指向）——
+//      stock 系统 Chrome 无 fp-platform-version switch/merge 语义，此时让位会造成
+//      platformVersion 空值直漏（B 类一致性缺陷），必须保持既有 '15.0.0' 行为。
+// C199：条件②统一由 nativeOwnership.nativeBinaryActive() 单一事实源承载（本文件
+// 五个 gate 与 nativeOwnership baseline 消费同一谓词，禁止再手写展开）。
 function isC2PlatformVersionActive() {
-  return isPatchActive('platformversion-identity') && !!process.env.FPB_NATIVE_CHROME;
+  return isPatchActive('platformversion-identity') && nativeOwnership.nativeBinaryActive();
 }
 
 // Phase 16-B C3（navigator-identity）行为接线 gate。与 C2 同款相干性要求：
@@ -329,14 +334,14 @@ function isC2PlatformVersionActive() {
 // patched 二进制；stock 二进制上注入 --fp-platform 无人消费，此时让位会造成
 // navigator.platform 直漏本机原生值（B 类一致性缺陷），必须保持 JS 生产既有行为。
 function isC3PlatformActive() {
-  return isPatchActive('navigator-identity') && !!process.env.FPB_NATIVE_CHROME;
+  return isPatchActive('navigator-identity') && nativeOwnership.nativeBinaryActive();
 }
 
 // Phase 16-B C4（hardwareConcurrency-identity）行为接线 gate。patch 在
 // NavigatorBase::hardwareConcurrency() 单 virtual 点消费 --fp-hardware-concurrency；
 // 仅当 manifest 激活且运行 native patched 二进制时才注入（stock 二进制上无人消费）。
 function isC4HardwareConcurrencyActive() {
-  return isPatchActive('hardwareConcurrency-identity') && !!process.env.FPB_NATIVE_CHROME;
+  return isPatchActive('hardwareConcurrency-identity') && nativeOwnership.nativeBinaryActive();
 }
 
 // Phase 16-B C5（deviceMemory-identity）行为接线 gate。patch 在
@@ -345,7 +350,7 @@ function isC4HardwareConcurrencyActive() {
 // 白名单 = Chromium 真实输出域 {1,2,4,8,16,32}（ApproximatedDeviceMemory 实际
 // clamp 桌面 [2,32]/Android [1,8]，crbug 454354290；非 spec 文本域 {0.25..8}）。
 function isC5DeviceMemoryActive() {
-  return isPatchActive('deviceMemory-identity') && !!process.env.FPB_NATIVE_CHROME;
+  return isPatchActive('deviceMemory-identity') && nativeOwnership.nativeBinaryActive();
 }
 
 // Phase 16-B C6（maxTouchPoints-identity）行为接线 gate。patch 在
@@ -354,7 +359,7 @@ function isC5DeviceMemoryActive() {
 // 白名单 = 真实输出域 {0,5,10}（Windows SM_MAXIMUMTOUCHES 触摸屏常见 10 /
 // 无数字化仪 0；移动端典型 5）。
 function isC6MaxTouchPointsActive() {
-  return isPatchActive('maxTouchPoints-identity') && !!process.env.FPB_NATIVE_CHROME;
+  return isPatchActive('maxTouchPoints-identity') && nativeOwnership.nativeBinaryActive();
 }
 
 async function applyClientHints(page, fp) {
@@ -392,7 +397,12 @@ async function applyClientHints(page, fp) {
       await client.send('Emulation.setUserAgentOverride', {
         userAgent: fp.userAgent,
         acceptLanguage: fp.languages.join(','),
-        platform: osPlatform,
+        // C199：CDP platform 参数对应 navigator.platform（真 Chrome Windows 恒报
+        // 'Win32' 等缩写形态），传 UA-CH 风格 osPlatform（'Windows'）是格式异常，
+        // 可能被站点反检测判死；改传 fp.platform（generateFingerprint 产 Win32/
+        // MacIntel 等真 Chrome 值域）。userAgentMetadata.platform 是另一 API（
+        // userAgentData.platform，真 Chrome 报 'Windows'），保持 osPlatform 不动。
+        platform: fp.platform,
       });
       await sendIntlLocaleOverride(client, fp.language);
       // C10 纪律：不 detach。emulation override（setUserAgentOverride/setLocaleOverride）
@@ -424,7 +434,8 @@ async function applyClientHints(page, fp) {
     await client.send('Emulation.setUserAgentOverride', {
       userAgent: fp.userAgent,
       acceptLanguage: fp.languages.join(','),
-      platform: osPlatform,
+      // C199：同上（主分支）——navigator.platform 语义用 fp.platform。
+      platform: fp.platform,
       userAgentMetadata: {
         brands,
         fullVersionList,
@@ -442,7 +453,7 @@ async function applyClientHints(page, fp) {
     });
     await sendIntlLocaleOverride(client, fp.language);
     // C10 纪律：session 保持（detach 撤销 emulation override），见 fallback 分支 C10 注释。
-    console.log(`[ua] Client Hints 已对齐(原生回放): UA=${fp.userAgent} platform=${osPlatform} brands=${brands.map((b) => b.brand + '@' + b.version).join(', ')}`);
+    console.log(`[ua] Client Hints 已对齐(原生回放): UA=${fp.userAgent} platform=${fp.platform} brands=${brands.map((b) => b.brand + '@' + b.version).join(', ')}`);
   } catch (e) {
     console.warn('[ua] Client Hints 覆盖失败(已忽略):', e.message);
   }

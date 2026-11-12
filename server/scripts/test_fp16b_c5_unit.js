@@ -127,8 +127,8 @@ const read = (p) => fs.readFileSync(p, 'utf8');
   section('wiring');
   const bm = read(path.join(FPB, 'browserManager.js'));
   assert('W1 isC5DeviceMemoryActive gate 存在', bm.includes('function isC5DeviceMemoryActive()'));
-  assert('W2 gate = manifest active + FPB_NATIVE_CHROME（与 C2/C3/C4 同款相干性）',
-    /function isC5DeviceMemoryActive\(\)\s*\{\s*return isPatchActive\('deviceMemory-identity'\) && !!process\.env\.FPB_NATIVE_CHROME;/.test(bm));
+  assert('W2 gate = manifest active + nativeBinaryActive（C199 单一事实源，与 C2/C3/C4 同款相干性）',
+    /function isC5DeviceMemoryActive\(\)\s*\{\s*return isPatchActive\('deviceMemory-identity'\) && nativeOwnership\.nativeBinaryActive\(\);/.test(bm));
   assert('W3 launch 注入 --fp-device-memory=<identity 值>', bm.includes("'--fp-device-memory=' + identityDm"));
   assert('W4 接线侧白名单守卫 = 真实输出域 [1,2,4,8,16,32].includes',
     bm.includes('[1, 2, 4, 8, 16, 32].includes(identityDm)'));
@@ -145,6 +145,10 @@ const read = (p) => fs.readFileSync(p, 'utf8');
   // ---- O: nativeOwnership 运行时语义（flip 前）----
   section('ownership');
   const ownPath = path.join(FPB, 'fp', 'nativeOwnership.js');
+  // C199：ownership 登记双条件（manifest + nativeBinaryActive）；O 段验证 manifest
+  // 半边 ⇒ 前置 dummy env 使双条件齐备，段末恢复防状态泄漏。
+  const prevNativeBin = process.env.FPB_NATIVE_CHROME;
+  process.env.FPB_NATIVE_CHROME = 'C:\\fpb-c199-c5-dummy.exe';
   let own = require(ownPath);
   assert('O1 baseline 登记 navigator.deviceMemory + deviceMemory-identity',
     own.NATIVE_OWNED_BASELINE.some((b) => b.surface === 'navigator.deviceMemory' && b.patchId === 'deviceMemory-identity'),
@@ -182,6 +186,9 @@ const read = (p) => fs.readFileSync(p, 'utf8');
       && man3.isPatchActive('identity-config-plumbing') === true,
       own.getOwner('navigator.deviceMemory') + '/' + own.getOwner('navigator.hardwareConcurrency'));
   }
+  if (prevNativeBin === undefined) delete process.env.FPB_NATIVE_CHROME;
+  else process.env.FPB_NATIVE_CHROME = prevNativeBin;
+  own.applyNativeOwnedBaseline();
 
   // ---- I: identityFactory 值链路 ----
   section('identity');

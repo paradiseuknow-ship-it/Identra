@@ -114,6 +114,8 @@ function baseIdentity(over = {}) {
   // 2026-09-06 C2 不变量演进：默认态不再恒空集——NATIVE_OWNED 基线由「patch 全链完成
   // （manifest enabled）/显式测试通道」驱动（nativeOwnership.NATIVE_OWNED_BASELINE）。
   // 不变量 = 非 baseline surface 一律 JS_OWNED，且实际 NATIVE_OWNED 集合 ⊆ baseline allowlist。
+  // 2026-11 C199 相干性修复：基线判据补 nativeBinaryActive（与 browserManager 行为
+  // gate 同一谓词）——无 native 二进制时基线回空集 = JS 生产，防双输直漏。
   const OWNED_BASELINE_ALLOW = ownership.NATIVE_OWNED_BASELINE.map((b) => b.surface);
   assert('OW1 非 baseline surface 默认 JS_OWNED；NATIVE_OWNED 集合 ⊆ 基线 allowlist',
     ownership.snapshot()['fonts.check'] === 'JS_OWNED'
@@ -123,10 +125,10 @@ function baseIdentity(over = {}) {
   assert('OW3 未知 surface → fail-fast', expectThrow(() => ownership.setOwner('nope.surface', 'NATIVE_OWNED'), 'OWNERSHIP_UNKNOWN_SURFACE') === true, null);
   assert('OW4 非法 owner → fail-fast', expectThrow(() => ownership.setOwner('fonts.check', 'MAGIC'), 'OWNERSHIP_INVALID_OWNER') === true, null);
   ownership.reset();
-  assert('OW5 reset 回 gate 驱动 ownership 基线（fonts.check=JS_OWNED）',
+  assert('OW5 reset 回 gate 驱动 ownership 基线（fonts.check=JS_OWNED；C199 双条件）',
     ownership.snapshot()['fonts.check'] === 'JS_OWNED'
     && JSON.stringify(ownership.nativeOwnedSurfaces().slice().sort()) === JSON.stringify(
-      ownership.NATIVE_OWNED_BASELINE.filter((b) => manifest.isPatchActive(b.patchId)).map((b) => b.surface).sort()
+      ownership.NATIVE_OWNED_BASELINE.filter((b) => manifest.isPatchActive(b.patchId) && ownership.nativeBinaryActive()).map((b) => b.surface).sort()
     ), ownership.nativeOwnedSurfaces());
 
   assert('PM1 manifest 内建校验通过（模块加载即验证）', manifest.validateManifest(manifest.PATCHES) === true, null);

@@ -51,20 +51,30 @@ const PATCH_FILE = 'D:\\chromium\\patches\\0003-platformversion-identity.patch';
   delete process.env.FPB_FORCE_ACTIVE_PATCHES;
 
   // ---- O: ownership 基线 ----
-  // O1-O3：双层语义（2026-09-06 flip 后）——ownership = 架构登记（isPatchActive，manifest
-  // 驱动）；行为 gate = isC2PlatformVersionActive（manifest enabled **且** FPB_NATIVE_CHROME）。
-  assert('O1 manifest ACTIVE → platformVersion 架构登记 NATIVE_OWNED（isPatchActive 驱动基线）',
-    ownership.getOwner('navigator.userAgentData.platformVersion') === 'NATIVE_OWNED', ownership.snapshot()['navigator.userAgentData.platformVersion']);
+  // O1-O5：三层语义（C199 相干性修复后）——ownership = 架构登记（isPatchActive
+  // 【且】nativeBinaryActive 双条件，与 browserManager 行为 gate 同一谓词单一事实源）。
+  // C199 前旧判据只看 manifest，与行为 gate 判据漂移 ⇒ 生产未启用 native 二进制时
+  // 让位仍发生、JS 与 Native 双不管、真机值直漏（A 类缺陷，本轮修复）。
+  assert('O1 无 nativeBinaryActive：manifest ACTIVE 也保持 JS_OWNED（C199 相干性条件②）',
+    ownership.getOwner('navigator.userAgentData.platformVersion') === 'JS_OWNED', ownership.snapshot()['navigator.userAgentData.platformVersion']);
   assert('O1b flip 后状态：两 patch 均 isPatchActive=true（webdriver POC#1 + platformVersion C2）',
     manifest.isPatchActive('automation-native-webdriver') === true && manifest.isPatchActive('platformversion-identity') === true, null);
   process.env.FPB_FORCE_ACTIVE_PATCHES = 'platformversion-identity';
   ownership.applyNativeOwnedBaseline();
-  assert('O2 FORCE 通道幂等（已 ACTIVE patch 无副作用，仍 NATIVE_OWNED）',
-    ownership.getOwner('navigator.userAgentData.platformVersion') === 'NATIVE_OWNED' && ownership.isJsOwned('navigator.userAgentData.platformVersion') === false, null);
+  assert('O2 FORCE 通道仍不足：无 nativeBinaryActive → JS_OWNED（单 FORCE 不驱动让位）',
+    ownership.getOwner('navigator.userAgentData.platformVersion') === 'JS_OWNED' && ownership.isJsOwned('navigator.userAgentData.platformVersion') === true, null);
+  process.env.FPB_NATIVE_CHROME = 'C:\\fpb-c2-unit-native-dummy.exe';
+  ownership.applyNativeOwnedBaseline();
+  assert('O3 FORCE + nativeBinaryActive → NATIVE_OWNED（双条件齐备才让位）',
+    ownership.getOwner('navigator.userAgentData.platformVersion') === 'NATIVE_OWNED', null);
   delete process.env.FPB_FORCE_ACTIVE_PATCHES;
   ownership.applyNativeOwnedBaseline();
-  assert('O3 FORCE 撤除 + 基线重算 → manifest 驱动（ACTIVE 保持 NATIVE_OWNED，非回退 JS_OWNED）',
+  assert('O4 撤 FORCE 保留 nativeBinaryActive → manifest 驱动（ACTIVE 保持 NATIVE_OWNED）',
     ownership.getOwner('navigator.userAgentData.platformVersion') === 'NATIVE_OWNED', null);
+  delete process.env.FPB_NATIVE_CHROME;
+  ownership.applyNativeOwnedBaseline();
+  assert('O5 撤 nativeBinaryActive → 回 JS_OWNED（C199 防双输直漏核心不变量）',
+    ownership.getOwner('navigator.userAgentData.platformVersion') === 'JS_OWNED', null);
 
   // ---- J: inject.js 让位（真实求值，系统 Chrome）----
   // 注意：navigator.userAgentData 仅存在于 http(s) 真实 origin（about:blank/data: 均为
@@ -131,11 +141,11 @@ const PATCH_FILE = 'D:\\chromium\\patches\\0003-platformversion-identity.patch';
 
   // ---- W: browserManager 接线静态检查 ----
   const bmSrc = fs.readFileSync(path.join(ROOT, 'browserManager.js'), 'utf8');
-  assert('W1 browserManager gate 同时约束 launch args 注入与 CDP 让位（单点 isC2PlatformVersionActive）',
-    bmSrc.includes("isPatchActive('platformversion-identity') && !!process.env.FPB_NATIVE_CHROME")
-    && bmSrc.includes("'--fp-platform-version=' + identityPv")
-    && bmSrc.includes('if (isC2PlatformVersionActive())')
-    && bmSrc.includes("platformVersion: (fp._uaHev && fp._uaHev.platformVersion) || '15.0.0'"), null);
+  assert('W1 browserManager gate 同时约束 launch args 注入与 CDP 让位（单点 isC2PlatformVersionActive，C199 单一事实源）',
+    bmSrc.includes("isPatchActive('platformversion-identity') && nativeOwnership.nativeBinaryActive()")
+      && bmSrc.includes("'--fp-platform-version=' + identityPv")
+      && bmSrc.includes('if (isC2PlatformVersionActive())')
+      && bmSrc.includes("platformVersion: (fp._uaHev && fp._uaHev.platformVersion) || '15.0.0'"), null);
   assert('W2 fp._nativeOwned 已接线（nativeOwnedSurfaces → buildInjectionScript）',
     bmSrc.includes('fp._nativeOwned = nativeOwnership.nativeOwnedSurfaces()'), null);
 

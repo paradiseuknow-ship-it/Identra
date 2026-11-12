@@ -102,8 +102,8 @@ const bm = read(ROOT + '/server/browserManager.js');
 const inj = read(ROOT + '/server/fp/inject.js');
 const own = read(ROOT + '/server/fp/nativeOwnership.js');
 assert('W1 browserManager 定义 isC6MaxTouchPointsActive', bm.includes('function isC6MaxTouchPointsActive()'));
-assert('W2 gate 语义 = isPatchActive(maxTouchPoints-identity) && FPB_NATIVE_CHROME',
-  /function isC6MaxTouchPointsActive\(\) \{\s*\r?\n\s*return isPatchActive\('maxTouchPoints-identity'\) && !!process\.env\.FPB_NATIVE_CHROME;/.test(bm));
+assert('W2 gate 语义 = isPatchActive(maxTouchPoints-identity) + nativeBinaryActive（C199 单一事实源）',
+  /function isC6MaxTouchPointsActive\(\) \{\s*\r?\n\s*return isPatchActive\('maxTouchPoints-identity'\) && nativeOwnership\.nativeBinaryActive\(\);/.test(bm));
 assert('W3 launch 块注入 --fp-max-touch-points=identity 值',
   bm.includes("launchArgs.push('--fp-max-touch-points=' + identityMt);"));
 assert('W4 派生规则与 inject.js JS 层同构（Android/iOS → 5，否则 0）',
@@ -115,6 +115,10 @@ assert('W6 ownership baseline 含 {navigator.maxTouchPoints, maxTouchPoints-iden
   own.includes("{ surface: 'navigator.maxTouchPoints', patchId: 'maxTouchPoints-identity' }"));
 
 // ---- O 区：ownership 真值 ----
+// C199：ownership 登记双条件（manifest + nativeBinaryActive）；O 区前置 dummy env
+// 使双条件齐备（本区验证 manifest 半边），O5 块后恢复防状态泄漏。
+const prevNativeBin = process.env.FPB_NATIVE_CHROME;
+process.env.FPB_NATIVE_CHROME = 'C:\\fpb-c199-c6-dummy.exe';
 const ownership = require('../fp/nativeOwnership');
 assert('O1 SURFACES 词表含 navigator.maxTouchPoints（16-A 登记）',
   ownership.SURFACES.includes('navigator.maxTouchPoints'));
@@ -141,6 +145,12 @@ assert('O3 flip 后 isJsOwned = false（JS 注入路径让位）',
   assert('O5 FORCE 撤除后回到 baseline 驱动态（enabled=true → NATIVE_OWNED 无泄漏）',
     ownership.getOwner('navigator.maxTouchPoints') === 'NATIVE_OWNED');
 }
+if (prevNativeBin === undefined) delete process.env.FPB_NATIVE_CHROME;
+else process.env.FPB_NATIVE_CHROME = prevNativeBin;
+ownership.reset();
+assert('O6 撤 nativeBinaryActive → 回 JS_OWNED（C199 防双输直漏核心不变量）',
+  ownership.getOwner('navigator.maxTouchPoints') === 'JS_OWNED',
+  ownership.getOwner('navigator.maxTouchPoints'));
 
 // ---- I 区：值链一致性 ----
 assert('I1 白名单 {0,5,10} ⊇ JS 派生域 {0,5}（os 规则全集）',

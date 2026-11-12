@@ -101,8 +101,8 @@ const read = (p) => fs.readFileSync(p, 'utf8');
   section('wiring');
   const bm = read(path.join(FPB, 'browserManager.js'));
   assert('W1 isC4HardwareConcurrencyActive gate 存在', bm.includes('function isC4HardwareConcurrencyActive()'));
-  assert('W2 gate = manifest active + FPB_NATIVE_CHROME（与 C2/C3 同款相干性）',
-    /function isC4HardwareConcurrencyActive\(\)\s*\{\s*return isPatchActive\('hardwareConcurrency-identity'\) && !!process\.env\.FPB_NATIVE_CHROME;/.test(bm));
+  assert('W2 gate = manifest active + nativeBinaryActive（C199 单一事实源，与 C2/C3 同款相干性）',
+    /function isC4HardwareConcurrencyActive\(\)\s*\{\s*return isPatchActive\('hardwareConcurrency-identity'\) && nativeOwnership\.nativeBinaryActive\(\);/.test(bm));
   assert('W3 launch 注入 --fp-hardware-concurrency=<identity 值>', bm.includes("'--fp-hardware-concurrency=' + identityHc"));
   assert('W4 bare switch value_or 语义', /\? '--fp-hardware-concurrency=' \+ identityHc : '--fp-hardware-concurrency'/.test(bm));
   assert('W5 identity 值路径 = identity.identity.cpuProfile.hardwareConcurrency',
@@ -116,6 +116,10 @@ const read = (p) => fs.readFileSync(p, 'utf8');
   // ---- O: nativeOwnership 运行时语义 ----
   section('ownership');
   const ownPath = path.join(FPB, 'fp', 'nativeOwnership.js');
+  // C199：ownership 登记双条件（manifest + nativeBinaryActive）；O 段验证 manifest
+  // 半边 ⇒ 前置 dummy env 使双条件齐备，段末恢复防状态泄漏。
+  const prevNativeBin = process.env.FPB_NATIVE_CHROME;
+  process.env.FPB_NATIVE_CHROME = 'C:\\fpb-c199-c4-dummy.exe';
   let own = require(ownPath);
   assert('O1 baseline 登记 navigator.hardwareConcurrency + hardwareConcurrency-identity',
     own.NATIVE_OWNED_BASELINE.some((b) => b.surface === 'navigator.hardwareConcurrency' && b.patchId === 'hardwareConcurrency-identity'),
@@ -150,6 +154,9 @@ const read = (p) => fs.readFileSync(p, 'utf8');
       && man3.isPatchActive('identity-config-plumbing') === true,
       own.getOwner('navigator.hardwareConcurrency') + '/' + man3.isPatchActive('identity-config-plumbing'));
   }
+  if (prevNativeBin === undefined) delete process.env.FPB_NATIVE_CHROME;
+  else process.env.FPB_NATIVE_CHROME = prevNativeBin;
+  own.applyNativeOwnedBaseline();
 
   // ---- I: identityFactory 值链路 ----
   section('identity');

@@ -36,9 +36,21 @@ const state = new Map(SURFACES.map((s) => [s, 'JS_OWNED']));
 
 // Phase 16-B C2 — POC 完成驱动的 NATIVE_OWNED 基线：
 // 仅当对应 patch 全链完成（manifest enabled；或显式测试通道 FPB_FORCE_ACTIVE_PATCHES）
-// 才登记 NATIVE_OWNED，inject.js/browserManager 自动让位。stock 二进制或未完成 POC
+// 【且】本次进程实际使用 native patched 二进制（FPB_NATIVE_CHROME 指向）才登记
+// NATIVE_OWNED，inject.js/browserManager 自动让位。stock 二进制或未完成 POC
 // 保持 JS_OWNED = 行为逐字节等价（§18 manifest discipline 的 ownership 侧镜像）。
+// C199 相干性修复：旧判据只看 manifest，与 browserManager 的行为 gate 判据漂移
+// （gate 还要求 native 二进制实际启用）——生产未启用 native 时 manifest 仍驱动让位
+// ⇒ JS 与 Native 双不管、真机值直漏。修复 = 与行为 gate 同一双条件，单一事实源
+// nativeBinaryActive()（本模块导出，browserManager 五个 gate 消费同一谓词）。
 const { isPatchActive } = require('./nativePatchManifest');
+
+// native patched 二进制是否实际启用（与 launch 侧二进制选择同一 env 开关）。
+// 架构登记（本 baseline）与行为 gate 必须消费同一谓词——两处手写同义判据是
+// C199 缺陷的根因，禁止再内联展开。
+function nativeBinaryActive() {
+  return !!process.env.FPB_NATIVE_CHROME;
+}
 
 const NATIVE_OWNED_BASELINE = [
   { surface: 'navigator.userAgentData.platformVersion', patchId: 'platformversion-identity' },
@@ -68,7 +80,7 @@ const NATIVE_OWNED_BASELINE = [
 function applyNativeOwnedBaseline() {
   for (const s of SURFACES) state.set(s, 'JS_OWNED');
   for (const b of NATIVE_OWNED_BASELINE) {
-    if (isPatchActive(b.patchId)) state.set(b.surface, 'NATIVE_OWNED');
+    if (isPatchActive(b.patchId) && nativeBinaryActive()) state.set(b.surface, 'NATIVE_OWNED');
   }
 }
 applyNativeOwnedBaseline();
@@ -114,4 +126,4 @@ function reset() {
   applyNativeOwnedBaseline();
 }
 
-module.exports = { OWNERS, SURFACES, OwnershipError, NATIVE_OWNED_BASELINE, setOwner, getOwner, isJsOwned, nativeOwnedSurfaces, snapshot, reset, applyNativeOwnedBaseline };
+module.exports = { OWNERS, SURFACES, OwnershipError, NATIVE_OWNED_BASELINE, nativeBinaryActive, setOwner, getOwner, isJsOwned, nativeOwnedSurfaces, snapshot, reset, applyNativeOwnedBaseline };
