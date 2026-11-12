@@ -14,6 +14,7 @@ const { buildInjectionScript } = require('./fp/inject');
 const nativeOwnership = require('./fp/nativeOwnership');
 const { isPatchActive } = require('./fp/nativePatchManifest');
 const { applyHeadlessBrandContract } = require('./fp/uaBrands');
+const { alignUaToEngine } = require('./fp/uaVersion'); // C198：UA 版本冻结对齐唯一实现（launch/preview/regen 共用）
 const { checkProxyGeo, getProxyEgressGeo, resolveProxyType, getEgressIp } = require('./proxyChecker');
 const { lookupIp } = require('./geoip');
 const { startShim } = require('./socksShim');
@@ -209,13 +210,21 @@ async function captureNativeUaBrands(context, cacheKey) {
       if (!u || !Array.isArray(u.brands) || !u.brands.length) return null;
       const brands = u.brands.map((b) => ({ brand: String(b.brand), version: String(b.version) }));
       let fullVersionList = null;
+      // C198：platformVersion / uaFullVersion 一并捕获（本捕获页运行于任何 CDP override
+      // 之前 = 纯原生值）。实证：真 Win11 Chrome 157 报 platformVersion=19.0.0 /
+      // uaFullVersion=157.0.8103.38；旧实现硬编码 '15.0.0' 是可观测偏差（且 override 后
+      // native 回读已被 userAgentMetadata.platformVersion='15.0.0' 污染，只能捕获期拿真值）。
+      let platformVersion = null;
+      let uaFullVersion = null;
       try {
-        const he = await u.getHighEntropyValues(['fullVersionList']);
+        const he = await u.getHighEntropyValues(['fullVersionList', 'platformVersion', 'uaFullVersion']);
         if (he && Array.isArray(he.fullVersionList) && he.fullVersionList.length) {
           fullVersionList = he.fullVersionList.map((b) => ({ brand: String(b.brand), version: String(b.version) }));
         }
+        if (he && typeof he.platformVersion === 'string' && he.platformVersion) platformVersion = he.platformVersion;
+        if (he && typeof he.uaFullVersion === 'string' && he.uaFullVersion) uaFullVersion = he.uaFullVersion;
       } catch (e) {}
-      return { brands, fullVersionList };
+      return { brands, fullVersionList, platformVersion, uaFullVersion };
     });
   } catch (e) {
     console.warn('[ua] native brands 捕获失败(双层降级为浏览器原生):', e.message);
@@ -225,6 +234,56 @@ async function captureNativeUaBrands(context, cacheKey) {
     if (server) server.close();
   }
   if (result && cacheKey) _nativeUaBrandsCache.set(cacheKey, result);
+  return result;
+}
+
+// C198：原生高熵值探测（platformVersion / uaFullVersion 真值）。
+// 为什么不能复用 captureNativeUaBrands 的捕获页：该页运行在带 Playwright userAgent
+// override 的 context 里——Chromium 对无 userAgentMetadata 的 override 会按 UA 字符串
+// 合成 metadata（"Windows NT 10.0" → platformVersion="10.0"，实证），拿不到 OS 真值
+// （本机真 Win11 = 19.0.0）。本探测用同一二进制裸 launch（无任何 override）→ 原生
+// GetPlatformVersion() 映射真值。进程内按 (二进制|版本) 缓存——OS 不重装不变，一次成本。
+const _nativeHevCache = new Map();
+async function captureNativeHev(executablePath, versionKey) {
+  const key = (executablePath || 'bundled') + '|' + (versionKey || '');
+  if (_nativeHevCache.has(key)) return _nativeHevCache.get(key);
+  let result = null;
+  let hevBrowser = null;
+  let server = null;
+  try {
+    server = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><body>hev-probe</body></html>');
+    });
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+    // 非持久 launch（只读探测，无 user-data-dir；亦不占用 launchPersistentContext 面——
+    // c64 去重守护按该入口计数，探测不得影响产品 launch 语义）
+    hevBrowser = await chromium.launch({
+      headless: true,
+      ...(executablePath && fs.existsSync(executablePath) ? { executablePath } : {}),
+    });
+    const page = await hevBrowser.newPage();
+    // 127.0.0.1 = 安全上下文（about:blank 非安全，userAgentData 缺席，实证）
+    await page.goto('http://127.0.0.1:' + server.address().port + '/', { waitUntil: 'load', timeout: 10000 });
+    result = await page.evaluate(async () => {
+      const u = navigator.userAgentData;
+      if (!u) return null;
+      try {
+        const he = await u.getHighEntropyValues(['platformVersion', 'uaFullVersion']);
+        return {
+          platformVersion: (he && typeof he.platformVersion === 'string' && he.platformVersion) || null,
+          uaFullVersion: (he && typeof he.uaFullVersion === 'string' && he.uaFullVersion) || null,
+        };
+      } catch (e) { return null; }
+    });
+  } catch (e) {
+    console.warn('[ua] native HEV 探测失败(platformVersion 回退 15.0.0):', String(e.message || e).slice(0, 120));
+    result = null;
+  } finally {
+    if (hevBrowser) await hevBrowser.close().catch(() => {});
+    if (server) server.close();
+  }
+  _nativeHevCache.set(key, result);
   return result;
 }
 
@@ -370,7 +429,10 @@ async function applyClientHints(page, fp) {
         brands,
         fullVersionList,
         platform: osPlatform,
-        platformVersion: '15.0.0',
+        // C198：platformVersion 用捕获期原生值（真 Win11=19.0.0）；旧硬编码 '15.0.0'
+        // 会经 setUserAgentOverride 污染 native 回读（JS getHighEntropyValues 也变 15.0.0，
+        // 与真实 Chrome 的 OS 版本报告相异）。捕获不可得时保留旧值兜底。
+        platformVersion: (fp._uaHev && fp._uaHev.platformVersion) || '15.0.0',
         architecture: 'x86',
         bitness: '64',
         model: '',
@@ -1103,13 +1165,15 @@ async function _launchProfile(profile, proxies) {
   const ipGeo = needsFreshIpGeo ? await resolveLaunchIpGeo(profile, proxy) : (profile.fingerprint?.ipGeo || null);
   const fp = generateFingerprint(seedFromProfile(profile), override, ipGeo);
 
-  // 把伪造 UA 的 Chrome 版本对齐到本机真实引擎版本（含完整补丁/构建号），
-  // 避免「UA 版本 ≠ 引擎版本」的次级标记，也避免写成 151.0.0.0 这种零补丁假版本被高级 Client Hints 校验抓到。
+  // 把伪造 UA 的 Chrome 版本对齐到本机引擎 major，并冻结为 N.0.0.0（UA Reduction 格式，
+  // C198 单一实现 = fp/uaVersion.alignUaToEngine）。实证对照：真 Chrome 157 的 UA 为
+  // Chrome/157.0.0.0；完整版本号只进 UA-CH uaFullVersion/fullVersionList（原生回读）。
+  // 旧实现把引擎完整版本号写进 UA = 全网真实 Chrome 都不会出现的格式异常。
   const realVer = getChromeVersion();
   if (realVer && fp.userAgent && /Chrome\/\d+(\.\d+)*/.test(fp.userAgent)) {
     const before = fp.userAgent;
-    fp.userAgent = fp.userAgent.replace(/Chrome\/\d+(\.\d+)*/, 'Chrome/' + realVer);
-    if (before !== fp.userAgent) console.log(`[ua] 已将伪造 UA 版本对齐到引擎: ${before} -> ${fp.userAgent}`);
+    fp.userAgent = alignUaToEngine(fp.userAgent, realVer);
+    if (before !== fp.userAgent) console.log(`[ua] 已将伪造 UA 对齐到引擎(major,冻结格式): ${before} -> ${fp.userAgent}`);
   } else if (fp.userAgent && /Chrome\/\d+(\.\d+)*/.test(fp.userAgent)) {
     // 一致性失守必须可见：不阻断启动，但每次都报警（防止再次出现「静默分裂」而无人察觉）
     console.warn(`[ua] 引擎版本未知（profile ${profile.id}）：UA 保持 ${fp.userAgent.match(/Chrome\/[\d.]+/)[0]}，未与 brands/identity 对齐`);
@@ -1230,17 +1294,31 @@ async function _launchProfile(profile, proxies) {
       : (process.env.FPB_NATIVE_CHROME && fs.existsSync(process.env.FPB_NATIVE_CHROME)) ? process.env.FPB_NATIVE_CHROME
       : (fs.existsSync(SYSTEM_CHROME) ? SYSTEM_CHROME : undefined),
   };
+  // 分辨率三态（C198）：真实最大化（viewport null＋start-maximized）｜headful 自定义/隐藏
+  // （viewport null＋window-size，自然内容区）｜无头（固定视口但高度物理合理）。
+  const sw = customScreen ? customScreen.width : fp.screen.width;
+  const sh = customScreen ? customScreen.height : fp.screen.height;
   if (useRealScreen) {
     // viewport:null => Playwright 以「最大化窗口」启动；--start-maximized + --window-position 双保险
     launchOpts.viewport = null;
     launchOpts.args = launchOpts.args.concat(['--start-maximized', '--window-position=0,0']);
-  } else {
-    // 无头（截图用固定视口）或用户自定义分辨率：精确把窗口设为该尺寸（不最大化）
-    const sw = customScreen ? customScreen.width : fp.screen.width;
-    const sh = customScreen ? customScreen.height : fp.screen.height;
-    launchOpts.viewport = { width: sw, height: sh };
-    launchOpts.deviceScaleFactor = (customScreen && customScreen.pixelRatio) || fp.screen.pixelRatio;
+  } else if (isHeadful) {
+    // C198：headful（自定义分辨率 / 隐藏窗口）不强制 viewport——Emulation 覆写会把 inner
+    // 钉成窗口全尺寸，产出真实浏览器不可能出现的 outer == inner（工具栏至少占 ~85px），
+    // 且 inner > screen.availHeight 物理不可能（STEP19 审计 M2 实证 1366x768 == 1366x768）。
+    // viewport:null = 自然内容区（window-size 减去真实工具栏），outer/inner/avail 三者自然成立；
+    // 缩放比由 inject.js JS 层伪造（与 pixelRatio 声明一致），不走 emulation 视口覆写链。
+    launchOpts.viewport = null;
     launchOpts.args = launchOpts.args.concat([`--window-size=${sw},${sh}`]);
+  } else {
+    // 无头（云查看截图）：保留固定视口保证截图稳定，但高度必须物理合理——
+    // 真实 headful Chrome 的 innerHeight ≤ availHeight - 工具栏(~85px)；
+    // 旧实现 inner == screen.height 在任何真实桌面环境都不成立（STEP19 审计 M1 实证）。
+    const availH = (customScreen && customScreen.availHeight) || fp.screen.availHeight || (sh - 40);
+    const vh = Math.max(480, Math.min(sh, availH - 88));
+    launchOpts.viewport = { width: sw, height: vh };
+    launchOpts.deviceScaleFactor = (customScreen && customScreen.pixelRatio) || fp.screen.pixelRatio;
+    launchOpts.args = launchOpts.args.concat([`--window-size=${sw},${vh}`]);
   }
   Object.assign(launchOpts, {
     userAgent: fp.userAgent,
@@ -1298,6 +1376,21 @@ async function _launchProfile(profile, proxies) {
       fp._uaBrands = applyHeadlessBrandContract(nativeUa.brands);
       fp._uaFullVersionList = nativeUa.fullVersionList ? applyHeadlessBrandContract(nativeUa.fullVersionList) : null;
       console.log('[ua] native brands 已捕获: ' + fp._uaBrands.map((b) => b.brand + '@' + b.version).join(', '));
+    }
+    // C198：原生高熵值（platformVersion / uaFullVersion）。真值来源 = 无 override 裸探测
+    // （captureNativeHev；捕获页的 platformVersion 是 UA 合成值不可用，仅补 uaFullVersion）。
+    // inject.js（JS 层回退链首选项）与 applyClientHints（userAgentMetadata）同源消费。
+    {
+      const probeHev = await captureNativeHev(launchOpts.executablePath, realVer).catch(() => null);
+      const capUafv = (nativeUa && nativeUa.uaFullVersion) || null;
+      const hev = {
+        platformVersion: (probeHev && probeHev.platformVersion) || null,
+        uaFullVersion: (probeHev && probeHev.uaFullVersion) || capUafv || null,
+      };
+      if (hev.platformVersion || hev.uaFullVersion) {
+        fp._uaHev = hev;
+        console.log('[ua] native HEV: platformVersion=' + hev.platformVersion + ' uaFullVersion=' + hev.uaFullVersion);
+      }
     }
   } catch (e) {}
 

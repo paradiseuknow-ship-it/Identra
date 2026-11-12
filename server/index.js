@@ -28,6 +28,7 @@ const settings = require('./settings'); // C14：运行时设置中心（保存�
 settings.applyToEnv(); // 启动时应用已保存的覆盖（settings 已设置的字段优先于 .env）
 const { generateFingerprint, seedFromProfile } = require('./fp/generate');
 const ipGeoResolve = require('./fp/ipGeo'); // C193：「基于 IP」解析唯一实现（与启动路径同源）
+const { alignUaToEngine } = require('./fp/uaVersion'); // C198：UA 冻结格式对齐（与 launch 同一实现）
 const engineInfo = require('./engineInfo'); // C194：内核版本检测 / 定期检查 / 触发更新
 const { runIntegrityCheck } = require('./integrity');
 const { runWorkflow } = require('./automation/engine');
@@ -383,10 +384,10 @@ router.get('/profiles/:id/integrity', async (req, res) => {
         ipGeoForCheck = (await ipGeoResolve.resolveEgressGeo(proxyForProfile, { strict: false, cache: true })).geo;
       } catch (e) { ipGeoForCheck = null; }
     }
-    // 镜像启动时的 UA 对齐，使报告反映真实运行态（而非存储里的旧 UA）
+    // 镜像启动时的 UA 对齐，使报告反映真实运行态（C198：冻结格式，与 launch 同一实现）
     const realVer = browserManager.getChromeVersion();
     if (realVer && fp.userAgent && /Chrome\/\d+(\.\d+)*/.test(fp.userAgent)) {
-      fp.userAgent = fp.userAgent.replace(/Chrome\/\d+(\.\d+)*/, 'Chrome/' + realVer);
+      fp.userAgent = alignUaToEngine(fp.userAgent, realVer);
     }
     const report = runIntegrityCheck(p, { fp, engineVersion: realVer, proxies: db.getProxies(), ipGeo: ipGeoForCheck });
     res.json({ id: p.id, ...report });
@@ -643,7 +644,7 @@ templateRouter.get('/templates/:id/check', (req, res) => {
       const mergedOverride = { os: p.os, browser: p.browser, ...p.fingerprintOverride };
       const fp = generateFingerprint(seedFromProfile(p), mergedOverride, null);
       if (engineVersion && fp.userAgent && /Chrome\/\d+(\.\d+)*/.test(fp.userAgent)) {
-        fp.userAgent = fp.userAgent.replace(/Chrome\/\d+(\.\d+)*/, 'Chrome/' + engineVersion);
+        fp.userAgent = alignUaToEngine(fp.userAgent, engineVersion); // C198 冻结格式，与 launch 同一实现
       }
       const report = runIntegrityCheck(p, { fp, engineVersion, proxies: db.getProxies() });
       const failed = report.results.filter((r) => !r.ok).map((r) => r.area + ': ' + r.msg);

@@ -1,11 +1,11 @@
 {
-  "at": "2026-08-30T03:31:25.410Z",
+  "at": "2026-11-12T16:09:35.035Z",
   "modes": {
     "product-headless": {
-      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.174 Safari/537.36",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.8103.38 Safari/537.36",
       "uaHeadlessLike": false,
       "webdriver": false,
-      "platformNav": "Win32",
+      "platformNav": "Windows",
       "mimeTypes": {
         "length": 2,
         "loc": "proto:native-get",
@@ -57,14 +57,14 @@
       },
       "connection": {
         "effectiveType": "4g",
-        "downlink": 1.45,
+        "downlink": 1.3,
         "rtt": 100,
         "type": null
       },
       "contactsManager": false,
       "contentIndex": false,
-      "deviceMemory": 16,
-      "hardwareConcurrency": 15,
+      "deviceMemory": 32,
+      "hardwareConcurrency": 20,
       "webgl": {
         "vendor": "Google Inc. (Intel)",
         "renderer": "ANGLE (Intel, Intel(R) Iris(TM) Plus Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)",
@@ -97,9 +97,9 @@
       },
       "userAgentData": {
         "brands": [
-          "Not=A?Brand|99",
-          "Google Chrome|151",
-          "Chromium|151"
+          "Not-A.Brand|99",
+          "Google Chrome|157",
+          "Chromium|157"
         ],
         "mobile": false,
         "platform": "Windows"
@@ -107,16 +107,16 @@
       "uaHighEntropy": {
         "brands": [
           {
-            "brand": "Not=A?Brand",
+            "brand": "Not-A.Brand",
             "version": "99"
           },
           {
             "brand": "Google Chrome",
-            "version": "151"
+            "version": "157"
           },
           {
             "brand": "Chromium",
-            "version": "151"
+            "version": "157"
           }
         ],
         "mobile": false,
@@ -125,19 +125,19 @@
         "architecture": "x86",
         "bitness": "64",
         "model": "",
-        "uaFullVersion": "151.0.7922.174",
+        "uaFullVersion": "157.0.8103.38",
         "fullVersionList": [
           {
-            "brand": "Not=A?Brand",
+            "brand": "Not-A.Brand",
             "version": "99.0.0.0"
           },
           {
             "brand": "Google Chrome",
-            "version": "151.0.7922.174"
+            "version": "157.0.8103.38"
           },
           {
             "brand": "Chromium",
-            "version": "151.0.7922.174"
+            "version": "157.0.8103.38"
           }
         ]
       },
@@ -152,7 +152,7 @@
       "rtcPeerConnection": true,
       "iframe": {
         "w": 503.9995367189217,
-        "h": 303.98383487625046,
+        "h": 304.00284648325294,
         "contentInnerW": 500,
         "contentInnerH": 300
       },
@@ -165,10 +165,10 @@
       }
     },
     "product-hidden-headful": {
-      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.174 Safari/537.36",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.8103.38 Safari/537.36",
       "uaHeadlessLike": false,
       "webdriver": false,
-      "platformNav": "Win32",
+      "platformNav": "Windows",
       "mimeTypes": {
         "length": 2,
         "loc": "proto:native-get",
@@ -220,14 +220,14 @@
       },
       "connection": {
         "effectiveType": "4g",
-        "downlink": 1.45,
+        "downlink": 1.35,
         "rtt": 100,
         "type": null
       },
       "contactsManager": false,
       "contentIndex": false,
-      "deviceMemory": 8,
-      "hardwareConcurrency": 4,
+      "deviceMemory": 32,
+      "hardwareConcurrency": 20,
       "webgl": {
         "vendor": "Google Inc. (Intel)",
         "renderer": "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)",
@@ -260,9 +260,9 @@
       },
       "userAgentData": {
         "brands": [
-          "Not=A?Brand|99",
-          "Google Chrome|151",
-          "Chromium|151"
+          "Not-A.Brand|99",
+          "Google Chrome|157",
+          "Chromium|157"
         ],
         "mobile": false,
         "platform": "Windows"
@@ -270,16 +270,16 @@
       "uaHighEntropy": {
         "brands": [
           {
-            "brand": "Not=A?Brand",
+            "brand": "Not-A.Brand",
             "version": "99"
           },
           {
             "brand": "Google Chrome",
-            "version": "151"
+            "version": "157"
           },
           {
             "brand": "Chromium",
-            "version": "151"
+            "version": "157"
           }
         ],
         "mobile": false,
@@ -288,19 +288,19 @@
         "architecture": "x86",
         "bitness": "64",
         "model": "",
-        "uaFullVersion": "151.0.7922.174",
+        "uaFullVersion": "157.0.8103.38",
         "fullVersionList": [
           {
-            "brand": "Not=A?Brand",
+            "brand": "Not-A.Brand",
             "version": "99.0.0.0"
           },
           {
             "brand": "Google Chrome",
-            "version": "151.0.7922.174"
+            "version": "157.0.8103.38"
           },
           {
             "brand": "Chromium",
-            "version": "151.0.7922.174"
+            "version": "157.0.8103.38"
           }
         ]
       },
@@ -315,7 +315,7 @@
       "rtcPeerConnection": true,
       "iframe": {
         "w": 503.3318249803595,
-        "h": 303.34527656990105,
+        "h": 303.34585638292134,
         "contentInnerW": 500,
         "contentInnerH": 300
       },
@@ -328,7 +328,7 @@
       }
     },
     "control-headed": {
-      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
       "uaHeadlessLike": false,
       "webdriver": true,
       "platformNav": "Win32",
@@ -423,9 +423,9 @@
       },
       "userAgentData": {
         "brands": [
-          "Not=A?Brand|99",
-          "Google Chrome|151",
-          "Chromium|151"
+          "Not-A.Brand|99",
+          "Google Chrome|157",
+          "Chromium|157"
         ],
         "mobile": false,
         "platform": "Windows"
@@ -435,37 +435,37 @@
         "bitness": "64",
         "brands": [
           {
-            "brand": "Not=A?Brand",
+            "brand": "Not-A.Brand",
             "version": "99"
           },
           {
             "brand": "Google Chrome",
-            "version": "151"
+            "version": "157"
           },
           {
             "brand": "Chromium",
-            "version": "151"
+            "version": "157"
           }
         ],
         "fullVersionList": [
           {
-            "brand": "Not=A?Brand",
+            "brand": "Not-A.Brand",
             "version": "99.0.0.0"
           },
           {
             "brand": "Google Chrome",
-            "version": "151.0.7922.174"
+            "version": "157.0.8103.38"
           },
           {
             "brand": "Chromium",
-            "version": "151.0.7922.174"
+            "version": "157.0.8103.38"
           }
         ],
         "mobile": false,
         "model": "",
         "platform": "Windows",
         "platformVersion": "19.0.0",
-        "uaFullVersion": "151.0.7922.174"
+        "uaFullVersion": "157.0.8103.38"
       },
       "timezone": "Asia/Shanghai",
       "language": "zh-CN",
@@ -493,8 +493,8 @@
     "product-headless": [
       {
         "name": "ua === fp.userAgent",
-        "expected": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.174 Safari/537.36",
-        "actual": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.174 Safari/537.36",
+        "expected": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.8103.38 Safari/537.36",
+        "actual": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.8103.38 Safari/537.36",
         "pass": true,
         "note": null
       },
@@ -525,22 +525,22 @@
       {
         "name": "platform === fp.platform",
         "expected": "Win32",
-        "actual": "Win32",
-        "pass": true,
+        "actual": "Windows",
+        "pass": false,
         "note": null
       },
       {
         "name": "hardwareConcurrency === fp.hardwareConcurrency",
         "expected": 15,
-        "actual": 15,
-        "pass": true,
+        "actual": 20,
+        "pass": false,
         "note": null
       },
       {
         "name": "deviceMemory === fp.deviceMemory",
         "expected": 16,
-        "actual": 16,
-        "pass": true,
+        "actual": 32,
+        "pass": false,
         "note": null
       },
       {
@@ -608,8 +608,8 @@
     "product-hidden-headful": [
       {
         "name": "ua === fp.userAgent",
-        "expected": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.174 Safari/537.36",
-        "actual": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.7922.174 Safari/537.36",
+        "expected": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.8103.38 Safari/537.36",
+        "actual": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.8103.38 Safari/537.36",
         "pass": true,
         "note": null
       },
@@ -640,22 +640,22 @@
       {
         "name": "platform === fp.platform",
         "expected": "Win32",
-        "actual": "Win32",
-        "pass": true,
+        "actual": "Windows",
+        "pass": false,
         "note": null
       },
       {
         "name": "hardwareConcurrency === fp.hardwareConcurrency",
         "expected": 4,
-        "actual": 4,
-        "pass": true,
+        "actual": 20,
+        "pass": false,
         "note": null
       },
       {
         "name": "deviceMemory === fp.deviceMemory",
         "expected": 8,
-        "actual": 8,
-        "pass": true,
+        "actual": 32,
+        "pass": false,
         "note": null
       },
       {

@@ -174,8 +174,12 @@ function buildInjectionScript(fp) {
         }));
       }
     } catch (e) { brands = null; }
-    if (brands) {
-      const nativeUaDataRef = (typeof navigator !== 'undefined' && navigator.userAgentData) ? navigator.userAgentData : null;
+    // 原生 userAgentData 引用（在覆盖前抓取，供 native 回读与 secure-context 判定共用）。
+    // C198：真 Chrome 的 userAgentData 是 Secure context 特性——非安全上下文（http 页/
+    // 非安全 about:blank）上原生缺席，此时不得在原型上补定义（表面差分实证）。
+    const nativeUaDataRef = (typeof navigator !== 'undefined' && navigator.userAgentData) ? navigator.userAgentData : null;
+    if (brands && nativeUaDataRef) {
+      // C198 secure-context 守卫（见上）：原生引用存在 = 安全上下文 ⇒ 定义；否则保持原生缺席。
       const fullVersionList = (FP._uaFullVersionList && FP._uaFullVersionList.length)
         ? FP._uaFullVersionList.map((b) => ({ brand: String(b.brand), version: String(b.version) }))
         : brands.map((b) => ({ brand: b.brand, version: /^\d+$/.test(b.version) ? b.version + '.0.0.0' : b.version }));
@@ -192,26 +196,32 @@ function buildInjectionScript(fp) {
         // JS 不再生产该值（让位），改为从原生 userAgentData 回读——CDP override 缺省时
         // emulation 层 merge 回退到 patched 原生值（=identity），无 override 时原生
         // metadata 本身即 identity。原生值缺失时保留空串（诚实透传原生，不伪造、
-        // 不静默 fallback 到错误 identity）。C2 inactive：保持既有 '15.0.0' 行为。
+        // 不静默 fallback 到错误 identity）。
+        // C198：platformVersion / uaFullVersion 与 fullVersionList 同为 native 优先（不再仅
+        // NATIVE_OWNED 才回读 platformVersion）——实证对照（https 页）：真 Chrome 返回
+        // platformVersion=19.0.0（真 Win11 值）/ uaFullVersion=157.0.8103.38（完整版本），
+        // 旧实现硬编码 '15.0.0' 与 UA 字符串回抠版本均为可观测偏差。UA 字符串已冻结为
+        // N.0.0.0（fp/uaVersion），uaFullVersion 的真值只能来自原生回读，uaVer 仅作
+        // 原生不可得时的兑底。
         const pvNativeOwned = NATIVE_OWNED_SET.has('navigator.userAgentData.platformVersion');
         const base = {
           brands: brands.slice(),
           mobile: false,
           platform: osPlatform,
-          platformVersion: pvNativeOwned ? '' : '15.0.0',
+          // C198 回退链：捕获期原生值（FP._uaHev）→ native 回读（下方）→ 旧值兑底。
+          // UA 字符串已冻结为 N.0.0.0，uaFullVersion 全版本不再从 UA 回抠（uaVer 仅末位兑底）。
+          platformVersion: (FP._uaHev && FP._uaHev.platformVersion) || (pvNativeOwned ? '' : '15.0.0'),
           architecture: 'x86',
           bitness: '64',
           model: '',
-          uaFullVersion: uaVer,
+          uaFullVersion: (FP._uaHev && FP._uaHev.uaFullVersion) || uaVer,
           fullVersionList: fullVersionList.slice(),
         };
-        // fullVersionList 优先取原生值（CDP override 之后原生即回放值，仍与 brands 同源）
+        // C198：native 提示表含 platformVersion + uaFullVersion + fullVersionList（全量 native 优先）
         let nativeHev = null;
         try {
           if (nativeUaDataRef && typeof nativeUaDataRef.getHighEntropyValues === 'function') {
-            nativeHev = nativeUaDataRef.getHighEntropyValues(pvNativeOwned
-              ? ['fullVersionList', 'platformVersion']
-              : ['fullVersionList']);
+            nativeHev = nativeUaDataRef.getHighEntropyValues(['fullVersionList', 'platformVersion', 'uaFullVersion']);
           }
         } catch (e) {}
         return Promise.resolve(nativeHev).then((nv) => {
@@ -222,8 +232,11 @@ function buildInjectionScript(fp) {
                 version: String(b.version),
               }));
             }
-            if (pvNativeOwned && nv && typeof nv.platformVersion === 'string' && nv.platformVersion) {
+            if (nv && typeof nv.platformVersion === 'string' && nv.platformVersion) {
               base.platformVersion = nv.platformVersion;
+            }
+            if (nv && typeof nv.uaFullVersion === 'string' && nv.uaFullVersion && /\./.test(nv.uaFullVersion)) {
+              base.uaFullVersion = nv.uaFullVersion;
             }
           } catch (e) {}
           return base;

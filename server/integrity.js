@@ -89,10 +89,15 @@ function runIntegrityCheck(profile, opts = {}) {
   }
 
   // 2) UA 格式 + Client Hints 一致性（三者均由同一 fp.userAgent 派生，校验格式是否合法）
-  if (fp && fp.userAgent && /Chrome\/\d+\.\d+\.\d+\.\d+/.test(fp.userAgent)) {
-    ok('fingerprint', `UA 格式合法: ${fp.userAgent}`);
+  // C198：Chrome UA Reduction —— 真 Chrome 的 UA 字符串小版本冻结为 N.0.0.0（实证对照：
+  // 真 Chrome 157 报 Chrome/157.0.0.0），完整版本号只在 UA-CH uaFullVersion/fullVersionList。
+  // 旧判据要求 UA 含完整 N.N.N.N 版本 = 与真实 Chrome 相反的格式告警面。
+  if (fp && fp.userAgent && /Chrome\/\d+\.0\.0\.0/.test(fp.userAgent)) {
+    ok('fingerprint', `UA 格式合法(Reduction 冻结格式): ${fp.userAgent}`);
+  } else if (fp && fp.userAgent && /Chrome\/\d+(\.\d+)+/.test(fp.userAgent)) {
+    warn('fingerprint', `UA 格式异常(小版本未冻结,真实 Chrome 为 N.0.0.0): ${fp.userAgent.match(/Chrome\/[\d.]+/)[0]}`);
   } else {
-    warn('fingerprint', `UA 格式异常（缺少 Chrome/N.N.N.N 完整版本）: ${(fp && fp.userAgent) || '空'}`);
+    warn('fingerprint', `UA 格式异常(无可识别 Chrome 版本): ${(fp && fp.userAgent) || '空'}`);
   }
 
   // 3) locale ↔ language：Playwright locale / Accept-Language / navigator.language 同一来源，校验格式

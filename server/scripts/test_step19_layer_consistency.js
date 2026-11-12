@@ -149,7 +149,13 @@ function contractMatchesNative(replayed, native) {
     String(captured['accept-language']).split(',')[0] === js.language, { hdr: captured['accept-language'], js: js.language });
   assert('L6a JS fullVersionList 主版本 === UA 主版本',
     fullMajor(js.he.fullVersionList.find((b) => b.brand === 'Google Chrome').version) === uaMajor(js.ua), { he: js.he.fullVersionList, ua: js.ua });
-  assert('L6b JS uaFullVersion === UA 完整版本', js.he.uaFullVersion === uaVerOf(js.ua), { he: js.he.uaFullVersion });
+  // C198：真 Chrome 的 UA 字符串为 Reduction 冻结格式（N.0.0.0），uaFullVersion 返回完整
+  // 版本（N.N.N.N）——两者在真实 Chrome 上【不相等】（hev 对照实证）。旧断言「uaFullVersion
+  // === UA 完整版本」锚定的是全版本 UA 时代的错误假设。新不变量：uaFullVersion 为完整版本
+  // 格式，且主版本与 UA 主版本一致（与 L6a 同构）。
+  assert('L6b JS uaFullVersion 完整版本格式 + 主版本 === UA 主版本',
+    /^\d+\.\d+\.\d+\.\d+$/.test(String(js.he.uaFullVersion)) && fullMajor(js.he.uaFullVersion) === uaMajor(js.ua),
+    { he: js.he.uaFullVersion, ua: js.ua });
   assert('L7 sec-ch-ua 头主版本 === UA 头主版本',
     hdrBrands.find((b) => b.brand === 'Google Chrome').version === uaMajor(captured['user-agent']), { hdr: hdrBrands, uaHdr: captured['user-agent'] });
   // ===== P4.2：L8 从「版本快照」升级为「双层同源 invariant」+ Test A–F =====

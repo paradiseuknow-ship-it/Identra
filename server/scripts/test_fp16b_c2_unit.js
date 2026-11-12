@@ -106,14 +106,17 @@ const PATCH_FILE = 'D:\\chromium\\patches\\0003-platformversion-identity.patch';
   const jsOwned = await evalWithInjection([]);
   const nativeOwned = await evalWithInjection(['navigator.userAgentData.platformVersion']);
 
-  assert('J1 C2 让位关闭（_nativeOwned 空）→ JS 生产 platformVersion=\'15.0.0\'（既有行为逐字节保持）',
-    jsOwned.pv === '15.0.0', jsOwned.pv);
-  // 原生参考值：无任何注入时页面的原生 getHighEntropyValues 值
+  // 原生参考值：无任何注入时页面的原生 getHighEntropyValues 值（C198 起 J1 亦消费，提前计算）
   const refCtx = await browser.newContext();
   const refPage = await refCtx.newPage();
   await refPage.goto(EVAL_URL);
   const nativeRef = await refPage.evaluate(async () => (await navigator.userAgentData.getHighEntropyValues(['platformVersion'])).platformVersion);
   await refCtx.close();
+  // C198：C2 让位关闭时 JS 仍生产 platformVersion，但不再硬编码 '15.0.0'——优先原生真值
+  // （_uaHev 捕获 / getHighEntropyValues native 回读；hev 对照实证真 Win11=19.0.0，
+  // 旧硬编码与真实 Chrome 的 OS 版本报告相异）。安全上下文上 native 回读可得 ⇒ 与原生参考一致。
+  assert('J1 C2 让位关闭（_nativeOwned 空）→ JS 生产 platformVersion 且取原生真值（不再硬编码 15.0.0）',
+    jsOwned.pv === nativeRef && nativeRef !== '' && nativeRef !== '15.0.0', jsOwned.pv);
   assert('J2 C2 让位开启 → JS 不生产 platformVersion，回读原生值（stock 下=真实 OS 值 ' + nativeRef + '）',
     nativeOwned.pv === nativeRef && nativeRef !== '15.0.0', 'nativeOwned.pv=' + nativeOwned.pv + ' nativeRef=' + nativeRef);
   assert('J3 brands 不受 platformVersion 让位影响（N-PV-08 JS 半边）',
@@ -132,7 +135,7 @@ const PATCH_FILE = 'D:\\chromium\\patches\\0003-platformversion-identity.patch';
     bmSrc.includes("isPatchActive('platformversion-identity') && !!process.env.FPB_NATIVE_CHROME")
     && bmSrc.includes("'--fp-platform-version=' + identityPv")
     && bmSrc.includes('if (isC2PlatformVersionActive())')
-    && bmSrc.includes("platformVersion: '15.0.0'"), null);
+    && bmSrc.includes("platformVersion: (fp._uaHev && fp._uaHev.platformVersion) || '15.0.0'"), null);
   assert('W2 fp._nativeOwned 已接线（nativeOwnedSurfaces → buildInjectionScript）',
     bmSrc.includes('fp._nativeOwned = nativeOwnership.nativeOwnedSurfaces()'), null);
 
