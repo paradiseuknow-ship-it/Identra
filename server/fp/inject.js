@@ -29,22 +29,40 @@ function buildInjectionScript(fp) {
   // STEP 23（CAP 嗅探特征消隐）：toString 必须保留函数名——原生格式是
   // 「function getContext() { [native code] }」，此前无名的「function () { [native code] }」
   // 本身就是可嗅探痕迹（真实原生函数均有名字）。
-  // 注意：V8 对「obj.prop = function(){}」不做函数名推断（实测 name=''），因此必须
-  // 在调用点显式传入原生函数名（explicitName），否则洗白结果仍是匿名格式。
+  // C203：旧实现把 toString 作为【own 属性】挂在被 hook 的函数对象上，
+  // 而真 Chrome 的原生函数没有 own toString（继承自 Function.prototype）。
+  // 受控对照实证：Object.prototype.hasOwnProperty.call(fn,'toString') 在注入后
+  // 恒 true、原生恒 false ⇒ 这是比源码更直白的「函数被改写」证据。
+  // 修复：改为在 Function.prototype 上装一层 toString shim + WeakMap 登记，
+  // 被 hook 函数对象上不再留下任何痕迹；shim 自身也登记，保证自洽。
+  const HOOKED_FN = new WeakMap();
+  const nativeFnToString = Function.prototype.toString;
+  function markHook(fn, nativeName){
+    if (!fn || typeof fn !== 'function') return;
+    HOOKED_FN.set(fn, nativeName || fn.name || '');
+  }
+  (function installToStringShim(){
+    const shim = function toString(){
+      if (HOOKED_FN.has(this)) {
+        return 'function ' + HOOKED_FN.get(this) + '() { [native code] }';
+      }
+      return nativeFnToString.call(this);
+    };
+    markHook(shim, 'toString');
+    try {
+      Object.defineProperty(Function.prototype, 'toString', {
+        value: shim, writable: true, enumerable: false, configurable: true,
+      });
+    } catch (e) {}
+  })();
   function whiten(obj, explicitName){
     if (!obj) return;
-    if (typeof obj === 'function') {
-      try {
-        const n = obj.name || explicitName || '';
-        Object.defineProperty(obj, 'toString', { value: () => 'function ' + n + '() { [native code] }', configurable: true });
-      } catch (e) {}
-      return;
-    }
+    if (typeof obj === 'function') { markHook(obj, explicitName); return; }
     if (typeof obj !== 'object') return;
     for (const k of Object.getOwnPropertyNames(obj)) {
       try {
         const v = obj[k];
-        if (typeof v === 'function') Object.defineProperty(v, 'toString', { value: () => 'function ' + (v.name || k) + '() { [native code] }', configurable: true });
+        if (typeof v === 'function') markHook(v, k);
         else if (v && typeof v === 'object') whiten(v);
       } catch (e) {}
     }
@@ -54,9 +72,7 @@ function buildInjectionScript(fp) {
   function whitenGetter(obj, key){
     try {
       const d = Object.getOwnPropertyDescriptor(obj, key);
-      if (d && typeof d.get === 'function') {
-        Object.defineProperty(d.get, 'toString', { value: () => 'function get ' + key + '() { [native code] }', configurable: true });
-      }
+      if (d && typeof d.get === 'function') markHook(d.get, 'get ' + key);
     } catch (e) {}
   }
 
@@ -459,67 +475,82 @@ function buildInjectionScript(fp) {
     }
   } catch(e){}
 
-  // ---- Canvas 噪声（稳定 + 极弱 + getImageData/toDataURL/toBlob 一致 + 幂等无二次叠加） ----
+  // ---- Canvas 噪声（仅导出路径 + 低熵豁免 + 幂等；getImageData 保持原生） ----
   try {
     if (FP.canvas !== false) {
       const clamp = (v) => (v < 0 ? 0 : v > 255 ? 255 : v) | 0;
-      const getContext = HTMLCanvasElement.prototype.getContext;
+      const nativeGetImageData = (typeof CanvasRenderingContext2D !== 'undefined')
+        ? CanvasRenderingContext2D.prototype.getImageData : null;
 
-      // 对 2d 上下文强制 willReadFrequently：使底层使用 CPU 画布，getImageData 返回独立副本，
-      // 与画布 backstore 不共享内存（部分 Chromium 引擎下 GPU 画布的 img.data 会别名 backstore，
-      // 一旦被改就会「写回原画布」造成噪声二次叠加）。willReadFrequently 仅为性能提示，不影响渲染结果。
-      HTMLCanvasElement.prototype.getContext = function(type, attrs){
-        const opts = (type === '2d') ? Object.assign({}, attrs, { willReadFrequently: true }) : attrs;
-        return getContext.apply(this, [type, opts]);
+      // C203：低熵画布（纯色 / 少量颜色）不加噪。理由：纯色画布的 hash 在所有真
+      // Chrome 上相同、没有可伪装信息，加噪只制造两处「Canvas 函数被人为修改」实锤：
+      //   ① 写入纯红 (255,0,0,255) 后 getImageData 读出 (253,0,0,255)；
+      //   ② 纯色 PNG 从 262B 膨胀到 3254B（噪声破坏 PNG 压缩），hash 必然落在真实库外。
+      // 高熵内容（文本 / emoji / 渐变，即真实 canvas fingerprint 取样）仍施加确定性噪声。
+      // 另：不再强制 willReadFrequently、不再覆盖 getContext —— 旧实现为规避 GPU
+      // backstore 别名而加，但当前噪声只写独立数组 / 临时画布、绝不回写原画布，
+      // 已不需要；而 getContextAttributes().willReadFrequently=true 本身是注入痕迹。
+      const isLowEntropy = (src) => {
+        const colors = new Set();
+        const px = src.length / 4;
+        const stepPx = Math.max(1, Math.floor(px / 2048));
+        for (let p = 0; p < px; p += stepPx) {
+          const i = p * 4;
+          colors.add((src[i] << 16) | (src[i + 1] << 8) | src[i + 2]);
+          if (colors.size > 8) return false;
+        }
+        return true;
       };
 
-      // 在 2D 上下文原型上【仅包裹一次】：getContext 每次调用都返回同一 context 实例，
-      // 若在 getContext 内重复包裹 getImageData 会造成 wrapper 层层嵌套，每次调用都「再叠一层噪声」，
-      // 这正是此前像素逐级衰减（10→8→6→4）的根因。原型级包裹 + 标记位，彻底杜绝嵌套叠加。
-      if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D.prototype.__fpGID) {
-        const nativeGetImageData = CanvasRenderingContext2D.prototype.getImageData;
-        CanvasRenderingContext2D.prototype.getImageData = function(x, y, w, h){
-          const img = nativeGetImageData.apply(this, arguments);
-          const src = img.data;
-          // 复制到独立数组 out，仅对 out 施加噪声，绝不回写画布（画布 backstore 始终干净）。
-          const out = new Uint8ClampedArray(src.length);
-          out.set(src);
-          // 噪声种子 = 原像素采样 + 全局 noiseSeed：同一 canvas 内容 → 同一噪声（跨刷新/跨方法一致）；
-          // 不同内容 → 不同噪声。因画布永不写回，src 永远是干净原像素，故每次读取结果恒定一致（幂等）。
-          let s = (NOISE + 1) >>> 0;
-          for (let i = 0; i < src.length; i += 251) s = (s + src[i] * (i + 1)) >>> 0;
-          const rr = rng(s);
-          for (let i = 0; i < out.length; i += 4) {
-            const n = (rr() * 2 - 1) * 2;
-            out[i] = clamp(src[i] + n);
-            out[i + 1] = clamp(src[i + 1] + n);
-            out[i + 2] = clamp(src[i + 2] + n);
-          }
-          return new ImageData(out, img.width, img.height);
-        };
-        CanvasRenderingContext2D.prototype.__fpGID = true;
-      }
-      if (typeof CanvasRenderingContext2D !== 'undefined') whiten(CanvasRenderingContext2D.prototype.getImageData);
+      // 单一实现：仅导出路径从这里取噪声副本；getImageData 不再包裹。
+      const noiseCopy = (img) => {
+        const src = img.data;
+        if (isLowEntropy(src)) return null;               // 低熵 ⇒ 与真 Chrome 完全一致
+        const out = new Uint8ClampedArray(src.length);
+        out.set(src);
+        // 噪声种子 = 原像素采样 + 全局 noiseSeed：同内容 → 同噪声（跨刷新/跨方法一致）。
+        let s = (NOISE + 1) >>> 0;
+        for (let i = 0; i < src.length; i += 251) s = (s + src[i] * (i + 1)) >>> 0;
+        const rr = rng(s);
+        for (let i = 0; i < out.length; i += 4) {
+          const n = (rr() * 2 - 1) * 2;
+          out[i] = clamp(src[i] + n);
+          out[i + 1] = clamp(src[i + 1] + n);
+          out[i + 2] = clamp(src[i + 2] + n);
+        }
+        return new ImageData(out, img.width, img.height);
+      };
 
-      // toDataURL / toBlob 必须反映同一份噪声，且与 getImageData 完全一致（否则自相矛盾被标记）。
-      // 方案：getImageData 已改为「复制后施加噪声、绝不回写画布」（见上），故画布 backstore 始终干净。
-      // 这里直接在本画布上：取噪声副本 → 临时铺噪声 → 原生导出 → 立刻还原干净像素。
-      // 全程不碰 clone / drawImage（规避部分引擎下 drawImage 或共享 backstore 导致的原画布污染），
-      // 且每次导出前画布都是干净的，因此 getImageData / toDataURL / toBlob 任意次数结果恒定一致（幂等、无二次叠加）。
+      // C203：getImageData 保持原生。旧实现在这里包裹并加噪，导致两处不自洽：
+      //   ① 站点「写像素 → 读像素」在高熵内容上仍与真 Chrome 不符；
+      //   ② 站点把读出的像素铺到新画布再导出时会二次加噪，与直接导出的结果
+      //      不同（真 Chrome 两者恒等）。
+      // 伪装只需覆盖 toDataURL / toBlob（检测站算 canvas hash 的实际取样路径），
+      // 少包裹一个 API 也少一个「函数被人为修改」的可嗅探面。
+      // 注：此处绝不在原型上留可嗅探的标记位属性。
+
+      // 导出路径：低熵直接走原生导出（零临时画布、零痕迹）；高熵用
+      // 「原生像素 → noiseCopy → 临时画布 → 原生导出」，全程不写回原画布。
+      // exportPixels 复用 noiseCopy；噪声只施加一次，幂等且与真 Chrome 的
+      // 「读像素 → 再导出」路径结果一致。
+      const exportPixels = (cv) => {
+        if (!nativeGetImageData || !cv.width || !cv.height) return null;
+        const ctx2d = cv.getContext('2d');
+        if (!ctx2d) return null;
+        const img = nativeGetImageData.call(ctx2d, 0, 0, cv.width, cv.height);
+        return noiseCopy(img);                       // null = 低熵 / 不适用
+      };
+      const drawToTemp = (cv, noised) => {
+        const tmp = document.createElement('canvas');
+        tmp.width = cv.width; tmp.height = cv.height;
+        tmp.getContext('2d').putImageData(noised, 0, 0);
+        return tmp;
+      };
       const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
       HTMLCanvasElement.prototype.toDataURL = function(...a){
         try {
-          if (this.width && this.height) {
-            // 关键：原画布「只被读取、绝不被写入」。getImageData 已是 copy-fix（不回写画布），
-            // 因此读出的是独立噪声副本；把该副本写到【临时画布】，从临时画布原生导出。
-            // 原画布像素始终干净 → getImageData/toDataURL/toBlob 任意次数结果恒定一致（幂等、无二次叠加）。
-            const ctx = this.getContext('2d');
-            const noised = ctx.getImageData(0, 0, this.width, this.height);   // 独立噪声副本，画布仍干净
-            const tmp = document.createElement('canvas');
-            tmp.width = this.width; tmp.height = this.height;
-            tmp.getContext('2d').putImageData(noised, 0, 0);                  // 噪声写入临时画布
-            return origToDataURL.apply(tmp, a);                               // 从临时画布导出（含噪声）
-          }
+          const noised = exportPixels(this);
+          if (noised) return origToDataURL.apply(drawToTemp(this, noised), a);
         } catch (e) {}
         return origToDataURL.apply(this, a);
       };
@@ -527,14 +558,8 @@ function buildInjectionScript(fp) {
       if (origToBlob) {
         HTMLCanvasElement.prototype.toBlob = function(cb, ...a){
           try {
-            if (this.width && this.height) {
-              const ctx = this.getContext('2d');
-              const noised = ctx.getImageData(0, 0, this.width, this.height);
-              const tmp = document.createElement('canvas');
-              tmp.width = this.width; tmp.height = this.height;
-              tmp.getContext('2d').putImageData(noised, 0, 0);
-              return origToBlob.call(tmp, cb, ...a);                          // 临时画布异步导出，原画布干净
-            }
+            const noised = exportPixels(this);
+            if (noised) return origToBlob.call(drawToTemp(this, noised), cb, ...a);
           } catch (e) {}
           return origToBlob.apply(this, [cb, ...a]);
         };
@@ -547,11 +572,13 @@ function buildInjectionScript(fp) {
     const wrapParam = (proto) => {
       const gp = proto.getParameter;
       proto.getParameter = function(p){
+        // C203：7936 VENDOR / 7937 RENDERER 必须保持原生（真 Chrome 恒为
+        // "WebKit" / "WebKit WebGL"）。旧实现把两者也改成人设 GPU 串，与
+        // UNMASKED_* 的语义约定直接矛盾（VENDOR === UNMASKED_VENDOR），
+        // 受控对照实证为「WebGL exception」的直接成因。0x9245 就是 37445，
+        // 旧行返回 renderer 属错误冗余，一并删除。仅改写两个 unmasked 常量。
         if (p === 37445) return FP.webgl.vendor;
         if (p === 37446) return FP.webgl.renderer;
-        if (p === 7936 || p === 0x1F00) return FP.webgl.vendor;
-        if (p === 7937 || p === 0x1F01) return FP.webgl.renderer;
-        if (p === 0x9245) return FP.webgl.renderer;
         return gp.apply(this, arguments);
       };
       const ge = proto.getExtension;
@@ -943,7 +970,6 @@ function buildInjectionScript(fp) {
   try {
     whiten(window.chrome);
     if (navigator.permissions && navigator.permissions.query) whiten(navigator.permissions.query, 'query');
-    if (HTMLCanvasElement.prototype.getContext) whiten(HTMLCanvasElement.prototype.getContext, 'getContext');
     if (HTMLCanvasElement.prototype.toDataURL) whiten(HTMLCanvasElement.prototype.toDataURL, 'toDataURL');
     if (HTMLCanvasElement.prototype.toBlob) whiten(HTMLCanvasElement.prototype.toBlob, 'toBlob');
     if (Element.prototype.getBoundingClientRect) whiten(Element.prototype.getBoundingClientRect, 'getBoundingClientRect');

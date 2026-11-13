@@ -178,14 +178,21 @@ function baseIdentity(over = {}) {
     await page.goto('about:blank');
     return page.evaluate(`(() => ({
       hookOwnToString: (() => { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); return d ? Object.getOwnPropertyNames(d.value).includes('toString') : null; })(),
+      hookToString: (() => { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); return d && d.value ? d.value.toString() : null; })(),
+      hookInstalled: (() => { try { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); if (!d || !d.value) return null; const f = document.createElement('iframe'); f.style.display = 'none'; document.body.appendChild(f); const t = f.contentWindow.Function.prototype.toString.call(d.value); f.remove(); return t.indexOf('[native code]') === -1; } catch (e) { return 'ERR:' + e.message; } })(),
       inList: document.fonts.check('12px "Mythical Identity Font"', 'a'),
       notInList: document.fonts.check('12px Arial', 'a'),
     }))()`);
   };
   const jsState = await mk(scriptJsOwned);
   const nativeState = await mk(scriptNativeOwned);
-  assert('IN1 默认（全 JS_OWNED）→ fonts hook 生效（列表外 Arial→false）', jsState.hookOwnToString === true && jsState.notInList === false, jsState);
-  assert('IN2 fonts 登记 NATIVE_OWNED → JS hook 让位（check 保持原生：Arial→true，hook 未安装）', nativeState.hookOwnToString === false && nativeState.notInList === true, nativeState);
+  // C203：own toString 已由 Function.prototype shim 消除，改以跨 realm 原生
+  // toString 判断 hook 是否安装（该 realm 未受 shim 影响，可直接看见 JS 源码）。
+  assert('IN1 默认（全 JS_OWNED）→ fonts hook 生效（跨 realm 见源码 + 列表外 Arial→false + 无 own 痕迹）',
+    jsState.hookInstalled === true && jsState.hookOwnToString === false &&
+    jsState.hookToString === 'function check() { [native code] }' && jsState.notInList === false, jsState);
+  assert('IN2 fonts 登记 NATIVE_OWNED → JS hook 让位（跨 realm 仍为原生 + Arial→true）',
+    nativeState.hookInstalled === false && nativeState.notInList === true, nativeState);
   assert('IN3 让位后无双重覆盖（inList 语义回原生恒 true，而非 JS identity 判定）', nativeState.inList === true, nativeState.inList);
   await browser.close();
 

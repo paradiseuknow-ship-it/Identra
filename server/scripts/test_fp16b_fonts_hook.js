@@ -47,6 +47,8 @@ function assert(name, cond, detail) {
     mixedInList: document.fonts.check('12px "Mythical Identity Font", monospace', 'a'),
     mixedNotInList: document.fonts.check('12px Arial, monospace', 'a'),
     hookOwnToString: (() => { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); return d ? Object.getOwnPropertyNames(d.value).includes('toString') : null; })(),
+    hookToString: (() => { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); return d && d.value ? d.value.toString() : null; })(),
+    hookInstalled: (() => { try { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); if (!d || !d.value) return null; const f = document.createElement('iframe'); f.style.display = 'none'; document.body.appendChild(f); const t = f.contentWindow.Function.prototype.toString.call(d.value); f.remove(); return t.indexOf('[native code]') === -1; } catch (e) { return 'ERR:' + e.message; } })(),
     instanceOwnDescriptor: (() => Object.getOwnPropertyDescriptor(document.fonts, 'check') !== undefined)(),
   }))()`;
 
@@ -72,7 +74,12 @@ function assert(name, cond, detail) {
   assert('F3b 空 text 探测与原生一致（spec quirk 透传）', hooked.emptyText === native.emptyText, { hooked: hooked.emptyText, native: native.emptyText });
   assert('F4a 列表内+通用混排 → true', hooked.mixedInList === true, hooked.mixedInList);
   assert('F4b 列表外+通用混排 → false', hooked.mixedNotInList === false, hooked.mixedNotInList);
-  assert('F5a hook 函数有 own toString（whiten 生效；原生函数 own 无 toString）', hooked.hookOwnToString === true, hooked.hookOwnToString);
+  // C203：toString 洗白改为 Function.prototype shim，own toString 已是被修掉的注入痕迹。
+  // 改用「跨 realm 原生 toString 能看见 JS 源码」证明 hook 确实安装 + 行为判据，判据更强非 vacuous。
+  assert('F5a hook 已安装（跨 realm 原生 toString 见源码）+ 主 realm 洗白为原生格式 + 无 own 痕迹',
+    hooked.hookInstalled === true && hooked.hookOwnToString === false &&
+    hooked.hookToString === 'function check() { [native code] }' &&
+    hooked.hostAvailableNotInList === false, hooked);
   assert('F5b 无实例 own 描述符泄露（覆盖在 prototype 上）', hooked.instanceOwnDescriptor === false, hooked.instanceOwnDescriptor);
 
   // F6 确定性：同 identity 第二个 context 全部判别值一致
@@ -98,9 +105,10 @@ function assert(name, cond, detail) {
   const emptyShape = await emptyPage.evaluate(`(() => ({
     mixedInList: document.fonts.check('12px "Mythical Identity Font", monospace', 'a'),
     hookOwnToString: (() => { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); return d ? Object.getOwnPropertyNames(d.value).includes('toString') : null; })(),
+    hookInstalled: (() => { try { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); if (!d || !d.value) return null; const f = document.createElement('iframe'); f.style.display = 'none'; document.body.appendChild(f); const t = f.contentWindow.Function.prototype.toString.call(d.value); f.remove(); return t.indexOf('[native code]') === -1; } catch (e) { return 'ERR:' + e.message; } })(),
   }))()`);
   assert('F7 空 fonts 不覆盖（mixed 判定与原生逐字节一致且 hook 未安装）',
-    emptyShape.mixedInList === native.mixedInList && emptyShape.hookOwnToString === false,
+    emptyShape.mixedInList === native.mixedInList && emptyShape.hookInstalled === false,
     { emptyShape, nativeMixed: native.mixedInList });
   await emptyCtx.close();
 
