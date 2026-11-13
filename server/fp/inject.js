@@ -776,6 +776,65 @@ function buildInjectionScript(fp) {
           return origAddEvt.call(this, type, listener, opts);
         };
 
+        // C202：候选改写必须覆盖「读描述符/读统计」旁路（受控对照实证泄漏）。
+        // 旧实现只改写事件路径（onicecandidate/addEventListener/addIceCandidate），站点用
+        //   ① pc.localDescription.sdp（含 current/pending）——SDP 里是浏览器原生候选行，
+        //      实测 replace-udp 下真实公网 IP（srflx）与 mDNS host 主机名直读可见；
+        //   ② pc.getStats() 的 local-candidate 条目——address 字段同源直读真实 IP。
+        // 修复：SDP 候选行逐行复用 rewriteCandidate（单一实现，护住全部三条路径的一致
+        // 语义）；getStats 的 local-candidate address/ip/relatedAddress 改写为出口 IP。
+        // 非本地真实候选（remote/relay）不动：remote 是对端地址无泄漏，relay 在
+        // replace-udp 下不存在、其余模式零候选。
+        // 注：本段位于 buildInjectionScript 的模板字面量内，反斜杠必须双份
+        //（单份会被模板求值成真实 CRLF，生成脚本字符串跨行 → 语法错误 → 全部 hook 未安装）。
+        const rewriteSdpLines = (sdp) => {
+          if (!sdp || effectiveMode !== 'replace-udp' || !publicIp) return sdp;
+          return sdp.split('\\r\\n').map((line) => {
+            if (line.indexOf('a=candidate:') !== 0) return line;
+            const r = rewriteCandidate(line.slice(2));
+            return r === null ? '' : 'a=' + r;
+          }).filter(Boolean).join('\\r\\n');
+        };
+        ['localDescription', 'currentLocalDescription', 'pendingLocalDescription'].forEach((prop) => {
+          try {
+            const d = Object.getOwnPropertyDescriptor(RealRTCPeerConnection.prototype, prop);
+            if (!d || !d.get) return;
+            Object.defineProperty(pc, prop, {
+              configurable: true,
+              get() {
+                const orig = d.get.call(pc);
+                if (!orig) return orig;
+                try {
+                  return new (window.RTCSessionDescription || Object)({ type: orig.type, sdp: rewriteSdpLines(orig.sdp) });
+                } catch (e) { return orig; }
+              },
+            });
+          } catch (e) {}
+        });
+        if (effectiveMode === 'replace-udp') {
+          const origGetStats = pc.getStats;
+          if (origGetStats) {
+            pc.getStats = function () {
+              return origGetStats.apply(this, arguments).then((report) => {
+                try {
+                  const out = new Map();
+                  report.forEach((v, k) => {
+                    if (v && v.type === 'local-candidate' && (v.address || v.ip || v.relatedAddress)) {
+                      const c = Object.assign({}, v);
+                      if (c.address) c.address = publicIp;
+                      if (c.ip) c.ip = publicIp;
+                      if (c.relatedAddress) c.relatedAddress = publicIp;
+                      v = c;
+                    }
+                    out.set(k, v);
+                  });
+                  return out;
+                } catch (e) { return report; }
+              });
+            };
+          }
+        }
+
         // 兜底：部分 API 仍会通过 addIceCandidate 注入候选
         const origAdd = pc.addIceCandidate;
         pc.addIceCandidate = function (cand) {
