@@ -608,24 +608,38 @@ function buildInjectionScript(fp) {
       //      实测 GitKraken checkout「Country or region」下拉一点即崩整页。
       // 现改为按「原始几何签名」缓存偏移：几何不变 ⇒ 噪声不变；几何变化（滚动/缩放/重排）
       // ⇒ 重新掷一次，冷却后的静态布局依然逐帧稳定。
+      //
+      // C200 形态学修复（受控对照实证两个残余可检测面 ⇒ ClientRect Abnormal）：
+      //   ① 尾巴量化形态：真 Chrome 的 rect 值是 Blink LayoutUnit 浮点，尾巴恒为
+      //      2^-14 精度形状（如 .40435791015625）；裸 double ±0.02 直接相加后尾巴
+      //      变任意精度（.018018133…），统计可检出「非 LayoutUnit 形态」。
+      //   ② 几何一致性：width/height 独立加噪 ⇒ 子元素宽度和 ≠ 父元素宽度
+      //      （真 Chrome 恒 0 误差；实测注入态误差 ~0.005px），rect consistency 检测
+      //      直接命中。
+      // 修复：宽度/高度族零噪声（恢复真 Chrome 几何恒等：子和=父、rect↔offsetWidth
+      // 差即原生亚像素）；平移噪声保留（每元素独立 x/y 亚像素扰动 = rect 指纹防护
+      // 本体），偏移与坐标均量化到 2^-14（尾巴恢复 LayoutUnit 形态；dyadic 有理数
+      // 相加减仍为 dyadic，right/bottom 推导不破形态）。
       const rectNoiseCache = new WeakMap();
+      const LU_QUANT = 16384; // 2^14：真 Chrome getBoundingClientRect 浮点尾巴精度
+      const quantizeLU = (v) => Math.round(v * LU_QUANT) / LU_QUANT;
       Element.prototype.getBoundingClientRect = function(){
         const rect = origGetBounding.apply(this, arguments);
         const sig = rect.x + '|' + rect.y + '|' + rect.width + '|' + rect.height;
         let rec = rectNoiseCache.get(this);
         if (!rec || rec.sig !== sig) {
-          const n = () => (r2() * 2 - 1) * 0.02;
-          rec = { sig: sig, dx: n(), dy: n(), dw: n(), dh: n() };
+          const n = () => quantizeLU((r2() * 2 - 1) * 0.02);
+          rec = { sig: sig, dx: n(), dy: n() };
           rectNoiseCache.set(this, rec);
         }
         // 同一份偏移复用到 x/left 与 y/top，并由 width/height 推导 right/bottom，
         // 保持真实 DOMRect 的内部不变量：x===left、y===top、
         // right-left===width、bottom-top===height（旧实现对八个字段各自独立加噪，
         // 这四条等式全部不成立，同样是一致性检测的靶子）。
-        const x = rect.x + rec.dx;
-        const y = rect.y + rec.dy;
-        const w = rect.width + rec.dw;
-        const h = rect.height + rec.dh;
+        const x = quantizeLU(rect.x + rec.dx);
+        const y = quantizeLU(rect.y + rec.dy);
+        const w = rect.width;
+        const h = rect.height;
         return {
           x: x, y: y, width: w, height: h,
           top: y, left: x, right: x + w, bottom: y + h,

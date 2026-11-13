@@ -13,6 +13,12 @@
 //     （本身也是比"无噪声"更强的破绽）。
 // 因果双向验证（C191）：纯 Chrome 只加旧噪声 ⇒ 必崩；产品注入关掉该段 ⇒ 正常。
 //
+// C200 形态学契约（受控对照实证，todetect ClientRect Abnormal 触发）:
+//   C 尾巴量化契约：真 Chrome rect 值尾巴恒为 2^-14 精度形状（LayoutUnit 浮点）,
+//     裸 double 加噪 ⇒ 任意精度尾巴 ⇒ 统计可检出。偏移与坐标须量化到 1/16384。
+//   D 几何恒等契约：真 Chrome 子元素宽度之和 === 父元素宽度（恒 0 误差）;
+//     width/height 零噪声 ⇒ 恒等恢复（实测旧注入态误差 ~0.005px）。
+//
 // 本守护用真实 Chrome + 真 buildInjectionScript 在本地页面上验证契约，不联网。
 
 const path = require('path');
@@ -93,7 +99,8 @@ const PROBE = () => {
     ok('A5 原生页面同样稳定（对照组基线）', n1.stable === true);
     near('A6 注入后 x 仍在噪声范围内（|Δ|≤0.02）', r1.a.x - n1.a.x, 0, 0.0201);
     near('A7 注入后 y 仍在噪声范围内', r1.a.y - n1.a.y, 0, 0.0201);
-    near('A8 注入后 width 仍在噪声范围内', r1.a.w - n1.a.w, 0, 0.0201);
+    eq('A8 注入后 width 与原生逐字相同（C200 零宽噪声，恢复子和=父恒等）', r1.a.w, n1.a.w);
+    eq('A8b 注入后 height 与原生逐字相同（C200 零高噪声）', r1.a.h, n1.a.h);
     ok('A9 噪声确实生效（不是退化成零偏移）',
       Math.abs(r1.a.x - n1.a.x) > 0 || Math.abs(r1.a.y - n1.a.y) > 0 || Math.abs(r1.a.w - n1.a.w) > 0,
       'Δx=' + (r1.a.x - n1.a.x).toFixed(4) + ' Δy=' + (r1.a.y - n1.a.y).toFixed(4));
@@ -138,7 +145,7 @@ const PROBE = () => {
     ok('B6 关闭后同样稳定', q.stable === true);
     await ctx2.close();
 
-    // ---------------- C 段：源码形态守护（防回退到"每次重掷"） ----------------
+    // ---------------- C 段：源码形态守护（防回退到"每次重掷"/裸 double 加噪） ----------------
     console.log('\n--- C 实现形态 ---');
     const src = fs.readFileSync(path.join(__dirname, '../fp/inject.js'), 'utf8');
     ok('C1 存在按几何签名缓存噪声的实现（WeakMap 签名缓存）',
@@ -147,6 +154,41 @@ const PROBE = () => {
       /right:\s*x\s*\+\s*w/.test(src) && /bottom:\s*y\s*\+\s*h/.test(src));
     ok('C3 八个字段不再各自调用噪声函数',
       !/right:\s*rect\.right\s*\+\s*n\(\)/.test(src) && !/left:\s*rect\.left\s*\+\s*n\(\)/.test(src));
+    ok('C4 平移噪声量化到 2^-14（LayoutUnit 形态，C200 契约①）',
+      /LU_QUANT = 16384/.test(src) && /quantizeLU\(\(r2\(\) \* 2 - 1\) \* 0\.02\)/.test(src));
+    ok('C5 宽度/高度零噪声（几何恒等，C200 契约②）',
+      /const w = rect\.width;/.test(src) && /const h = rect\.height;/.test(src)
+      && !/rect\.width \+ rec\.dw/.test(src) && !/rect\.height \+ rec\.dh/.test(src));
+
+    // ---------------- D 段：C200 形态学实证（真浏览器行为面） ----------------
+    console.log('\n--- D C200 形态学：尾巴量化 + 几何恒等 ---');
+    const ctxD = await browser.newContext({ viewport: { width: 800, height: 600 } });
+    await ctxD.addInitScript(buildInjectionScript(fpNoisy));
+    const pageD = await ctxD.newPage();
+    await pageD.goto(url, { waitUntil: 'load' });
+    const d = await pageD.evaluate(() => {
+      const host = document.createElement('div');
+      host.style.cssText = 'position:absolute;left:0;top:0;white-space:nowrap;font:16px Arial;';
+      host.innerHTML = '<span style="letter-spacing:2px">AAAA </span><span style="font-size:20px">Bb切</span><span style="font-family:Georgia">Cc128</span>';
+      document.body.appendChild(host);
+      const isLU = (v) => Math.abs(v * 16384 - Math.round(v * 16384)) < 1e-6;
+      const pr = host.getBoundingClientRect();
+      const cr = Array.from(host.children).map((c) => c.getBoundingClientRect());
+      const childSumW = cr.reduce((a, r) => a + r.width, 0);
+      const fields = [pr.x, pr.y, pr.width, pr.height, pr.left, pr.top, pr.right, pr.bottom]
+        .concat(cr.map((r) => r.width));
+      return {
+        luAll: fields.every(isLU),
+        luBad: fields.filter((v) => !isLU(v)).slice(0, 4),
+        childSumW: childSumW, parentW: pr.width,
+        sumErr: Math.abs(childSumW - pr.width),
+      };
+    });
+    ok('D1 全部 rect 字段尾巴为 2^-14 量化形态（LayoutUnit，C200 契约①）', d.luAll === true,
+      'bad=' + JSON.stringify(d.luBad));
+    ok('D2 子元素宽度和 === 父宽度（几何恒等，C200 契约②）', d.sumErr === 0,
+      'childSum=' + d.childSumW + ' parentW=' + d.parentW + ' err=' + d.sumErr);
+    await ctxD.close();
   } finally {
     await browser.close().catch(() => {});
     srv.close();
