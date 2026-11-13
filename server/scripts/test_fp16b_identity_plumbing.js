@@ -179,20 +179,26 @@ function baseIdentity(over = {}) {
     return page.evaluate(`(() => ({
       hookOwnToString: (() => { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); return d ? Object.getOwnPropertyNames(d.value).includes('toString') : null; })(),
       hookToString: (() => { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); return d && d.value ? d.value.toString() : null; })(),
-      hookInstalled: (() => { try { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); if (!d || !d.value) return null; const f = document.createElement('iframe'); f.style.display = 'none'; document.body.appendChild(f); const t = f.contentWindow.Function.prototype.toString.call(d.value); f.remove(); return t.indexOf('[native code]') === -1; } catch (e) { return 'ERR:' + e.message; } })(),
+      // C205：跨 realm toString 不再泄漏 hook 源码；返回源码串，断言与真 Chrome 逐字节一致。
+      crossRealmSource: (() => { try { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); if (!d || !d.value) return null; const f = document.createElement('iframe'); f.style.display = 'none'; document.body.appendChild(f); const t = f.contentWindow.Function.prototype.toString.call(d.value); f.remove(); return t; } catch (e) { return 'ERR:' + e.message; } })(),
       inList: document.fonts.check('12px "Mythical Identity Font"', 'a'),
       notInList: document.fonts.check('12px Arial', 'a'),
     }))()`);
   };
   const jsState = await mk(scriptJsOwned);
   const nativeState = await mk(scriptNativeOwned);
-  // C203：own toString 已由 Function.prototype shim 消除，改以跨 realm 原生
-  // toString 判断 hook 是否安装（该 realm 未受 shim 影响，可直接看见 JS 源码）。
-  assert('IN1 默认（全 JS_OWNED）→ fonts hook 生效（跨 realm 见源码 + 列表外 Arial→false + 无 own 痕迹）',
-    jsState.hookInstalled === true && jsState.hookOwnToString === false &&
-    jsState.hookToString === 'function check() { [native code] }' && jsState.notInList === false, jsState);
-  assert('IN2 fonts 登记 NATIVE_OWNED → JS hook 让位（跨 realm 仍为原生 + Arial→true）',
-    nativeState.hookInstalled === false && nativeState.notInList === true, nativeState);
+  // C203→C205：own toString 与「跨 realm 见源码」先后被修掉。hook 是否安装
+  // 改由行为判据（列表外 Arial→false / 让位后→true）证明，跨 realm 与本 realm
+  // 的 toString 都必须与真 Chrome 原生格式逐字节一致。
+  assert('IN1 默认（全 JS_OWNED）→ fonts hook 生效（行为判据 + 跨 realm 亦为真 Chrome 原生格式 + 无 own 痕迹）',
+    jsState.notInList === false && nativeState.notInList === true &&
+    jsState.hookOwnToString === false &&
+    jsState.hookToString === 'function check() { [native code] }' &&
+    jsState.crossRealmSource === 'function check() { [native code] }', jsState);
+  assert('IN2 fonts 登记 NATIVE_OWNED → JS hook 让位（行为回原生 Arial→true + 无源码泄漏）',
+    nativeState.notInList === true &&
+    nativeState.hookToString === 'function check() { [native code] }' &&
+    nativeState.crossRealmSource === 'function check() { [native code] }', nativeState);
   assert('IN3 让位后无双重覆盖（inList 语义回原生恒 true，而非 JS identity 判定）', nativeState.inList === true, nativeState.inList);
   await browser.close();
 

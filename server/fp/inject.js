@@ -35,17 +35,63 @@ function buildInjectionScript(fp) {
   // 恒 true、原生恒 false ⇒ 这是比源码更直白的「函数被改写」证据。
   // 修复：改为在 Function.prototype 上装一层 toString shim + WeakMap 登记，
   // 被 hook 函数对象上不再留下任何痕迹；shim 自身也登记，保证自洽。
+  // C205：C203 的 HOOKED_FN 是【per-realm WeakMap】。addInitScript 会在每个
+  // frame 各跑一遍，子 frame 的 toString shim 只查自己那张表，永远查不到主
+  // realm 的 hook。检测站只需
+  //   iframe.contentWindow.Function.prototype.toString.call(
+  //     HTMLCanvasElement.prototype.toDataURL)
+  // 就能读到 JS wrapper 全源码。C205 受控对照实证 4 类 hook 全部泄漏：
+  // canvas toDataURL / WebGL getParameter / navigator getter / shim 自身。
+  // 修复：登记表放到同源 realm 共享的位置（window.top 上的不可枚举 symbol），
+  // 每个 realm 的 shim 同时查本 realm 表与共享表；被 hook 的函数对象上依旧
+  // 零 own 属性（C203 成果不回退）。跨 origin / sandbox frame 读不到 window.top
+  // 的属性 ⇒ 回落到本 realm 表，行为与 C203 逐字节一致；这类 frame 本就无法
+  // 读取主 realm 的函数对象，故不构成检测面（详见 C205 报告）。
+  const HOOK_REGISTRY_KEY = Symbol.for('__fpb_hook_registry_v1__');
   const HOOKED_FN = new WeakMap();
+  let SHARED_HOOKED_FN = null;
+  // 不能用构造器身份判定：跨 realm 的构造器原型不同，该判定恒 false。
+  const isHookTable = (v) => !!(v && typeof v === 'object' &&
+    typeof v.has === 'function' && typeof v.get === 'function' && typeof v.set === 'function');
+  function sharedHookTable(){
+    if (SHARED_HOOKED_FN) return SHARED_HOOKED_FN;
+    try {
+      if (typeof window === 'undefined' || !window.top) return null;
+      const v = window.top[HOOK_REGISTRY_KEY];
+      if (isHookTable(v)) { SHARED_HOOKED_FN = v; return SHARED_HOOKED_FN; }
+    } catch (e) {}
+    return null;
+  }
+  function ensureSharedHookTable(){
+    if (sharedHookTable()) return SHARED_HOOKED_FN;
+    try {
+      if (typeof window === 'undefined' || !window.top) return null;
+      Object.defineProperty(window.top, HOOK_REGISTRY_KEY, {
+        value: HOOKED_FN, writable: false, enumerable: false, configurable: true,
+      });
+      SHARED_HOOKED_FN = HOOKED_FN;
+    } catch (e) { SHARED_HOOKED_FN = null; }
+    return SHARED_HOOKED_FN;
+  }
   const nativeFnToString = Function.prototype.toString;
   function markHook(fn, nativeName){
     if (!fn || typeof fn !== 'function') return;
-    HOOKED_FN.set(fn, nativeName || fn.name || '');
+    const name = nativeName || fn.name || '';
+    HOOKED_FN.set(fn, name);
+    const shared = sharedHookTable();
+    if (shared && shared !== HOOKED_FN) shared.set(fn, name);
+  }
+  function hookName(fn){
+    if (HOOKED_FN.has(fn)) return HOOKED_FN.get(fn);
+    const shared = sharedHookTable();
+    if (shared && shared.has(fn)) return shared.get(fn);
+    return null;
   }
   (function installToStringShim(){
+    ensureSharedHookTable();
     const shim = function toString(){
-      if (HOOKED_FN.has(this)) {
-        return 'function ' + HOOKED_FN.get(this) + '() { [native code] }';
-      }
+      const name = hookName(this);
+      if (name !== null) return 'function ' + name + '() { [native code] }';
       return nativeFnToString.call(this);
     };
     markHook(shim, 'toString');

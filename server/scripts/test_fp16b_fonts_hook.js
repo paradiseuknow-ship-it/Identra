@@ -48,7 +48,10 @@ function assert(name, cond, detail) {
     mixedNotInList: document.fonts.check('12px Arial, monospace', 'a'),
     hookOwnToString: (() => { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); return d ? Object.getOwnPropertyNames(d.value).includes('toString') : null; })(),
     hookToString: (() => { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); return d && d.value ? d.value.toString() : null; })(),
-    hookInstalled: (() => { try { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); if (!d || !d.value) return null; const f = document.createElement('iframe'); f.style.display = 'none'; document.body.appendChild(f); const t = f.contentWindow.Function.prototype.toString.call(d.value); f.remove(); return t.indexOf('[native code]') === -1; } catch (e) { return 'ERR:' + e.message; } })(),
+    // C205：跨 realm toString 已不再泄漏 hook 源码，故这里返回源码字符串本身，
+    // 断言「与无注入的原生对照逐字节一致」。hook 是否安装改由行为判据
+    // hostAvailableNotInList（宿主有 Arial 但 identity 列表无 Arial ⇒ check=false）证明，避免 vacuous。
+    crossRealmSource: (() => { try { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); if (!d || !d.value) return null; const f = document.createElement('iframe'); f.style.display = 'none'; document.body.appendChild(f); const t = f.contentWindow.Function.prototype.toString.call(d.value); f.remove(); return t; } catch (e) { return 'ERR:' + e.message; } })(),
     instanceOwnDescriptor: (() => Object.getOwnPropertyDescriptor(document.fonts, 'check') !== undefined)(),
   }))()`;
 
@@ -74,12 +77,15 @@ function assert(name, cond, detail) {
   assert('F3b 空 text 探测与原生一致（spec quirk 透传）', hooked.emptyText === native.emptyText, { hooked: hooked.emptyText, native: native.emptyText });
   assert('F4a 列表内+通用混排 → true', hooked.mixedInList === true, hooked.mixedInList);
   assert('F4b 列表外+通用混排 → false', hooked.mixedNotInList === false, hooked.mixedNotInList);
-  // C203：toString 洗白改为 Function.prototype shim，own toString 已是被修掉的注入痕迹。
-  // 改用「跨 realm 原生 toString 能看见 JS 源码」证明 hook 确实安装 + 行为判据，判据更强非 vacuous。
-  assert('F5a hook 已安装（跨 realm 原生 toString 见源码）+ 主 realm 洗白为原生格式 + 无 own 痕迹',
-    hooked.hookInstalled === true && hooked.hookOwnToString === false &&
+  // C203→C205：own toString 与「跨 realm 见源码」先后被修掉。hook 是否安装
+  // 改由行为判据（宿主有 Arial、identity 列表无 Arial ⇒ check=false）证明；
+  // 本 realm / 跨 realm 的 toString 则必须与无注入的原生对照逐字节一致。
+  assert('F5a hook 已安装（行为判据）+ 本 realm/跨 realm toString 均与真 Chrome 一致 + 无 own 痕迹',
+    hooked.hostAvailableNotInList === false && native.hostAvailableNotInList === true &&
+    hooked.hookOwnToString === false &&
     hooked.hookToString === 'function check() { [native code] }' &&
-    hooked.hostAvailableNotInList === false, hooked);
+    hooked.crossRealmSource === native.crossRealmSource &&
+    hooked.crossRealmSource === 'function check() { [native code] }', hooked);
   assert('F5b 无实例 own 描述符泄露（覆盖在 prototype 上）', hooked.instanceOwnDescriptor === false, hooked.instanceOwnDescriptor);
 
   // F6 确定性：同 identity 第二个 context 全部判别值一致
@@ -103,12 +109,17 @@ function assert(name, cond, detail) {
   const emptyPage = await emptyCtx.newPage();
   await emptyPage.goto('about:blank');
   const emptyShape = await emptyPage.evaluate(`(() => ({
+    inListHostMissing: document.fonts.check('12px "Mythical Identity Font"', 'a'),
+    hostAvailableNotInList: document.fonts.check('12px Arial', 'a'),
     mixedInList: document.fonts.check('12px "Mythical Identity Font", monospace', 'a'),
     hookOwnToString: (() => { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); return d ? Object.getOwnPropertyNames(d.value).includes('toString') : null; })(),
-    hookInstalled: (() => { try { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); if (!d || !d.value) return null; const f = document.createElement('iframe'); f.style.display = 'none'; document.body.appendChild(f); const t = f.contentWindow.Function.prototype.toString.call(d.value); f.remove(); return t.indexOf('[native code]') === -1; } catch (e) { return 'ERR:' + e.message; } })(),
+    crossRealmSource: (() => { try { const d = Object.getOwnPropertyDescriptor(FontFaceSet.prototype, 'check'); if (!d || !d.value) return null; const f = document.createElement('iframe'); f.style.display = 'none'; document.body.appendChild(f); const t = f.contentWindow.Function.prototype.toString.call(d.value); f.remove(); return t; } catch (e) { return 'ERR:' + e.message; } })(),
   }))()`);
-  assert('F7 空 fonts 不覆盖（mixed 判定与原生逐字节一致且 hook 未安装）',
-    emptyShape.mixedInList === native.mixedInList && emptyShape.hookInstalled === false,
+  assert('F7 空 fonts 不覆盖（行为逐项回原生 + 跨 realm 亦无源码泄漏，判据非 vacuous）',
+    emptyShape.mixedInList === native.mixedInList &&
+    emptyShape.inListHostMissing === native.inListHostMissing &&
+    emptyShape.hostAvailableNotInList === native.hostAvailableNotInList &&
+    emptyShape.crossRealmSource === native.crossRealmSource,
     { emptyShape, nativeMixed: native.mixedInList });
   await emptyCtx.close();
 
