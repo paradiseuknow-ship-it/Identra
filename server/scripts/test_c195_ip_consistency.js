@@ -89,6 +89,18 @@ function stub(over) {
   ok('A1 ipGeo 缺失 ⇒ note 跳过', rows.length === 1 && rows[0].ok === true && rows[0].msg.includes('出口 IP 地理未解析'),
     JSON.stringify(rows.map(r => r.msg)));
 
+  // A1b (C201 fail-open 修复): 代理已配置但出口未解析 ⇒ warn，不得报假绿
+  rep = integrity.runIntegrityCheck(P, { fp: mkFp(), ipGeo: null, proxy: { type: 'socks5', server: '1.2.3.4:1080' } });
+  rows = egRows(rep);
+  ok('A1b 代理在但出口未解析 ⇒ warn（不报假绿）',
+    rows.length === 1 && rows[0].ok === false && rows[0].msg.includes('不可达') && rep.pass === false,
+    JSON.stringify(rows.map(r => r.msg)));
+  // A1c: 无代理 + 未解析 ⇒ 仍 OK note（离线自检语义保持）
+  rep = integrity.runIntegrityCheck(P, { fp: mkFp(), ipGeo: null, proxy: null });
+  rows = egRows(rep);
+  ok('A1c 无代理未解析 ⇒ OK note（离线语义不变）', rows.length === 1 && rows[0].ok === true,
+    JSON.stringify(rows.map(r => r.msg)));
+
   // A2: 三维度全 mode=ip ⇒ 跳过（生成时已对齐）
   rep = integrity.runIntegrityCheck(P, {
     fp: mkFp({ timezoneMode: 'ip', languageMode: 'ip', geolocation: { mode: 'ip', lat: 52.52, lng: 13.4, accuracy: 100 } }),
@@ -205,8 +217,8 @@ function stub(over) {
   const IDX = fs.readFileSync(path.join(ROOT, 'index.js'), 'utf8');
   const INTEG = fs.readFileSync(path.join(ROOT, 'integrity.js'), 'utf8');
 
-  // C1: 启动路径体检传 ipGeo
-  has('C1 browserManager 体检调用传 ipGeo', BM, 'runIntegrityCheck(profile, { fp, engineVersion: realVer, proxies, ipGeo: ipGeoForCheck })');
+  // C1: 启动路径体检传 ipGeo + proxy（C201）
+  has('C1 browserManager 体检调用传 ipGeo', BM, 'runIntegrityCheck(profile, { fp, engineVersion: realVer, proxies, proxy, ipGeo: ipGeoForCheck })');
   has('C1b resolveIpGeoForIntegrity 已接线', BM, 'const ipGeoForCheck = await resolveIpGeoForIntegrity(profile, proxies, needsFreshIpGeo, ipGeo);');
 
   // C2: 体检解析必须走 resolveEgressGeo（防回归回 resolveForProfile 的 not-needed 陷阱）
@@ -215,6 +227,9 @@ function stub(over) {
   // C3: index.js 按需体检端点传 ipGeo 且补解析
   has('C3 index integrity 端点传 ipGeo', IDX, 'ipGeo: ipGeoForCheck');
   has('C3b 端点补解析用 resolveEgressGeo', IDX, 'ipGeoResolve.resolveEgressGeo(proxyForProfile, { strict: false, cache: true })');
+  // C201：端点必须传 proxy（否则 fail-open 修复不生效）+ 解析失败回退存储指纹
+  has('C3c 端点传 proxy（C201）', IDX, 'proxies: db.getProxies(), proxy: proxyForProfile, ipGeo: ipGeoForCheck');
+  has('C3d 端点仅 unresolved 才回退存储指纹（浅克隆防写穿；not-needed 保持再生预览语义）', IDX, "geoR.status === 'unresolved' && p.fingerprint");
 
   // C4: 模板自检保持离线（不传 ipGeo、不做网络）
   const tplIdx = IDX.slice(IDX.indexOf("templateRouter.get('/templates/:id/check'"));
@@ -228,6 +243,7 @@ function stub(over) {
   has('C5 opts 契约含 ipGeo', INTEG, 'opts: { fp, engineVersion, proxies, proxy, ipGeo }');
   has('C5b 比对跳过 mode=ip', INTEG, "fpMode.timezone !== 'ip'");
   has('C5c resolveEgressGeo 导出', fs.readFileSync(path.join(ROOT, 'fp', 'ipGeo.js'), 'utf8'), 'resolveEgressGeo,');
+  has('C5d 二态分支：proxy.server ⇒ warn（C201）', INTEG, 'if (proxy && proxy.server) {');
 
   // ---------------- D haversine 数学 ----------------
   console.log('\n--- D haversine ---');

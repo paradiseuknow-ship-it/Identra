@@ -162,6 +162,8 @@ function runIntegrityCheck(profile, opts = {}) {
   //    本模块保持纯同步本地计算，不做网络（模板自检离线路径传 null ⇒ 跳过，不误报）。
   //    与其余体检项一致：WARNING 只报警不阻断启动。
   {
+    // C201：区分「代理已配置但出口未解析」（须 warn，调用方须传 proxy）与
+    // 「无代理/离线自检」（保持 OK note）。
     const geo = opts.ipGeo || null;
     const fpMode = {
       timezone: fp && fp.timezoneMode,
@@ -169,7 +171,15 @@ function runIntegrityCheck(profile, opts = {}) {
       geo: fp && fp.geolocation && fp.geolocation.mode,
     };
     if (!geo) {
-      note('network', true, '出口 IP 地理未解析，跳过出口↔指纹一致性体检（离线自检或解析失败）');
+      // C201：出口未解析必须二态区分，不能一律 note-ok——2026-11-13 实证：会话轮换型
+      // 代理过期（407 认证拒绝），体检仍全绿 PASS，用户带着死代理实测被 todetect/iphey/
+      // pixelscan 三站判「语言↔IP 不一致」。代理已配置 ⇒ 一致性根本无法验证，必须 warn；
+      // 无代理/离线自检（模板聚合、profileMetrics 等不传 proxy 的调用方）保持 OK note。
+      if (proxy && proxy.server) {
+        warn('network', '出口 IP 地理未解析：代理已配置但出口查询失败（不可达/认证被拒/会话过期）——出口↔指纹一致性无法验证，测试前请先确认代理可用');
+      } else {
+        note('network', true, '出口 IP 地理未解析，跳过出口↔指纹一致性体检（离线自检或无代理）');
+      }
     } else if (fpMode.timezone === 'ip' && fpMode.language === 'ip' && fpMode.geo === 'ip') {
       note('network', true, '时区/语言/坐标均为「基于 IP」，生成时已对齐出口，无需一致性比对');
     } else {

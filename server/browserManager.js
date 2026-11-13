@@ -1202,7 +1202,7 @@ async function _launchProfile(profile, proxies) {
     // C195：出口↔指纹一致性体检需要出口地理。needsFresh 时上面已 strict 解析（直接复用），
     // 否则新鲜解析（strict=false，失败跳过该项；原始代理 ⇒ 缓存 key 稳定）。
     const ipGeoForCheck = await resolveIpGeoForIntegrity(profile, proxies, needsFreshIpGeo, ipGeo);
-    const report = runIntegrityCheck(profile, { fp, engineVersion: realVer, proxies, ipGeo: ipGeoForCheck });
+    const report = runIntegrityCheck(profile, { fp, engineVersion: realVer, proxies, proxy, ipGeo: ipGeoForCheck });
     logIntegrity(profile.id, report);
   } catch (e) {
     console.warn('[integrity] 体检执行异常(已忽略):', String(e.message || e).slice(0, 200));

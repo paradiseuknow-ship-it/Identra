@@ -374,8 +374,19 @@ router.get('/profiles/:id/integrity', async (req, res) => {
   try {
     const mergedOverride = { os: p.os, browser: p.browser, ...p.fingerprintOverride };
     const proxyForProfile = resolveProxy(p, db.getProxies());
-    const ipGeo = await resolveIpGeo(mergedOverride, proxyForProfile);
-    const fp = generateFingerprint(seedFromProfile(p), mergedOverride, ipGeo);
+    const geoR = await resolveIpGeoDetailed(mergedOverride, proxyForProfile);
+    const ipGeo = geoR.geo;
+    // C201：ip 模式解析失败时禁止用「无 geo 再生」出随机假指纹充数——实证（2026-11-13）：
+    // 代理会话过期后体检面板显示 ja-JP/Australia/Sydney（随机 persona），而 profile 实际
+    // 运行态是 de-DE/Europe/Berlin，纯误导。回退到 profile 存储指纹（= 上次启动落地的
+    // 真实运行态，浅克隆防路由内 UA 对齐写穿存储对象）；从未启动过才允许再生（仅形状校验）。
+    // C201：仅「ip 模式下出口真解析失败」（status='unresolved'）才回退存储指纹；非 ip
+    // 模式（'not-needed'）保持再生语义——用户改设置未重启时体检面板应预览下次启动的值。
+    const fp = ipGeo
+      ? generateFingerprint(seedFromProfile(p), mergedOverride, ipGeo)
+      : (geoR.status === 'unresolved' && p.fingerprint
+        ? Object.assign({}, p.fingerprint)
+        : generateFingerprint(seedFromProfile(p), mergedOverride, null));
     // C195：mode=ip 维度存在时 ipGeo 已解析（直接复用）；否则（custom/随机——恰是
     // 出口↔指纹矛盾体检的核心场景）补一次「总是解析」的出口查询供比对。失败跳过该项。
     let ipGeoForCheck = ipGeo;
@@ -389,7 +400,7 @@ router.get('/profiles/:id/integrity', async (req, res) => {
     if (realVer && fp.userAgent && /Chrome\/\d+(\.\d+)*/.test(fp.userAgent)) {
       fp.userAgent = alignUaToEngine(fp.userAgent, realVer);
     }
-    const report = runIntegrityCheck(p, { fp, engineVersion: realVer, proxies: db.getProxies(), ipGeo: ipGeoForCheck });
+    const report = runIntegrityCheck(p, { fp, engineVersion: realVer, proxies: db.getProxies(), proxy: proxyForProfile, ipGeo: ipGeoForCheck });
     res.json({ id: p.id, ...report });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 300) });
