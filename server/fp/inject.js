@@ -812,12 +812,15 @@ function buildInjectionScript(fp) {
           throw new DOMException('WebRTC is disabled', 'NotAllowedError');
         }
         const cfg = Object.assign({}, config || {});
-        // proxy/forward 模式：强制 relay 并加 STUN，避免本地内网 IP 作为 host 候选出现。
+        // proxy/forward 模式：强制 relay 且不提供任何 STUN/TURN 服务器。
+        // C206：Chromium 会向服务器列表发 UDP 探测包，UDP 不走 SOCKS5/HTTP 代理——
+        // 服务端看到的是本机真实公网 IP（browserscan 实证 WebRTC 栏出现 Chinese mainland
+        // 地址，与代理出口不一致，直接对应 IP addresses are different 扣分）。
+        // relay-only 配合空服务器列表 = 零候选、零 UDP 外发，与 C202 E 段语义一致；
+        // 站点自带的服务器列表也不再沿用，避免站点用自建 STUN 复现同一泄漏。
         // replace-udp 模式：正常收集候选（含 STUN 反射），随后把所有 IP 改写为出口公网 IP。
         if (effectiveMode === 'proxy' || effectiveMode === 'forward') {
-          cfg.iceServers = cfg.iceServers && cfg.iceServers.length
-            ? cfg.iceServers
-            : [{ urls: 'stun:stun.l.google.com:19302' }];
+          cfg.iceServers = [];
           cfg.iceTransportPolicy = 'relay';
         } else if (effectiveMode === 'replace-udp') {
           cfg.iceServers = cfg.iceServers && cfg.iceServers.length

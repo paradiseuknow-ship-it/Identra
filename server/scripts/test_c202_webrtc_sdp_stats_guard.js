@@ -18,6 +18,10 @@
 //   D 源码形态：rewriteSdpLines 复用 rewriteCandidate（单一实现）、三个 description
 //     getter 全覆盖、getStats 包装仅 replace-udp 生效。
 //   E 防误伤：proxy 模式（relay-only）保持零候选——三条路径都不得出现任何候选。
+// C206 扩展：proxy/forward 模式不得提供任何 STUN/TURN 服务器（UDP 探测绕过代理，
+//   会把本机真实公网 IP 暴露给检测站，实证 browserscan WebRTC 栏出现 Chinese mainland 地址）。
+//   E3 值级判据（站点夹具显式传入 STUN，若未剥离则非空 ⇒ revert 下必红，非 vacuous）；
+//   E4 relay-only 保持；E5 replace-udp 不受影响；F 源码形态防回退。
 
 const path = require('path');
 const http = require('http');
@@ -73,6 +77,9 @@ const PROBE = `
     const out = { event: [], sdp: [], stats: [], error: null };
     try {
       const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.invalid.invalid:9' }] });
+      const cfgNow = pc.getConfiguration ? pc.getConfiguration() : {};
+      out.iceServers = (cfgNow.iceServers || []).map((s) => (s && s.urls) || '').slice(0, 4);
+      out.iceTransportPolicy = cfgNow.iceTransportPolicy || null;
       pc.createDataChannel('c202');
       pc.onicecandidate = (e) => { if (e.candidate) out.event.push(e.candidate.candidate); };
       await pc.setLocalDescription(await pc.createOffer());
@@ -99,7 +106,7 @@ const PROBE = `
 `;
 
 (async () => {
-  console.log('=== C202 WebRTC 候选改写旁路守护（replace-udp SDP/getStats）===');
+  console.log('=== C202/C206 WebRTC 候选改写旁路守护（SDP/getStats + proxy 零 UDP 外发）===');
   const { srv, port } = await startServer();
   const url = 'http://127.0.0.1:' + port + '/';
 
@@ -173,6 +180,14 @@ const PROBE = `
     const p = await pageP.evaluate(PROBE);
     ok('E1 proxy 模式事件候选为零（relay-only 语义保持）', p.replaceUdp.event.length === 0, JSON.stringify(p.replaceUdp.event));
     ok('E2 proxy 模式 SDP 候选行为零', p.replaceUdp.sdp.length === 0, JSON.stringify(p.replaceUdp.sdp));
+    // C206：值级判据（非标识符）。PROBE 显式传入一个 STUN 服务器，若产品未剥离则
+    // iceServers.length >= 1 ⇒ 断言在 revert 下必红，不是真空绿。
+    ok('E3 proxy 模式零 STUN/TURN 服务器（UDP 外发面为零，站点自带也被剥离）',
+      p.replaceUdp.iceServers.length === 0, JSON.stringify(p.replaceUdp.iceServers));
+    ok('E4 proxy 模式保持 relay-only', p.replaceUdp.iceTransportPolicy === 'relay',
+      'policy=' + p.replaceUdp.iceTransportPolicy);
+    ok('E5 replace-udp 模式不受影响（站点 STUN 仍保留，防误伤）',
+      r.replaceUdp.iceServers.length >= 1, JSON.stringify(r.replaceUdp.iceServers));
     await ctxP.close();
 
     // ---------------- D：源码形态 ----------------
@@ -183,6 +198,16 @@ const PROBE = `
     ok('D4 getStats 包装仅 replace-udp 生效', /if \(effectiveMode === 'replace-udp'\) \{\s*\r?\n\s*const origGetStats = pc\.getStats;/.test(src));
     ok('D5 getStats 改写 address/ip/relatedAddress 三字段', /if \(c\.address\) c\.address = publicIp;/.test(src) && /if \(c\.ip\) c\.ip = publicIp;/.test(src) && /if \(c\.relatedAddress\) c\.relatedAddress = publicIp;/.test(src));
     ok('D6 事件路径 network-cost 剥离保持（防回退）', /tokens\[i\] === 'network-cost'/.test(src) && /i\+\+; continue;/.test(src) && /out\.join\(' '\)/.test(src));
+
+    // ---------------- F：C206 源码形态防回退 ----------------
+    console.log('-- F C206 proxy 零服务器列表源码形态 --');
+    const proxyBranch = /if \(effectiveMode === 'proxy' \|\| effectiveMode === 'forward'\) \{[\s\S]{0,1200}?cfg\.iceTransportPolicy = 'relay';/.exec(src);
+    ok('F1 proxy/forward 分支存在且可定位（判据建在内容形状）', !!proxyBranch);
+    ok('F2 该分支清空服务器列表（值级形状）',
+      !!proxyBranch && /cfg\.iceServers = \[\];/.test(proxyBranch[0]));
+    ok('F3 该分支不得再注入外部 STUN 主机（防回退到 UDP 外发）',
+      !!proxyBranch && !/stun:stun\.l\.google\.com:19302/.test(proxyBranch[0]));
+    ok('F4 生成脚本（proxy 模式）同样为空列表语义', genP.includes('cfg.iceServers = [];'));
   } finally {
     await browser.close().catch(() => {});
     srv.close();
