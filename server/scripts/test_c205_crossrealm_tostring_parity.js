@@ -12,6 +12,12 @@
 // 每个 realm 的 shim 同时查本 realm 表与共享表；被 hook 的函数对象上依旧
 // 零 own 属性。守护同时做双向咬：把共享表退化回 per-realm，跨 realm 必须
 // 重新泄漏，证明本组断言不是真空绿。
+//
+// C207 扩展（同一「注入层 ↔ 原生」对照夹具，非新增测试文件）：注入层不得再
+// 替换 Intl 原生时区解析方法。旧实现无条件改写 resolvedOptions 返回值，导致
+// 调用方显式 timeZone 被静默改成人设时区，而同一 formatter 的 format() 仍是
+// 原生正确值 ⇒ 页内自相矛盾。S10 锁源码形态，E0–E4 以值级判据锁显式时区、
+// 默认时区与格式化输出三方与无注入对照组逐字一致；文件级 revert 咬下 S10/E1/E2 必红。
 
 const os = require('os');
 const path = require('path');
@@ -106,6 +112,21 @@ const PROBE = `(() => {
       registryEnumerable: d ? d.enumerable : null,
       extraOwnNames: Object.getOwnPropertyNames(window.top).filter((k) => /fpb_hook|c205_guard/i.test(k)),
     };
+    // ⑥ C207：Intl 显式时区语义（值级判据，不依赖标识符）
+    out.tz = (() => {
+      const stamp = Date.UTC(2026, 5, 15, 12, 0, 0);
+      const dt = new Date(stamp);
+      const zones = ['Asia/Tokyo', 'Europe/Berlin', 'America/New_York', 'UTC', 'Australia/Sydney'];
+      return {
+        defaultZone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
+        cases: zones.map((z) => {
+          const f2 = new Intl.DateTimeFormat('en-US', {
+            timeZone: z, hour: '2-digit', minute: '2-digit', hour12: false,
+          });
+          return { requested: z, resolved: f2.resolvedOptions().timeZone, formatted: f2.format(dt) };
+        }),
+      };
+    })();
     f.remove();
   } catch (e) { out.err = String((e && e.stack) || e); }
   return out;
@@ -165,6 +186,11 @@ async function startServer() {
   const reverted = injected.replace(REVERT_ANCHOR, 'return null;');
   ok('S9 咬测脚本确实退化且仍可编译',
     reverted !== injected && (() => { try { new Function(reverted); return true; } catch (e) { return false; } })());
+  // C207：注入层不得再替换原生 Intl 解析方法，也不得无条件覆写返回值里的时区字段。
+  // 判据建在内容形状（赋值形态 + 覆写形态），revert 咬下两条同时不成立 ⇒ 必红。
+  ok('S10 C207 注入层不替换原生 Intl 解析方法 / 不覆写时区返回值',
+    !/Intl\.DateTimeFormat\.prototype\.resolvedOptions\s*=/.test(src) &&
+    !/opts\.timeZone\s*=\s*TZ/.test(src));
 
   const { srv, port } = await startServer();
   const browser = await chromium.launch({ executablePath: CHROME, headless: true,
@@ -266,6 +292,28 @@ async function startServer() {
   ok('D5 咬测组本 realm 洗白仍成立（只退化共享面）',
     c.local.toDataURL === NATIVE_TO_DATA_URL && c.local.fpToString === NATIVE_TO_STRING &&
     c.ownToString === false, JSON.stringify(c.local));
+
+  // ---------- E：C207 时区原生一致性 ----------
+  // 判据建在「值形状」：显式请求的时区必须原样出现在 resolvedOptions 里，且
+  // format() 输出与无注入对照组逐字一致。旧实现把返回值改成人设时区 ⇒ E1 必红。
+  console.log('-- E C207 时区原生一致性（调用方显式 timeZone 不得被改写）--');
+  const tzOf = (x) => (x && x.tz && Array.isArray(x.tz.cases)) ? x.tz.cases : [];
+  const tzDefault = (x) => (x && x.tz) ? x.tz.defaultZone : null;
+  ok('E0 前提：原生对照组五例齐备、零改写、默认时区非空（非 vacuous）',
+    tzOf(a).length === 5 && tzOf(a).every((c) => c.resolved === c.requested) &&
+    !!tzDefault(a), JSON.stringify(tzOf(a)));
+  ok('E1 注入组显式 timeZone 全部原样返回（值级判据，revert 咬下必红）',
+    tzOf(b).length === 5 && tzOf(b).every((c) => c.resolved === c.requested),
+    JSON.stringify(tzOf(b)));
+  ok('E2 注入组默认时区与原生对照组一致（移除冗余覆写不牺牲对齐）',
+    tzDefault(b) === tzDefault(a) && !!tzDefault(b),
+    tzDefault(a) + ' vs ' + tzDefault(b));
+  ok('E3 注入组 format() 与原生对照组逐字一致（formatter 语义未被扰动）',
+    tzOf(b).every((c, i) => c.formatted === tzOf(a)[i].formatted),
+    JSON.stringify(tzOf(b).map((c) => c.formatted)));
+  ok('E4 五例格式化结果彼此可区分（断言不是恒等真空绿）',
+    new Set(tzOf(a).map((c) => c.formatted)).size >= 4,
+    JSON.stringify(tzOf(a).map((c) => c.formatted)));
 
   console.log('\n== C205 守护结果: ' + pass + ' 通过 / ' + fail + ' 失败 ==');
   if (fail > 0) { console.log('FAILS:\n' + fails.join('\n')); process.exit(1); }

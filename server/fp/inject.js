@@ -479,18 +479,13 @@ function buildInjectionScript(fp) {
     }
   } catch (e) {}
 
-  // ---- 时区：Playwright 已通过 timezoneId 参数设置原生时区，此处不再 JS 覆盖，避免 Pixelscan 识别为 spoof ----
-  // 保留最小兜底：确保 resolvedOptions.timeZone 与 FP.timezone 一致（通常已由 Chromium 设置好）
-  try {
-    const TZ = FP.timezone;
-    const origResolved = Intl.DateTimeFormat.prototype.resolvedOptions;
-    Intl.DateTimeFormat.prototype.resolvedOptions = function resolvedOptions(...a){
-      const opts = origResolved.apply(this, a);
-      if (TZ) opts.timeZone = TZ;
-      return opts;
-    };
-    whiten(Intl.DateTimeFormat.prototype.resolvedOptions);
-  } catch(e){}
+  // ---- 时区（C207）：一律交给 Chromium 原生，不在 JS 层替换 Intl 解析方法 ----
+  // browserManager.launch 已在 launchOpts 无条件设置 timezoneId = fp.timezone，
+  // 原生默认时区、DST、getTimezoneOffset、Date 字符串同源且彼此自洽。
+  // 旧实现把 resolvedOptions 的返回值无条件改写成人设时区：调用方显式请求的其它
+  // 时区被静默改掉，而同一 formatter 的 format() 仍是原生正确值，页内自相矛盾，
+  // 且凭空多出一个可被识别的 JS hook。受控对照实测原生默认时区已等于人设时区，
+  // 该覆写既冗余又有害，故整段移除；不改任何闸门/凭据/授权/指纹值。
 
   // ---- 地理位置 ----
   try {
