@@ -84,6 +84,15 @@ const PROBE = `(() => {
     out.fpToString = Function.prototype.toString.toString();
     out.fpToStringName = Function.prototype.toString.name;
 
+    // C209：被 hook 函数的 name 必须与真 Chrome 逐字相同（旧实现匿名 ⇒ ''）
+    out.hookNames = {
+      toDataURL: P.toDataURL.name,
+      toBlob: P.toBlob ? P.toBlob.name : '(missing)',
+      getParameter: window.WebGLRenderingContext ? WebGLRenderingContext.prototype.getParameter.name : '(missing)',
+      getExtension: window.WebGLRenderingContext ? WebGLRenderingContext.prototype.getExtension.name : '(missing)',
+      getBoundingClientRect: Element.prototype.getBoundingClientRect.name,
+    };
+
     // ---------- WebGL ----------
     const gl = document.createElement('canvas').getContext('webgl');
     if (!gl) { out.gl = null; }
@@ -144,6 +153,13 @@ async function startServer() {
   ok('S6 getImageData 保持原生（不再包裹、不再 whiten，少一个可嗅探面）',
     !/CanvasRenderingContext2D\.prototype\.getImageData = function/.test(src) &&
     !/whiten\(CanvasRenderingContext2D\.prototype\.getImageData/.test(src));
+  // C209：匿名函数表达式包裹会让 fn.name === ''，真 Chrome 原生方法恒具名。
+  // 形态判据锁定五个已实证偏差的 hook，同时禁止重新引入任何匿名包裹赋值。
+  ok('S7 五个原型 hook 均为具名函数表达式（无 = function( 匿名赋值）',
+    /= function toDataURL\(/.test(src) && /= function toBlob\(/.test(src) &&
+    /= function getParameter\(/.test(src) && /= function getExtension\(/.test(src) &&
+    /= function getBoundingClientRect\(/.test(src) &&
+    !/= function\s*\(/.test(src));
 
   const { srv, port } = await startServer();
   const browser = await chromium.launch({ executablePath: CHROME, headless: true,
@@ -227,6 +243,19 @@ async function startServer() {
     a.gl.getParameter_toString === b.gl.getParameter_toString &&
     a.gl.getExtension_toString === b.gl.getExtension_toString &&
     b.gl.getParameter_ownToString === false);
+
+  // ---------- E：C209 函数 name 契约（真浏览器值级） ----------
+  console.log('-- E 函数 name 契约（C209 具名化）--');
+  ok('E1 五个原型 hook 的 name 与真 Chrome 逐字相同',
+    JSON.stringify(a.hookNames) === JSON.stringify(b.hookNames),
+    'native=' + JSON.stringify(a.hookNames) + ' injected=' + JSON.stringify(b.hookNames));
+  ok('E2 五个 hook 的 name 均非空（旧实现恒为空串）',
+    Object.keys(b.hookNames).every((k) => typeof b.hookNames[k] === 'string' && b.hookNames[k].length > 0),
+    JSON.stringify(b.hookNames));
+  ok('E3 具名化不扰动 toString shim（仍为带函数名的原生格式）',
+    b.toDataURL_toString === 'function toDataURL() { [native code] }' &&
+    a.toDataURL_toString === b.toDataURL_toString,
+    a.toDataURL_toString + ' vs ' + b.toDataURL_toString);
 
   console.log('\n== C203 守护结果: ' + pass + ' 通过 / ' + fail + ' 失败 ==');
   if (fail > 0) { console.log('FAILS:\n' + fails.join('\n')); process.exit(1); }

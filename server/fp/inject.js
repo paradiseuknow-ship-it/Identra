@@ -253,7 +253,7 @@ function buildInjectionScript(fp) {
       whitenGetter(uaDataObj, 'brands');
       whitenGetter(uaDataObj, 'mobile');
       whitenGetter(uaDataObj, 'platform');
-      uaDataObj.getHighEntropyValues = function(hints) {
+      uaDataObj.getHighEntropyValues = function getHighEntropyValues(hints) {
         // Phase 16-B C2（platformversion-identity）：platformVersion 为 NATIVE_OWNED 时
         // JS 不再生产该值（让位），改为从原生 userAgentData 回读——CDP override 缺省时
         // emulation 层 merge 回退到 patched 原生值（=identity），无 override 时原生
@@ -425,7 +425,7 @@ function buildInjectionScript(fp) {
   try {
     if (window.Notification && navigator.permissions && navigator.permissions.query) {
       const realQuery = navigator.permissions.query.bind(navigator.permissions);
-      navigator.permissions.query = function (descriptor) {
+      navigator.permissions.query = function query(descriptor) {
         if (descriptor && descriptor.name === 'notifications' && typeof window.Notification.permission === 'string') {
           const p = window.Notification.permission;
           const nativeState = p === 'default' ? 'prompt' : p; // 原生映射（实测对照组）
@@ -503,16 +503,16 @@ function buildInjectionScript(fp) {
         },
         timestamp: Date.now(),
       };
-      geo.getCurrentPosition = function(success, error, opts){
+      geo.getCurrentPosition = function getCurrentPosition(success, error, opts){
         if (FP.geolocation.mode === 'block') { if (error) error({ code: 1, message: 'User denied Geolocation' }); return; }
         if (success) setTimeout(() => success(fakePos), 0);
       };
-      geo.watchPosition = function(success, error, opts){
+      geo.watchPosition = function watchPosition(success, error, opts){
         if (FP.geolocation.mode === 'block') { if (error) error({ code: 1, message: 'User denied Geolocation' }); return 0; }
         if (success) setTimeout(() => success(fakePos), 0);
         return Math.floor(Math.random() * 1e9);
       };
-      geo.clearWatch = function(id){};
+      geo.clearWatch = function clearWatch(id){};
     }
   } catch(e){}
 
@@ -588,7 +588,7 @@ function buildInjectionScript(fp) {
         return tmp;
       };
       const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
-      HTMLCanvasElement.prototype.toDataURL = function(...a){
+      HTMLCanvasElement.prototype.toDataURL = function toDataURL(...a){
         try {
           const noised = exportPixels(this);
           if (noised) return origToDataURL.apply(drawToTemp(this, noised), a);
@@ -597,7 +597,7 @@ function buildInjectionScript(fp) {
       };
       const origToBlob = HTMLCanvasElement.prototype.toBlob;
       if (origToBlob) {
-        HTMLCanvasElement.prototype.toBlob = function(cb, ...a){
+        HTMLCanvasElement.prototype.toBlob = function toBlob(cb, ...a){
           try {
             const noised = exportPixels(this);
             if (noised) return origToBlob.call(drawToTemp(this, noised), cb, ...a);
@@ -612,7 +612,7 @@ function buildInjectionScript(fp) {
   try {
     const wrapParam = (proto) => {
       const gp = proto.getParameter;
-      proto.getParameter = function(p){
+      proto.getParameter = function getParameter(p){
         // C203：7936 VENDOR / 7937 RENDERER 必须保持原生（真 Chrome 恒为
         // "WebKit" / "WebKit WebGL"）。旧实现把两者也改成人设 GPU 串，与
         // UNMASKED_* 的语义约定直接矛盾（VENDOR === UNMASKED_VENDOR），
@@ -623,7 +623,7 @@ function buildInjectionScript(fp) {
         return gp.apply(this, arguments);
       };
       const ge = proto.getExtension;
-      proto.getExtension = function(name){
+      proto.getExtension = function getExtension(name){
         const ext = ge.apply(this, arguments);
         if (name === 'WEBGL_debug_renderer_info' && !ext) {
           return { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
@@ -647,11 +647,11 @@ function buildInjectionScript(fp) {
     if (FP.audioContext !== false && (window.AudioContext || window.webkitAudioContext)) {
       const AC = window.AudioContext || window.webkitAudioContext;
       const origAnalyser = AC.prototype.createAnalyser;
-      AC.prototype.createAnalyser = function(){
+      AC.prototype.createAnalyser = function createAnalyser(){
         const an = origAnalyser.apply(this, arguments);
         const origGetFloat = an.getFloatFrequencyData;
         if (origGetFloat) {
-          an.getFloatFrequencyData = function(arr){
+          an.getFloatFrequencyData = function getFloatFrequencyData(arr){
             origGetFloat.apply(this, arguments);
             for (let i = 0; i < arr.length; i++) arr[i] += (r() * 2 - 1) * 1e-3;
             return arr;
@@ -691,7 +691,7 @@ function buildInjectionScript(fp) {
       const rectNoiseCache = new WeakMap();
       const LU_QUANT = 16384; // 2^14：真 Chrome getBoundingClientRect 浮点尾巴精度
       const quantizeLU = (v) => Math.round(v * LU_QUANT) / LU_QUANT;
-      Element.prototype.getBoundingClientRect = function(){
+      Element.prototype.getBoundingClientRect = function getBoundingClientRect(){
         const rect = origGetBounding.apply(this, arguments);
         const sig = rect.x + '|' + rect.y + '|' + rect.width + '|' + rect.height;
         let rec = rectNoiseCache.get(this);
@@ -708,11 +708,12 @@ function buildInjectionScript(fp) {
         const y = quantizeLU(rect.y + rec.dy);
         const w = rect.width;
         const h = rect.height;
-        return {
-          x: x, y: y, width: w, height: h,
-          top: y, left: x, right: x + w, bottom: y + h,
-          toJSON: () => ({}),
-        };
+        // C209 类型契约：必须返回真正的 DOMRect 实例。旧实现返回普通对象字面量
+        // 且 toJSON() 恒返回 {}，与真 Chrome 的 DOMRect 在 instanceof / 原型 /
+        // 0 own 属性 / toJSON() 完整几何四个维度全部不符 —— 检测站据此判
+        // 「ClientRect Fingerprint Invalid」。new DOMRect 原生自带 right/bottom
+        // 由 x+width、y+height 推导与完整 toJSON，四个数值仍承载 C200 量化噪声。
+        return new DOMRect(x, y, w, h);
       };
     }
   } catch(e){}
@@ -721,7 +722,7 @@ function buildInjectionScript(fp) {
   try {
     if (FP.speechVoices !== false && window.speechSynthesis) {
       const origGetVoices = window.speechSynthesis.getVoices;
-      window.speechSynthesis.getVoices = function(){
+      window.speechSynthesis.getVoices = function getVoices(){
         const list = origGetVoices ? origGetVoices.apply(this, arguments) : [];
         return list.length ? list : [
           { name: 'Microsoft David - English (United States)', lang: 'en-US', default: true, localService: true, voiceURI: 'urn:moz-tts:sapi:Microsoft David - English (United States)?en-US' },
@@ -735,7 +736,7 @@ function buildInjectionScript(fp) {
   try {
     if (FP.mediaDevices !== false && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
       const origEnum = navigator.mediaDevices.enumerateDevices;
-      navigator.mediaDevices.enumerateDevices = function(){
+      navigator.mediaDevices.enumerateDevices = function enumerateDevices(){
         return Promise.resolve([
           { deviceId: 'default', kind: 'audioinput', label: '默认 - 麦克风 (Realtek(R) Audio)', groupId: 'mic' },
           { deviceId: 'default', kind: 'audiooutput', label: '默认 - 扬声器 (Realtek(R) Audio)', groupId: 'spk' },
@@ -802,7 +803,7 @@ function buildInjectionScript(fp) {
         return origFn.call(this, { type: 'icecandidate', candidate: filtered });
       };
 
-      const Wrapped = function (config) {
+      const Wrapped = function RTCPeerConnection(config) {
         if (effectiveMode === 'disable') {
           throw new DOMException('WebRTC is disabled', 'NotAllowedError');
         }
@@ -840,7 +841,7 @@ function buildInjectionScript(fp) {
 
         // 拦截 addEventListener('icecandidate')
         const origAddEvt = pc.addEventListener;
-        pc.addEventListener = function (type, listener, opts) {
+        pc.addEventListener = function addEventListener(type, listener, opts) {
           if (type === 'icecandidate' && typeof listener === 'function') {
             return origAddEvt.call(this, type, wrapCandidateHandler(listener), opts);
           }
@@ -885,7 +886,7 @@ function buildInjectionScript(fp) {
         if (effectiveMode === 'replace-udp') {
           const origGetStats = pc.getStats;
           if (origGetStats) {
-            pc.getStats = function () {
+            pc.getStats = function getStats() {
               return origGetStats.apply(this, arguments).then((report) => {
                 try {
                   const out = new Map();
@@ -908,7 +909,7 @@ function buildInjectionScript(fp) {
 
         // 兜底：部分 API 仍会通过 addIceCandidate 注入候选
         const origAdd = pc.addIceCandidate;
-        pc.addIceCandidate = function (cand) {
+        pc.addIceCandidate = function addIceCandidate(cand) {
           if (!cand || !cand.candidate) return origAdd ? origAdd.apply(this, arguments) : Promise.resolve();
           const c = cand.candidate;
           if (effectiveMode !== 'replace-udp' && (/typ host/.test(c) || /\.local\b/.test(c))) {
@@ -929,7 +930,7 @@ function buildInjectionScript(fp) {
 
       // 禁用 getUserMedia 进一步避免本地音视频指纹
       if (effectiveMode === 'disable' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia = function () {
+        navigator.mediaDevices.getUserMedia = function getUserMedia() {
           return Promise.reject(new DOMException('getUserMedia disabled', 'NotAllowedError'));
         };
       }
@@ -991,11 +992,11 @@ function buildInjectionScript(fp) {
       InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
       RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
     };
-    if (!window.chrome.csi) window.chrome.csi = function () {
+    if (!window.chrome.csi) window.chrome.csi = function csi() {
       // 真实返回值形如 { totalTime, onloadT, startE, startL, adp }
       return { totalTime: 0, onloadT: 0, startE: Date.now(), startL: Date.now(), adp: false };
     };
-      if (!window.chrome.loadTimes) window.chrome.loadTimes = function () {
+      if (!window.chrome.loadTimes) window.chrome.loadTimes = function loadTimes() {
         // 真实返回值含 requestTime/startTime/commitLoadTime/connectionInfo 等
         const t = Date.now() / 1000;
         return {

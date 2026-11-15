@@ -150,8 +150,10 @@ const PROBE = () => {
     const src = fs.readFileSync(path.join(__dirname, '../fp/inject.js'), 'utf8');
     ok('C1 存在按几何签名缓存噪声的实现（WeakMap 签名缓存）',
       /rectNoiseCache/.test(src) && /sig\s*!==\s*sig|rec\.sig\s*!==\s*sig/.test(src));
-    ok('C2 right/bottom 由 x+width / y+height 推导（不吃独立噪声）',
-      /right:\s*x\s*\+\s*w/.test(src) && /bottom:\s*y\s*\+\s*h/.test(src));
+    ok('C2 right/bottom 由 DOMRect 原生构造推导（x+width / y+height，不吃独立噪声）',
+      /return new DOMRect\(x, y, w, h\);/.test(src) &&
+      !/toJSON:\s*\(\)\s*=>\s*\(\{\}\)/.test(src) &&
+      /const w = rect\.width;/.test(src) && /const h = rect\.height;/.test(src));
     ok('C3 八个字段不再各自调用噪声函数',
       !/right:\s*rect\.right\s*\+\s*n\(\)/.test(src) && !/left:\s*rect\.left\s*\+\s*n\(\)/.test(src));
     ok('C4 平移噪声量化到 2^-14（LayoutUnit 形态，C200 契约①）',
@@ -188,6 +190,36 @@ const PROBE = () => {
       'bad=' + JSON.stringify(d.luBad));
     ok('D2 子元素宽度和 === 父宽度（几何恒等，C200 契约②）', d.sumErr === 0,
       'childSum=' + d.childSumW + ' parentW=' + d.parentW + ' err=' + d.sumErr);
+
+    // ---------------- E 段：C209 DOMRect 类型契约（真浏览器值级） ----------------
+    // 旧实现返回普通对象字面量 + toJSON: () => ({})，与真 Chrome 的 DOMRect
+    // 在 instanceof / 原型 / own 属性 / toJSON 四个维度全不符。受控对照实证
+    // 12 处偏差中 7 处来自此处，todetect「ClientRect Fingerprint Invalid」直击。
+    console.log('\n--- E DOMRect 类型契约（C209）---');
+    const t = await pageD.evaluate(() => {
+      const r = document.getElementById('box').getBoundingClientRect();
+      return {
+        ctor: r.constructor && r.constructor.name,
+        isDOMRect: r instanceof DOMRect,
+        protoIsDOMRect: Object.getPrototypeOf(r) === DOMRect.prototype,
+        ownNames: Object.getOwnPropertyNames(r),
+        toJSON: r.toJSON(),
+        x: r.x, y: r.y, width: r.width, height: r.height, right: r.right, bottom: r.bottom,
+      };
+    });
+    eq('E1 getBoundingClientRect 返回 DOMRect 实例（instanceof）', t.isDOMRect, true);
+    eq('E2 原型 === DOMRect.prototype 且 constructor.name === DOMRect', t.protoIsDOMRect && t.ctor === 'DOMRect', true);
+    eq('E3 实例 0 个 own 属性（属性均在原型 getter 上）', t.ownNames.length, 0);
+    ok('E4 toJSON() 返回完整八字段几何（不再是 {}）',
+      ['x','y','width','height','top','left','right','bottom'].every((k) => Object.prototype.hasOwnProperty.call(t.toJSON, k)),
+      JSON.stringify(t.toJSON));
+    ok('E5 toJSON() 数值与 rect 字段逐字一致',
+      t.toJSON.x === t.x && t.toJSON.y === t.y && t.toJSON.width === t.width &&
+      t.toJSON.height === t.height && t.toJSON.right === t.right && t.toJSON.bottom === t.bottom,
+      JSON.stringify(t.toJSON));
+    ok('E6 DOMRect 仍承载 C200 噪声（未退化成原生几何）',
+      Math.abs(t.x - n1.a.x) > 0 || Math.abs(t.y - n1.a.y) > 0,
+      'x=' + t.x + ' nativeX=' + n1.a.x);
     await ctxD.close();
   } finally {
     await browser.close().catch(() => {});
