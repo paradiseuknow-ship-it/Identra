@@ -31,11 +31,13 @@ const VENDOR_MARKERS = [
 // 2026-09-04 R09 实测补全：PX press-and-hold 变体（200 状态、无标准 captcha DOM）——
 // "Confirm you're not a bot" + "press and hold the button"（含俄语本地化）仅在真实
 // challenge 页出现，正常业务页面不会含此文案，误报风险可控。
-const CHALLENGE_TEXT_RE = /verify you are human|prove you.{0,4}re human|human verification|are you a robot|complete the (security check|verification)|confirm you.{0,4}re not a (bot|robot)|press and hold the button|нажмите и удерживайте|请完成(安全)?验证|滑动验证/i;
+// C210：补德语托管挑战进行时态（与 server/agent/botChallenge.js 的同语义强表同步，P9 守护锁死）。
+const CHALLENGE_TEXT_RE = /verify you are human|prove you.{0,4}re human|human verification|are you a robot|complete the (security check|verification)|confirm you.{0,4}re not a (bot|robot)|press and hold the button|best[äa]tigen sie, dass sie kein bot sind|es wird verifiziert, dass sie ein mensch sind|sicherheits(?:über|ueber)pr(?:ü|ue)fung wird durchgef(?:ü|ue)hrt|нажмите и удерживайте|请完成(安全)?验证|滑动验证/i;
 // denied 文案：配合状态码或 challenge 元素使用
 const DENIED_TEXT_RE = /access.{0,20}denied|has been denied|access to this (page|content)|request blocked|unusual (traffic|activity)/i;
 // challenge 形态标题
-const CHALLENGE_TITLE_RE = /just a moment|attention required|access denied|verify|challenge|security check|denied/i;
+// C210：德语挑战标题（与 botChallenge 的 CHALLENGE_TITLE_RE 同语义）
+const CHALLENGE_TITLE_RE = /just a moment|nur einen moment|attention required|access denied|verify|challenge|security check|sicherheits(?:über|ueber)pr(?:ü|ue)fung|denied/i;
 // captcha 容器/组件（DOM 引用级）
 const CAPTCHA_DOM_RE = /g-recaptcha|h-captcha|cf-turnstile|px-captcha|captcha-container|captcha-container|recaptcha\/api\.js|hcaptcha\.com\/1\/api\.js|challenges\.cloudflare\.com/i;
 

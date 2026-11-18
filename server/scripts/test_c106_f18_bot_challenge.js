@@ -185,5 +185,37 @@ VECTORS.forEach((v, i) => {
     JSON.stringify({ agent: b.blocked, fp: c.challenge, expect: v.expect, agentEv: b.evidence, fpEv: c.evidence }));
 });
 
+// ---------- P10 C210：德语 Cloudflare 托管挑战（SendOwl 真实站点锚）----------
+// 实证：dashboard.sendowl.com/signup 返回 403 + cf-mitigated=challenge，页面德语自述
+//   "Sicherheitsüberprüfung wird durchgeführt" / "Es wird verifiziert, dass Sie ein Mensch sind"，
+//   标题 "Nur einen Moment…"。旧词表只认 "Bestätigen Sie, dass Sie kein Bot sind" ⇒
+//   blocked=false / confidence=0 ⇒ 运行时不升级 BOT_CHALLENGE，任务空转耗尽。
+// 本锚只锁【识别并升级】，不触碰挑战控件、不模拟通过、不隐藏自动化痕迹。
+const C210_TEXT = 'dashboard.sendowl.com Sicherheitsüberprüfung wird durchgeführt Diese Website nutzt einen Sicherheitsservice, um sich vor böswilligen Bots zu schützen. Diese Seite wird angezeigt, solange die Website überprüft, dass Sie kein Bot sind. Warum dauert diese Überprüfung länger? Nächste Schritte: Warten Sie kurz.';
+const C210_HTML = '<title>Nur einen Moment…</title><body>' + C210_TEXT + '</body>';
+const C210_URL = 'https://dashboard.sendowl.com/signup';
+const c210 = bc.detect({ url: C210_URL, textSummary: C210_TEXT, elements: [] },
+  { url: C210_URL, html: C210_HTML, challengeVisible: false });
+check('P10.1 德语 Cloudflare 挑战页（进行时态 + 德语标题）⇒ 阻断升级',
+  c210.blocked === true && c210.confidence >= 0.9,
+  JSON.stringify({ blocked: c210.blocked, confidence: c210.confidence, evidence: c210.evidence }));
+check('P10.2 德语挑战置信度不低于英文同类（不因语言降级）',
+  c210.confidence >= bc.detect(obs('Verify you are human to continue.'), {}).confidence,
+  c210.confidence + ' vs ' + bc.detect(obs('Verify you are human to continue.'), {}).confidence);
+check('P10.3 跨实现同答案（德语挑战页 403 + CF marker）—— 与 fp/challengeDetector.js 同源',
+  (() => {
+    const c = challengeDetector.detectChallenge({ status: 403, html: C210_HTML + '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>', title: 'Nur einen Moment…', challengeVisible: false });
+    return c210.blocked === true && c.challenge === true;
+  })(), '两实现均须判为遭遇挑战，防再次单侧漂移（C159 教训）');
+check('P10.4 德语挑战强文案取自页面自述，非站点特判域名',
+  bc.TEXT_PATTERNS.some((re) => re.test('Es wird verifiziert, dass Sie ein Mensch sind.')) &&
+  bc.TEXT_PATTERNS.some((re) => re.test('Sicherheitsüberprüfung wird durchgeführt')),
+  '词表按通用德语挑战文案匹配，不得写死 sendowl');
+check('P10.5 弱德语词不误伤：正常页含 "Sicherheitshinweise" / 页脚 hCaptcha 声明 ⇒ 放行',
+  bc.detect(obs('Sicherheitshinweise zum Schutz Ihres Kontos. This site is protected by hCaptcha'),
+    { url: C210_URL, html: '<title>Spocket</title>' }).blocked === false);
+check('P10.6 识别模块不含绕过/解题动词（红线锁）',
+  !/solveCaptcha|bypassCaptcha|clickChallenge|autoVerify|autoSolve/i.test(require('fs').readFileSync(require('path').join(__dirname, '..', 'agent', 'botChallenge.js'), 'utf8')));
+
 console.log(`\n=== C106 F18 挑战页识别: ${pass} passed, ${fail} failed ===`);
 process.exit(fail === 0 ? 0 : 1);

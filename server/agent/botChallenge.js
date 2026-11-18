@@ -75,6 +75,11 @@ const TEXT_PATTERNS = [
   /confirmez\s+que\s+vous\s+(?:n[’']êtes|etes)\s+pas\s+un\s+robot/i,
   // 德文 / 西班牙文
   /best[äa]tigen\s+sie,\s*dass\s+sie\s+kein\s+bot\s+sind/i,
+  // C210：Cloudflare 托管挑战德语变体（SendOwl dashboard.sendowl.com/signup 实证）。
+  // 这两句是【进行时态】——页面正在要求/执行人机验证，而非页脚的声明式防护说明。
+  // 与 C160 的弱信号区分：裸 "Sicherheit" / "Mensch" 不放进强表，避免误判正常页。
+  /es\s+wird\s+verifiziert,\s*dass\s+sie\s+ein\s+mensch\s+sind/i,
+  /sicherheits(?:über|ueber)pr(?:ü|ue)fung\s+wird\s+durchgef(?:ü|ue)hrt/i,
   /confirma\s+que\s+no\s+eres\s+un\s+robot/i,
   // 中文
   /(?:请|需要)?(?:完成|通过)(?:安全|人机)验证/,
@@ -112,7 +117,9 @@ const CAPTCHA_DOM_RE = /g-recaptcha|h-captcha|cf-turnstile|px-captcha|captcha-co
 
 // 挑战形态标题（从 <title> 提取）—— 刻意不含裸 "verify"/"denied"（"Verify your email" 类正常标题
 // 会在 (d) 分支与 captcha 容器交叉时造成误判）。
-const CHALLENGE_TITLE_RE = /just a moment|attention required|access denied|security check|human verification|are you a robot|challenge/i;
+// C210：补德语挑战标题 "Nur einen Moment…" / "Sicherheitsüberprüfung"。
+// 只用于 (d) 容器×标题交叉与标题形态识别，不放宽为裸 "moment" 等泛词。
+const CHALLENGE_TITLE_RE = /just a moment|nur einen moment|attention required|access denied|security check|human verification|are you a robot|sicherheits(?:über|ueber)pr(?:ü|ue)fung|challenge/i;
 
 // 可见挑战控件最小尺寸：真挑战实测 520×570；被动 badge 约 70×70（w<150）⇒ 二者可分离。
 // 该判据源自 C157 真实站点实证（挑战判据必须用可见尺寸，frame=challenge 会被预加载 ⇒ 按 URL 判定是假阳性）。
